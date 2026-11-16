@@ -16,6 +16,7 @@ const withRun: CompletingWithinYear = {
   left_out_count: 2,
   blocked_count: 1,
   priority_delivery: [],
+  regions: [],
   rows: [
     {
       project_id: 'p1',
@@ -100,6 +101,7 @@ describe('WithinYearKpis', () => {
           left_out_count: 0,
           blocked_count: 0,
           priority_delivery: [],
+          regions: [],
           rows: [],
         }}
         activeRun={null}

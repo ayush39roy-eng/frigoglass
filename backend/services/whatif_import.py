@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from sqlalchemy import select
@@ -86,6 +86,7 @@ from schemas.whatif_import import (
     LeaderExisting,
     LeaderNew,
     LeadTimeRowOut,
+    PlanProjectOut,
     RosterEntryOut,
     SimIssueOut,
     StepMetaOut,
@@ -989,9 +990,7 @@ def scope_import_result(
         workings=workings,
         breakdowns=import_breakdowns(
             served,
-            tuple(
-                c.code for c in sorted(ctx.baseline.schedule.categories, key=lambda c: c.rank)
-            ),
+            tuple(c.code for c in sorted(ctx.baseline.schedule.categories, key=lambda c: c.rank)),
         ),
     )
 
@@ -1039,17 +1038,131 @@ def without_projects(ctx: WhatIfContext, ids: frozenset[str]) -> WhatIfContext:
     return dataclasses.replace(ctx, baseline=dataclasses.replace(ctx.baseline, schedule=schedule))
 
 
+def excluded_plan_project_ids(
+    ctx: WhatIfContext, body: ImportSimulateRequest, removed: frozenset[str]
+) -> frozenset[str]:
+    """ADR 0055 D2: the unticked plan projects (`exclude_plan_project_ids`)
+    that this request actually takes out of both runs.
+
+    Merge mode only (a non-empty list in file_only is 422). Each id must be
+    unique and one of `plan_projects_out` (a schedulable plan project of the
+    baseline in the caller's scope); anything else is answered like an
+    unknown id (422, no existence leak). An id that an
+    included schedulable file row matches is not an error: that row replaces
+    the project, so it is not taken out (the before run keeps it, like any
+    replaced project). An id the file already removes (On Hold row) is not
+    counted twice."""
+
+    ids = body.exclude_plan_project_ids
+    if not ids:
+        return frozenset()
+    if body.mode != "merge":
+        raise invalid_import("exclude_plan_project_ids applies to merge mode only")
+    if len(set(ids)) != len(ids):
+        raise invalid_import("exclude_plan_project_ids: duplicated project id")
+    pickable = {p.id for p in plan_projects_out(without_projects(ctx, removed), body.mode)}
+    for pid in ids:
+        if pid not in pickable:
+            raise invalid_import(f"exclude_plan_project_ids: unknown project id {pid!r}")
+    replaced = {
+        r.matched_project_id
+        for r in body.rows
+        if r.include and r.status in dc.SCHEDULABLE_STATUS_ORDER and r.matched_project_id
+    }
+    return frozenset(pid for pid in ids if pid not in replaced and pid not in removed)
+
+
+def plan_projects_out(ctx: WhatIfContext, mode: str) -> list[PlanProjectOut]:
+    """ADR 0055 D2: every in-scope plan project that could be in the run
+    (before `exclude_plan_project_ids`), for the scenario tick list: a
+    baseline project in the caller's scope whose status is schedulable (On
+    Hold / Cancelled / Commercialized plan projects are never run, so they
+    cannot be ticked). `[]` in file_only. Order: hub, then name, then id."""
+
+    if mode != "merge":
+        return []
+    rows = [
+        PlanProjectOut(
+            id=p.project_id,
+            name=p.name,
+            hub=p.hub,
+            category=p.category,
+            priority=p.priority,
+            status=p.status,
+        )
+        for p in ctx.baseline.schedule.projects
+        if ctx.scope.hub_ok(p.hub) and p.status in dc.SCHEDULABLE_STATUS_ORDER
+    ]
+    rows.sort(key=lambda r: (r.hub, r.name.casefold(), r.id))
+    return rows
+
+
+#: P40 (ADR 0054 R40-12): a matched plan project the file replaces loses its
+#: manual pins in the simulation (the file is the newer truth).
+PIN_DROPPED = "PIN_DROPPED"
+
+
+def pin_dropped_issues(
+    ctx: WhatIfContext, body: ImportSimulateRequest, existing: Sequence[SimIssueOut]
+) -> list[SimIssueOut]:
+    """One `PIN_DROPPED` info issue per included schedulable file row whose
+    matched plan project carries pins in the baseline (merge mode). The ref is
+    the file row's key, which the caller sees already; no pin weeks are
+    disclosed. Not repeated when the engine already reported it."""
+
+    if body.mode != "merge":
+        return []
+    pinned = {p.project_id for p in ctx.baseline.schedule.projects if p.step_pins}
+    if not pinned:
+        return []
+    already = {(i.ref, i.code) for i in existing}
+    out: list[SimIssueOut] = []
+    for r in body.rows:
+        if (
+            not r.include
+            or r.status not in dc.SCHEDULABLE_STATUS_ORDER
+            or r.matched_project_id is None
+            or r.matched_project_id not in pinned
+            or (r.key, PIN_DROPPED) in already
+        ):
+            continue
+        hub = ctx.project_hub.get(r.matched_project_id)
+        if hub is None or not ctx.scope.hub_ok(hub):
+            continue
+        out.append(
+            SimIssueOut(
+                ref=r.key,
+                severity="info",
+                code=PIN_DROPPED,
+                message=(
+                    "The matched plan project has manual step weeks; the file replaces it, "
+                    "so they are not used in this simulation."
+                ),
+            )
+        )
+        already.add((r.key, PIN_DROPPED))
+    return out
+
+
 async def do_import_simulate(
     ctx: WhatIfContext, body: ImportSimulateRequest
 ) -> ImportSimulateResponse:
-    ctx = without_projects(ctx, removed_project_ids(ctx, body))
+    removed = removed_project_ids(ctx, body)
+    excluded = excluded_plan_project_ids(ctx, body, removed)
+    ctx = without_projects(ctx, removed)
+    pickable = plan_projects_out(ctx, body.mode)
+    ctx = without_projects(ctx, excluded)
     er = to_engine_request(ctx, body)
     raw = await run_capped(
         lambda: _run_or_error(ctx, er.request), WHATIF_TIME_CAP_SECONDS, user_key=ctx.user_key
     )
     if isinstance(raw, ValueError):
         raise invalid_import(str(raw))
-    return scope_import_result(ctx, er, raw)
+    result = scope_import_result(ctx, er, raw)
+    result.issues.extend(pin_dropped_issues(ctx, body, result.issues))
+    result.kpis.plan_excluded = len(excluded)
+    result.plan_projects = pickable
+    return result
 
 
 async def audit_import_simulate(
@@ -1078,6 +1191,7 @@ async def audit_import_simulate(
         "auto_leaders": sum(1 for r in included if r.leader.kind == "auto"),
         "new_leaders": sum(1 for r in included if r.leader.kind == "new"),
         "edits": len(body.edits),
+        "plan_excluded": len(body.exclude_plan_project_ids),
         "request_digest": digest_of(body.model_dump(mode="json")),
     }
     k = result.kpis

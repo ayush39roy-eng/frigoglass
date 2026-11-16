@@ -19,6 +19,9 @@ the one DB read they share.
     yearly_lab_capacity         = Σ efficient_lab_weeks over the region's chambers
     remaining_lab_capacity      = yearly_lab_capacity × (52 − CURRENT_WEEK) / 52
 
+`CURRENT_WEEK` is the caller's calendar week (`services.plan_clock`, ADR 0052
+§4 (c)); every function takes it as a required argument (P37-T04).
+
 DOMAIN_RULES writes the literal 52. The per-hub formulas use the calendar's
 `weeks_in_year` (seeded 52, so the results are identical), because ADR 0008
 says each hub uses its *own* remaining fraction. The chamber formulas have no
@@ -72,9 +75,7 @@ class CalendarFigures:
     remaining_working_weeks: float
 
 
-def calendar_figures(
-    calendar: HubWorkCalendar | None, current_week: int = dc.CURRENT_WEEK
-) -> CalendarFigures:
+def calendar_figures(calendar: HubWorkCalendar | None, current_week: int) -> CalendarFigures:
     """Per-hub calendar intermediates. A hub with no calendar row has zero
     deductions (the whole year is working time). That is a data gap, not a
     formula choice; every seeded hub has a calendar.
@@ -178,7 +179,7 @@ def fte_sum(values: Iterable[object]) -> float:
 
 
 def design_capacity(
-    calendar: HubWorkCalendar | None, fte: float, current_week: int = dc.CURRENT_WEEK
+    calendar: HubWorkCalendar | None, fte: float, current_week: int
 ) -> tuple[float, float]:
     """ADR 0008 `(yearly, remaining)` design capacity for `fte` FTE on the
     hub's calendar, full precision. One engineer: their own fte; a hub: Σ fte.
@@ -208,7 +209,7 @@ def chamber_figures(chamber: Chamber, region_holidays: float) -> ChamberFigures:
     )
 
 
-def lab_remaining_fraction(current_week: int = dc.CURRENT_WEEK) -> float:
+def lab_remaining_fraction(current_week: int) -> float:
     year = float(dc.WITHIN_YEAR_WEEK)
     return max(0.0, year - current_week) / year
 

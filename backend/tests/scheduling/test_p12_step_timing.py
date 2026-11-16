@@ -40,6 +40,7 @@ from scheduling import (
     run_greedy_sgs,
     validate_invariants,
 )
+from scheduling._selftest_common import SELFTEST_WEEK
 from scheduling.monte_carlo import _perturbed_step_timing
 from tests.scheduling._fixtures import progress
 
@@ -91,7 +92,9 @@ def _project(pid: str = "p", **kw: object) -> ProjectInput:
 
 
 def _si(*projects: ProjectInput, **kw: object) -> ScheduleInput:
-    base: dict[str, object] = dict(projects=projects, engineers=(ENG_A,), chambers=(CH_GR,))
+    base: dict[str, object] = dict(
+        projects=projects, engineers=(ENG_A,), chambers=(CH_GR,), current_week=SELFTEST_WEEK
+    )
     base.update(kw)
     return ScheduleInput(**base)  # type: ignore[arg-type]
 

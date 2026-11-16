@@ -283,6 +283,9 @@ def row_span_fte(
 
     if frozen or run_step.assigned_engineer_id is None:
         return None
+    # P40 (ADR 0054 R40-3): a pinned row sits on its pin; no FTE span.
+    if run_step.pinned:
+        return None
     if run_step.span_fte is not None:
         return float(run_step.span_fte)
     if fte_by_engineer is None:
@@ -710,8 +713,12 @@ async def list_activity(
 
 
 async def build_workspace(
-    db: AsyncSession, project: Project, principal: Principal
+    db: AsyncSession, project: Project, principal: Principal, *, current_week: int
 ) -> WorkspaceRead:
+    """P37-T04: `current_week` is the request's calendar week (the P1
+    capacity fill's remaining supply, ADR 0052 §4 (c)). The health badge reads
+    the active run's stored week (I13)."""
+
     run: ScheduleRun | None = await get_active_run(db)
 
     templates = (
@@ -906,7 +913,9 @@ async def build_workspace(
         outcome,
         run_steps,
         live_by_step,
-        run.current_week if run is not None else dc.CURRENT_WEEK,
+        # I13 (restated at P37-T01): the run's stored week; without a run the
+        # badge is "unscheduled" and the week is not compared.
+        run.current_week if run is not None else current_week,
         fte_by_engineer=fte_by_engineer,
         frozen=project.frozen,
     )
@@ -920,7 +929,9 @@ async def build_workspace(
         # P25-T03 (ADR 0036): the same one-pass loader as the Matrix. The
         # project is already scoped (`get_scoped_project_or_404`); the walk
         # uses every project of its hub, so the fill equals its Matrix row's.
-        fill = await compute_capacity_fill(db, {project.hub_id}, active_run=run)
+        fill = await compute_capacity_fill(
+            db, {project.hub_id}, active_run=run, current_week=current_week
+        )
         row_fill = fill.for_row(project.id, project.hub_id, score.suggested_band)
         # ADR 0037: the dimension list and completeness from the rubric tables.
         rubric = await load_rubric(db)

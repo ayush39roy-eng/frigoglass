@@ -1,6 +1,6 @@
 import { PROJECT_PRIORITIES, type ProjectPriority } from '@/types/enums';
 
-import type { BandRankPlacement, PriorityBoardCard, PriorityBoardColumn } from '../api';
+import type { BandRankAnchorPlacement, PriorityBoardCard, PriorityBoardColumn } from '../api';
 
 /**
  * Presentation-only helpers for the Priority board (ADR 0018, ADR 0050). Grouping,
@@ -18,7 +18,11 @@ import type { BandRankPlacement, PriorityBoardCard, PriorityBoardColumn } from '
  */
 export interface BoardOverride {
   priority: ProjectPriority;
-  placement?: BandRankPlacement;
+  /** Shown at this place among the visible cards of its own column. */
+  placement?: BandRankAnchorPlacement;
+  /** A re-rank by position (↑ / ↓ / typed, owner request 2026-11-17) whose target
+   *  card is not visible: the card stays where it is, marked pending. */
+  rankPending?: true;
 }
 
 export type BoardOverrides = Readonly<Record<string, BoardOverride>>;
@@ -42,7 +46,7 @@ export interface DisplayColumn {
 }
 
 /** Insert `item` before / after its anchor among `cards`; at the end when the anchor is not shown. */
-function place(cards: DisplayCard[], item: DisplayCard, placement: BandRankPlacement): DisplayCard[] {
+function place(cards: DisplayCard[], item: DisplayCard, placement: BandRankAnchorPlacement): DisplayCard[] {
   const anchorId = placement.before_project_id ?? placement.after_project_id;
   const index = anchorId === null ? -1 : cards.findIndex((c) => c.card.project_id === anchorId);
   if (index < 0) return [...cards, item];
@@ -68,12 +72,16 @@ export function applyOverrides(columns: readonly PriorityBoardColumn[], override
   }
   return columns.map((column) => {
     let kept: DisplayCard[] = [];
-    const reranked: { item: DisplayCard; placement: BandRankPlacement }[] = [];
+    const reranked: { item: DisplayCard; placement: BandRankAnchorPlacement }[] = [];
     for (const card of column.cards) {
       const o = overrides[card.project_id];
       if (o && o.priority !== column.priority) continue;
       if (o?.placement) {
         reranked.push({ item: { card, servedPriority: column.priority, pending: true }, placement: o.placement });
+        continue;
+      }
+      if (o?.rankPending) {
+        kept.push({ card, servedPriority: column.priority, pending: true });
         continue;
       }
       kept.push({ card, servedPriority: column.priority, pending: false });
@@ -137,7 +145,7 @@ export function isNoopSlot(slot: number, draggedIndex: number): boolean {
  * below the last visible card → `after` it, so a drop on a filtered board lands
  * right after that card instead of jumping past hidden ones. `null` = no move.
  */
-export function placementForSlot(cards: readonly DisplayCard[], slot: number, draggedId: string): BandRankPlacement | null {
+export function placementForSlot(cards: readonly DisplayCard[], slot: number, draggedId: string): BandRankAnchorPlacement | null {
   const draggedIndex = cards.findIndex((c) => c.card.project_id === draggedId);
   if (draggedIndex < 0 || slot < 0 || slot > cards.length || isNoopSlot(slot, draggedIndex)) return null;
   const below = cards[slot];
@@ -160,13 +168,55 @@ export function slotForIndex(index: number, draggedIndex: number): number {
  * anchor (the band closes the gap the card leaves). The server decides the rank
  * written; this never feeds anything back. Null when a rank is not served.
  */
-export function positionForPlacement(cards: readonly DisplayCard[], draggedId: string, placement: BandRankPlacement): number | null {
+export function positionForPlacement(cards: readonly DisplayCard[], draggedId: string, placement: BandRankAnchorPlacement): number | null {
   const own = cards.find((c) => c.card.project_id === draggedId)?.card.band_rank ?? null;
   const anchorId = placement.before_project_id ?? placement.after_project_id;
   const anchor = cards.find((c) => c.card.project_id === anchorId)?.card.band_rank ?? null;
   if (own === null || anchor === null) return null;
   if (placement.before_project_id !== null) return anchor > own ? anchor - 1 : anchor;
   return anchor < own ? anchor + 1 : anchor;
+}
+
+/**
+ * Owner request 2026-11-17: where to SHOW a card re-ranked to `toRank` (↑ / ↓ /
+ * typed) while the move is confirmed — next to the visible card that holds
+ * `toRank` now (before it when moving up, after it when moving down). Display
+ * only; the request itself carries `to_rank`. Null when that card is not shown
+ * (filtered board, other hubs) or no rank is served: the card then stays put.
+ */
+export function displayPlacementForRank(
+  cards: readonly DisplayCard[],
+  draggedId: string,
+  toRank: number,
+): BandRankAnchorPlacement | null {
+  const own = cards.find((c) => c.card.project_id === draggedId)?.card.band_rank ?? null;
+  if (own === null || toRank === own) return null;
+  const anchor = cards.find((c) => c.card.project_id !== draggedId && c.card.band_rank === toRank);
+  if (!anchor) return null;
+  return toRank < own
+    ? { before_project_id: anchor.card.project_id, after_project_id: null }
+    : { before_project_id: null, after_project_id: anchor.card.project_id };
+}
+
+/**
+ * Owner request 2026-11-17: the served card is the LAST of its full band. Known
+ * only when the column shows the whole band — no filter, no hub / country
+ * selection, a session scoped to every hub — and then it is the last card of the
+ * served column (the served order is the band order). Otherwise unknown (false), and the server's `BAD_RANK` answers
+ * a ↓ past the end. Never derives or shows a band size (P36-R02).
+ */
+export function lastServedIdIfFullBand(column: PriorityBoardColumn, fullBandShown: boolean): string | null {
+  if (!fullBandShown) return null;
+  const last = column.cards[column.cards.length - 1];
+  return last && typeof last.band_rank === 'number' ? last.project_id : null;
+}
+
+/** A typed position: a whole number ≥ 1 (digits only), else null. */
+export function parseTypedRank(raw: string): number | null {
+  const text = raw.trim();
+  if (!/^\d+$/.test(text)) return null;
+  const n = Number(text);
+  return Number.isSafeInteger(n) && n >= 1 ? n : null;
 }
 
 /** P36: the drag handle's accessible name — a hard-gated P1 card can only be reordered within P1. */

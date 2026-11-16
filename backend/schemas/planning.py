@@ -171,7 +171,11 @@ class ResourceLoadFilters(BaseModel):
 class ResourceLoadResponse(BaseModel):
     has_active_schedule_run: bool
     schedule_run_version: int | None
+    #: P37-T04 (API_CONTRACT_P37 §2): the calendar week.
     current_week: int
+    #: P37-T04: the active run's stored week (the response is run-booked),
+    #: null without an active run.
+    run_week: int | None = None
     basis: CapacityBasis
     engineers: list[EngineerResourceLoad]
     chambers: list[ChamberResourceLoad]

@@ -96,6 +96,7 @@ from schemas.dashboard import (
     CompletingWithinYear,
     CompletingWithinYearRow,
     DashboardAnalytics,
+    DeliveryRegionRow,
     HubTypePipelineRow,
     NamedId,
     PipelineTotals,
@@ -115,6 +116,7 @@ from services.categories import load_catalog
 from services.category_type_filter import any_of, category_type_filter
 from services.expected_status import expected_status_for, status_mismatch
 from services.hub_scope import HubIdsArg, RegionsArg, narrowed_hub_filter
+from services.plan_clock import PlanClock, get_plan_clock
 from services.project_cards import build_project_cards
 from services.text_search import project_search_filter
 
@@ -428,6 +430,7 @@ async def completing_within_year(
             priority_delivery=await _priority_delivery(
                 db, None, current_user, hub_id, region, category, type_
             ),
+            regions=_delivery_regions({}),
         )
 
     stmt = (
@@ -443,7 +446,11 @@ async def completing_within_year(
     result = await db.execute(stmt.order_by(Project.name, Project.id))
     rows: list[CompletingWithinYearRow] = []
     within_year_count = spillover_count = left_out_count = blocked_count = 0
+    # Owner request 2026-11-16: the same buckets per lab region (the hub's
+    # `lab_region`, as ADR 0025's country filter and /region-summary use).
+    by_region: dict[LabRegion, dict[str, int]] = {}
     for outcome, project, has_progress in result.all():
+        bucket: str | None
         # P9-F02: Blocked is an exclusive bucket — a project the active run
         # marked `blocked=True` counts ONLY here, never also in
         # within_year/spillover/left_out, even on the (currently believed
@@ -452,12 +459,21 @@ async def completing_within_year(
         # docstring on `blocked_count`.
         if outcome.blocked:
             blocked_count += 1
+            bucket = "blocked_count"
         elif outcome.within_year:
             within_year_count += 1
+            bucket = "within_year_count"
         elif outcome.spillover:
             spillover_count += 1
+            bucket = "spillover_count"
         elif outcome.left_out:
             left_out_count += 1
+            bucket = "left_out_count"
+        else:
+            bucket = None
+        if bucket is not None:
+            counts = by_region.setdefault(project.hub.lab_region, {})
+            counts[bucket] = counts.get(bucket, 0) + 1
         rows.append(
             CompletingWithinYearRow(
                 project_id=project.id,
@@ -488,7 +504,24 @@ async def completing_within_year(
         priority_delivery=await _priority_delivery(
             db, active_run.id, current_user, hub_id, region, category, type_
         ),
+        regions=_delivery_regions(by_region),
     )
+
+
+def _delivery_regions(by_region: dict[LabRegion, dict[str, int]]) -> list[DeliveryRegionRow]:
+    """`CompletingWithinYear.regions`: Greece, India, Romania in that order
+    (`_REGION_ORDER`, as /region-summary), zero rows included."""
+
+    return [
+        DeliveryRegionRow(
+            region=r,
+            within_year_count=by_region.get(r, {}).get("within_year_count", 0),
+            spillover_count=by_region.get(r, {}).get("spillover_count", 0),
+            left_out_count=by_region.get(r, {}).get("left_out_count", 0),
+            blocked_count=by_region.get(r, {}).get("blocked_count", 0),
+        )
+        for r in _REGION_ORDER
+    ]
 
 
 @router.get("/region-summary", response_model=RegionSummary)
@@ -804,6 +837,7 @@ async def analytics_projects(
     sort: Literal["name", "priority"] = "name",
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> ProjectFilterResult:
     """ "An analytics breakdown with filters (by hub, category, status,
     priority)" (`docs/PROJECT_AND_STACK.md` §2), hub-scoped (P3-T03), upgraded
@@ -840,7 +874,7 @@ async def analytics_projects(
     active_run = await get_active_run(db)
     # P12 (ADR 0021 §4): tracking status comes from the card builder, which
     # calls the one tracking-status implementation (`services.tracking`).
-    cards = await build_project_cards(db, projects, active_run)
+    cards = await build_project_cards(db, projects, active_run, current_week=clock.week)
     if current_step:
         steps = set(current_step)
         projects = [
@@ -931,6 +965,7 @@ async def analytics_project_facets(
     type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> ProjectFacets:
     """P13 §3: the leader and current-step values present in the caller's
     scoped, hub/region-filtered set, so the register's dropdowns only offer
@@ -940,7 +975,9 @@ async def analytics_project_facets(
         current_user, hub_id=hub_id, region=region, category=category, type_=type_
     )
     projects = list((await db.execute(stmt)).scalars().all())
-    cards = await build_project_cards(db, projects, await get_active_run(db))
+    cards = await build_project_cards(
+        db, projects, await get_active_run(db), current_week=clock.week
+    )
 
     leaders: dict[uuid.UUID, NamedId] = {}
     for p in projects:

@@ -39,6 +39,7 @@ from models.hub import Hub, HubWorkCalendar
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep
+from services import plan_clock
 from services.rate_limit import TokenBucketLimiter
 from services.whatif_baseline import load_context
 from tests.auth_helpers import (
@@ -280,7 +281,9 @@ async def test_simulate_adds_projects_and_matches_the_engine(db_session):
     assert sum(body["outcome_counts_after"].values()) == 6 + 3
     assert sum(body["outcome_counts_before"].values()) == 6
     # The wire figures are the pure engine's own, derived from the whole plan.
-    ctx = await load_context(db_session, make_principal(RoleName.PORTFOLIO_MANAGER))
+    ctx = await load_context(
+        db_session, make_principal(RoleName.PORTFOLIO_MANAGER), clock=plan_clock.now()
+    )
     raw = simulate(
         ctx.baseline, Scenario(add_projects=(AddProject(hub="R&D-Greece", category="C", count=3),))
     )

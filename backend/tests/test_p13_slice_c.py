@@ -40,6 +40,7 @@ from models.project import Project
 from scheduling.greedy import run_greedy_sgs
 from seed import seed_demo_data
 from services.schedule_persistence import build_schedule_input_from_db, persist_schedule_output
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
@@ -86,7 +87,7 @@ async def _seeded(db_session) -> SimpleNamespace:
     await seed_demo_data.seed_chambers(db_session)
     await seed_demo_data.seed_projects(db_session, data, hubs, engineers)
     await db_session.flush()
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     output = run_greedy_sgs(schedule_input)
     run = await persist_schedule_output(
         db_session, schedule_input, output, solver_type=SolverType.GREEDY,
@@ -642,8 +643,8 @@ async def test_me_serves_current_week_and_weeks_left(db_session):
     await _act_as(db_session, RoleName.EXECUTIVE_VIEWER)
     async with _client(db_session) as client:
         body = await _get(client, "/me")
-    assert body["current_week"] == dc.CURRENT_WEEK
-    assert body["weeks_left_in_year"] == max(0, 52 - dc.CURRENT_WEEK)
+    assert body["current_week"] == TEST_WEEK
+    assert body["weeks_left_in_year"] == max(0, 52 - TEST_WEEK)
     assert body["weeks_left_in_year"] == dc.WITHIN_YEAR_WEEK - body["current_week"]
 
 

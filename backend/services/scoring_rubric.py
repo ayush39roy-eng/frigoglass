@@ -484,7 +484,12 @@ class PreviewRow:
 
 
 async def preview_rubric(
-    db: AsyncSession, principal: Principal, current: Rubric, proposed: Rubric
+    db: AsyncSession,
+    principal: Principal,
+    current: Rubric,
+    proposed: Rubric,
+    *,
+    current_week: int,
 ) -> list[PreviewRow]:
     """Old (stored, = current rubric) vs new (proposed) normalized score,
     score band and suggested band (after the P1 capacity fill, ADR 0036) of
@@ -503,9 +508,12 @@ async def preview_rubric(
         for p in projects
     }
     hubs: Collection[uuid.UUID] = {p.hub_id for p in projects}
-    old_fill = await compute_capacity_fill(db, hubs)
+    old_fill = await compute_capacity_fill(db, hubs, current_week=current_week)
     new_fill = await compute_capacity_fill(
-        db, hubs, normalized_override={pid: r.normalized_pct for pid, r in new_results.items()}
+        db,
+        hubs,
+        normalized_override={pid: r.normalized_pct for pid, r in new_results.items()},
+        current_week=current_week,
     )
     out: list[PreviewRow] = []
     for p in sorted(projects, key=lambda x: (x.name.lower(), str(x.id))):

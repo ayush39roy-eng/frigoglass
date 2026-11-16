@@ -278,12 +278,34 @@ def _norm_header(value: Any) -> str:
     return " ".join(str(value).split()).casefold()
 
 
-def _match_headers(cells: Sequence[Any]) -> dict[str, int]:
+#: The parser's fields, in the built-in order (ADR 0055 D1 `FIELD_KEYS`).
+FIELD_KEYS: tuple[str, ...] = tuple(_FIELDS)
+
+#: field -> header aliases. The built-in set is `_FIELDS`; a stored import
+#: format (ADR 0055 D1) passes its own through `aliases=`.
+FieldAliases = Mapping[str, Sequence[str]]
+
+
+def default_field_aliases() -> dict[str, tuple[str, ...]]:
+    """A copy of the built-in aliases (ADR 0055 D1: the default format)."""
+
+    return {k: tuple(v) for k, v in _FIELDS.items()}
+
+
+def norm_alias(value: Any) -> str:
+    """An alias normalised the way a header cell is (casefold, single spaces)."""
+
+    return _norm_header(value)
+
+
+def _match_headers(
+    cells: Sequence[Any], aliases_by_field: FieldAliases = _FIELDS
+) -> dict[str, int]:
     normed = [_norm_header(c) for c in cells]
     found: dict[str, int] = {}
     used: set[int] = set()
     for exact in (True, False):
-        for fld, aliases in _FIELDS.items():
+        for fld, aliases in aliases_by_field.items():
             if fld in found:
                 continue
             for idx, h in enumerate(normed):
@@ -453,8 +475,21 @@ def _read_steps_sheet(
     return table if found_section else None
 
 
-def read_workbook(data: bytes) -> RawWorkbook:
-    """Layer 1: find the two sheets and read the known columns."""
+def _is_default(aliases_by_field: FieldAliases) -> bool:
+    return (
+        aliases_by_field is _FIELDS or {k: tuple(v) for k, v in aliases_by_field.items()} == _FIELDS
+    )
+
+
+def _expected_headers(aliases_by_field: FieldAliases) -> str:
+    if _is_default(aliases_by_field):
+        return _EXPECTED_HEADERS
+    return ", ".join(" / ".join(a) for a in aliases_by_field.values() if a)
+
+
+def read_workbook(data: bytes, aliases: FieldAliases = _FIELDS) -> RawWorkbook:
+    """Layer 1: find the two sheets and read the known columns. `aliases` is
+    the import format (ADR 0055 D1); the default is the built-in `_FIELDS`."""
 
     wb = _open(data)
     try:
@@ -463,17 +498,28 @@ def read_workbook(data: bytes) -> RawWorkbook:
         projects: tuple[str, int, dict[str, int], Any] | None = None
         for ws in sheets:
             for r_idx, row in enumerate(_sheet_rows(ws, HEADER_SCAN_ROWS), start=1):
-                found = _match_headers(row)
+                found = _match_headers(row, aliases)
                 if _is_header(found):
                     projects = (ws.title, r_idx, found, ws)
                     break
             if projects is not None:
                 break
         if projects is None:
+            if _is_default(aliases):
+                need = "'Project description' and 'Status' or 'RPD HUB'"
+            else:
+                need = " and ".join(
+                    (
+                        "'" + " / ".join(aliases.get("name", ())) + "'",
+                        "'"
+                        + " / ".join((*aliases.get("status", ()), *aliases.get("hub", ())))
+                        + "'",
+                    )
+                )
             raise ImportFormatError(
                 "No projects sheet found: expected a header row (within the first "
-                f"{HEADER_SCAN_ROWS} rows) with at least 'Project description' and 'Status' or "
-                f"'RPD HUB'. Recognised headers: {_EXPECTED_HEADERS}."
+                f"{HEADER_SCAN_ROWS} rows) with at least {need}. "
+                f"Recognised headers: {_expected_headers(aliases)}."
             )
         title, header_row, cols, ws = projects
         raw_rows: list[RawRow] = []
@@ -972,12 +1018,9 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
         stage_raw = _text(v.get("stage"), _RAW_MAX)
         stage_code = _step_code(stage_raw)
         # P33-T07: a category added in the app (not a workbook spelling).
-        table_code = (
-            None if ncat in _CATEGORY_BASE else table_codes.get(ncat) if ncat else None
-        )
+        table_code = None if ncat in _CATEGORY_BASE else table_codes.get(ncat) if ncat else None
         cat_is_oem = ncat in ("a-oem", "b-oem", "c-oem") or (
-            table_code is not None
-            and ctx.categories[table_code] == dc.WORKFLOW_ID_FOR_OEM_HUB
+            table_code is not None and ctx.categories[table_code] == dc.WORKFLOW_ID_FOR_OEM_HUB
         )
         stage_is_oem = stage_code is not None and stage_code.startswith("OEM-")
         if hub not in dc.OEM_HUBS and (cat_is_oem or stage_is_oem):
@@ -1347,7 +1390,11 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
     )
 
 
-def parse_plan_workbook(data: bytes, ctx: ParseContext) -> ParseResult:
+def parse_plan_workbook(
+    data: bytes, ctx: ParseContext, aliases: FieldAliases = _FIELDS
+) -> ParseResult:
+    """`aliases`: the stored import format (ADR 0055 D1); default built-in."""
+
     if len(data) > MAX_FILE_BYTES:
         raise ImportFormatError("The file is larger than 5 MB.")
-    return map_rows(read_workbook(data), ctx)
+    return map_rows(read_workbook(data, aliases), ctx)

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { HardHat, Pencil, Trash2 } from 'lucide-react';
+import { HardHat, Pencil, RotateCcw, UserX } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,8 @@ import { HUB_NAMES, type LabRegion } from '@/types/enums';
 
 import type { EngineerRead } from '../api/types';
 import { groupRows } from '../lib/group-rows';
+import { isInactive, reasonLabel } from '../lib/deactivation';
+import { InactiveTag } from './inactive-tag';
 
 /**
  * Plain (non-virtualized) table — engineer rows number in the tens per hub in
@@ -34,11 +36,19 @@ export type EngineerTableRow = EngineerRead & { hubName: string; hubRegion?: Lab
 export interface EngineerTableProps {
   rows: EngineerTableRow[];
   canEdit: boolean;
+  /** P38 (ADR 0053 §1): Admin / Super Admin may deactivate and reactivate (OQ #93). */
+  canChangeStatus: boolean;
   onEdit: (row: EngineerRead) => void;
-  onDelete: (row: EngineerRead) => void;
+  onDeactivate: (row: EngineerRead) => void;
+  onReactivate: (row: EngineerRead) => void;
 }
 
-export function EngineerTable({ rows, canEdit, onEdit, onDelete }: EngineerTableProps): React.JSX.Element {
+/**
+ * P38-T06: Delete is gone (DELETE answers 410). An active row offers Edit and,
+ * for an Admin, Deactivate; an inactive row carries the "Inactive" tag and
+ * offers Reactivate (Admin) and Edit, which changes the name only (ADR 0053 §7).
+ */
+export function EngineerTable({ rows, canEdit, canChangeStatus, onEdit, onDeactivate, onReactivate }: EngineerTableProps): React.JSX.Element {
   const groups = React.useMemo(() => groupRows(rows, (r) => r.hubName, HUB_NAMES), [rows]);
   const columns = canEdit ? 4 : 3;
   return (
@@ -76,7 +86,14 @@ export function EngineerTable({ rows, canEdit, onEdit, onDelete }: EngineerTable
                 <span className="font-semibold text-text">{row.name}</span>
                 {/* P29 (API_CONTRACT_P29 §3.3): served flag; an older API omits it. */}
                 {row.counts_in_capacity === false ? <NotInCapacityRosterBadge /> : null}
+                {isInactive(row) ? <InactiveTag /> : null}
               </span>
+              {isInactive(row) && row.deactivated_week != null ? (
+                <span className="ml-12 block text-2xs text-text-muted" data-testid="inactive-since">
+                  Since W{formatInteger(row.deactivated_week)}
+                  {reasonLabel(row.deactivation_reason) ? ` · ${reasonLabel(row.deactivation_reason) ?? ''}` : ''}
+                </span>
+              ) : null}
             </TableCell>
             <TableCell className="text-right tnum" data-numeric="">
               {formatFactor(row.fte)}
@@ -101,20 +118,14 @@ export function EngineerTable({ rows, canEdit, onEdit, onDelete }: EngineerTable
                     type="button"
                     variant="ghost"
                     size="icon"
-                    aria-label={`Edit ${row.name}`}
+                    aria-label={isInactive(row) ? `Edit name of ${row.name}` : `Edit ${row.name}`}
                     onClick={() => onEdit(row)}
                   >
                     <Pencil />
                   </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Delete ${row.name}`}
-                    onClick={() => onDelete(row)}
-                  >
-                    <Trash2 />
-                  </Button>
+                  {canChangeStatus ? (
+                    <StatusAction row={row} onDeactivate={onDeactivate} onReactivate={onReactivate} />
+                  ) : null}
                 </div>
               </TableCell>
             ) : null}
@@ -124,5 +135,46 @@ export function EngineerTable({ rows, canEdit, onEdit, onDelete }: EngineerTable
         );
       })}
     </Table>
+  );
+}
+
+/** Deactivate on an active row, Reactivate on an inactive one (Admin only). */
+export function StatusAction({
+  row,
+  onDeactivate,
+  onReactivate,
+  className,
+}: {
+  row: EngineerRead;
+  onDeactivate: (row: EngineerRead) => void;
+  onReactivate: (row: EngineerRead) => void;
+  className?: string;
+}): React.JSX.Element {
+  return isInactive(row) ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className={className}
+      aria-label={`Reactivate ${row.name}`}
+      title="Reactivate"
+      aria-haspopup="dialog"
+      onClick={() => onReactivate(row)}
+    >
+      <RotateCcw />
+    </Button>
+  ) : (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className={className}
+      aria-label={`Deactivate ${row.name}`}
+      title="Deactivate"
+      aria-haspopup="dialog"
+      onClick={() => onDeactivate(row)}
+    >
+      <UserX />
+    </Button>
   );
 }

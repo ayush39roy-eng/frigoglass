@@ -41,7 +41,7 @@ from __future__ import annotations
 import dataclasses
 import math
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any
 
@@ -52,7 +52,10 @@ from scheduling.types import (
     LeadTime,
     ProjectInput,
     ScheduleInput,
+    ScheduleOutput,
+    StepPinInput,
     StepProgressInput,
+    StepSchedule,
     StepTimingInput,
     WorkflowStepTemplate,
     default_categories,
@@ -444,6 +447,22 @@ class ProjectPlan:
     progress_tracked: bool  # any non-skipped step with status != Not Started
     blocked: bool  # any non-skipped step with status == Blocked
     held_step_ids: frozenset[str]  # Blocked steps with remaining > 0 + their transitive successors
+    # ADR 0054 (P40, R40-4 / R40-9): the manual pins that apply, `step_id ->
+    # (ms, me)` as given (not yet lapsed, see `pin_windows`). A pin applies to
+    # a non-skipped step of a frozen project whatever its stage (frozen ignores
+    # progress, ADR 0006), and to a non-skipped Not Started step of a
+    # non-frozen project. A pin on a skipped step is inert (I33); on a started
+    # step of a non-frozen project it is ignored. A Blocked hold still wins:
+    # see `pinned_step_ids`. Empty for every project without pins.
+    pins: Mapping[str, tuple[int, int]] = field(default_factory=dict)
+
+    @property
+    def pinned_step_ids(self) -> frozenset[str]:
+        """The steps the schedulers place on a pin: `pins` minus the steps of
+        a Blocked hold (R40-4: a held pinned step is held as today, not placed
+        and nothing booked; the pin stays stored)."""
+
+        return frozenset(self.pins) - self.held_step_ids
 
     def step_plans_in_walk_order(self) -> tuple[StepPlan, ...]:
         return tuple(self.steps[sid] for sid in self.workflow.walk_order)
@@ -477,8 +496,11 @@ class ProjectPlan:
         `{q}` if `o(q) = 0`; `{q} ∪ ⋃R(p)` if `o(q) > 0`; `⋃R(p)` if `q` is
         skipped. `FRONTIER_SOURCE` stands for `frontier - 1` (a skipped first
         step), so `G(q) = max(end(r) for r in R(q))` with that convention.
-        Each tuple is sorted (I8)."""
+        Each tuple is sorted (I8). ADR 0054 (R40-7): a pinned step (in
+        `pinned_step_ids`) is treated like an overlapping one, `{q} ∪ ⋃R(p)`,
+        since it passes on `max(end, release)`; with no pin this is unchanged."""
 
+        pinned = self.pinned_step_ids
         out: dict[str, tuple[str, ...]] = {}
         for sid in self.workflow.walk_order:
             sp = self.steps[sid]
@@ -491,9 +513,11 @@ class ProjectPlan:
                 upstream.add(FRONTIER_SOURCE)
             if sp.skipped:
                 out[sid] = tuple(sorted(upstream))
-            elif sp.overlap_weeks == 0:
+            elif sp.overlap_weeks == 0 and sid not in pinned:
                 out[sid] = (sid,)
             else:
+                # ADR 0043 overlap, or an ADR 0054 pin (R40-7): `G(q) =
+                # max(end(q), release(q))` passes the upstream ends on.
                 out[sid] = tuple(sorted(upstream | {sid}))
         return out
 
@@ -609,6 +633,7 @@ def validate_schedulable_project(
             f"{project.workflow_id!r}"
         )
     validate_step_timing(project, wf, horizon_weeks=horizon_weeks)
+    validate_step_pins(project, wf, horizon_weeks=horizon_weeks)
 
 
 def validate_step_timing(project: ProjectInput, workflow: Workflow, *, horizon_weeks: int) -> None:
@@ -758,6 +783,165 @@ def canonical_step_timing_dict(row: StepTimingInput) -> dict[str, int | str | No
     return out
 
 
+# --- Manual step pins (ADR 0054 as ruled at P40-T02, R40-1..R40-8, R40-12) ---------------
+
+
+def _step_pin_sort_key(pin: StepPinInput) -> tuple[str, str, str]:
+    """Total, deterministic order over pins (I8), even for malformed values
+    (compared by `repr`, so a bool or float never breaks the sort)."""
+
+    return (str(pin.step_id), repr(pin.start_week), repr(pin.end_week))
+
+
+def _is_week_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def validate_step_pins(project: ProjectInput, workflow: Workflow, *, horizon_weeks: int) -> None:
+    """R40-12 input validation for `project.step_pins` (`ValueError`, never a
+    silent default): a `step_id` that is not a step of the project's
+    workflow, a step pinned more than once, or a pair outside the R40-1
+    scheduler domain `1 <= start_week <= end_week <= horizon_weeks` (ints, not
+    bools; the end is inclusive). The scheduler does not check `start_week >=
+    current_week`: R40-5 lapses such a pin instead."""
+
+    seen: set[str] = set()
+    for pin in sorted(project.step_pins, key=_step_pin_sort_key):
+        where = f"project {project.project_id!r}: step_pins for step {pin.step_id!r}"
+        if pin.step_id in seen:
+            raise ValueError(f"{where} appears more than once")
+        seen.add(pin.step_id)
+        if pin.step_id not in workflow.steps_by_id:
+            raise ValueError(f"{where}: not a step of workflow {workflow.workflow_id!r}")
+        start, end = pin.start_week, pin.end_week
+        if not (_is_week_int(start) and _is_week_int(end) and 1 <= start <= end <= horizon_weeks):
+            raise ValueError(
+                f"{where}: ({start!r}, {end!r}) is outside 1 <= start_week <= end_week <= "
+                f"{horizon_weeks} (the end week is inclusive)"
+            )
+
+
+def _applicable_pins(
+    project: ProjectInput, workflow: Workflow, plans: Mapping[str, StepPlan]
+) -> dict[str, tuple[int, int]]:
+    """`ProjectPlan.pins` (R40-4, R40-9): the first well-formed pin per known
+    step (sorted, so the choice is deterministic), kept only on a non-skipped
+    step that is Not Started or belongs to a frozen project. Tolerant like
+    the rest of `analyse_project` (the validator analyses any input); the run
+    rejects malformed pins earlier with `validate_step_pins`."""
+
+    out: dict[str, tuple[int, int]] = {}
+    for pin in sorted(project.step_pins, key=_step_pin_sort_key):
+        sid = pin.step_id
+        if sid in out or sid not in workflow.steps_by_id:
+            continue
+        start, end = pin.start_week, pin.end_week
+        if not (_is_week_int(start) and _is_week_int(end) and 1 <= start <= end):
+            continue
+        sp = plans.get(sid)
+        if sp is None or sp.skipped:
+            continue
+        if not project.frozen and sp.status != STATUS_NOT_STARTED:
+            continue
+        out[sid] = (start, end)
+    return dict(sorted(out.items()))
+
+
+@dataclass(frozen=True)
+class PinWindow:
+    """A pin's effective window in a run (R40-5): `start_week..end_week`
+    (inclusive) and whether it `lapsed` (differs from the stored pin)."""
+
+    step_id: str
+    start_week: int
+    end_week: int
+    lapsed: bool
+
+
+def pin_window(project: ProjectInput, pin: tuple[int, int], current_week: int) -> tuple[int, int]:
+    """R40-5 effective window of a pin `(ms, me)` at run week `cw`:
+    `(ms, me)` when the project is frozen or `ms >= cw`, else `(cw, cw + L -
+    1)` with `L = me - ms + 1` (a lapsed pin keeps its length)."""
+
+    ms, me = pin
+    if project.frozen or ms >= current_week:
+        return ms, me
+    return current_week, current_week + (me - ms)
+
+
+def pin_windows(
+    plan: ProjectPlan, current_week: int, *, include_held: bool = False
+) -> dict[str, PinWindow]:
+    """The effective windows of the pins the schedulers place
+    (`plan.pinned_step_ids`; with `include_held`, every applicable pin, which
+    is what the unconstrained finish uses), keyed and ordered by step id. A
+    window may end past the horizon: the caller makes the project LEFT_OUT."""
+
+    ids = frozenset(plan.pins) if include_held else plan.pinned_step_ids
+    out: dict[str, PinWindow] = {}
+    for sid in sorted(ids):
+        ms_me = plan.pins[sid]
+        a, b = pin_window(plan.project, ms_me, current_week)
+        out[sid] = PinWindow(sid, a, b, (a, b) != ms_me)
+    return out
+
+
+def pins_lapsed(plan: ProjectPlan, current_week: int) -> bool:
+    """`ProjectScheduleOutcome.pin_lapsed` (R40-5, I45): some placed pin's
+    effective window differs from the pin."""
+
+    return any(w.lapsed for w in pin_windows(plan, current_week).values())
+
+
+def pinned_release(end: int, release: int) -> int:
+    """R40-7: the release a pinned step passes on, `G(q) = max(end(q),
+    release(q))`, so successors still wait for every upstream step (F5)."""
+
+    return max(end, release)
+
+
+def is_manual_overlap(sp: StepPlan, start: int, release: int) -> bool:
+    """R40-7 / I47(a): a pinned row starting at `start` is `MANUAL_OVERLAP`
+    iff `start < release(s) + 1 - o(s)`, `o(s)` the step's template overlap
+    (0 in a frozen project). A wait is not part of it: a pin inside a wait
+    overrides the gap and is not flagged."""
+
+    return start < release + 1 - sp.overlap_weeks
+
+
+def manual_overlap_by_row(
+    plan: ProjectPlan, rows: Mapping[str, StepSchedule], frontier: int
+) -> dict[str, bool]:
+    """I47(a) evaluated on a solver's own rows: for every row with `pinned`
+    set, whether it is `MANUAL_OVERLAP`. `release` is recomputed from the
+    rows in walk order, with `G(q)` = a skipped row's week, a pinned row's
+    `max(end, release)`, an overlapping row's `max(end, release)` and any
+    other row's end. A pinned row whose release cannot be computed (a
+    predecessor row is missing: a LEFT_OUT project) is not flagged. Shared by
+    greedy and CP-SAT, so each evaluates the flag on its own rows."""
+
+    g: dict[str, int] = {}
+    out: dict[str, bool] = {}
+    for sid in plan.workflow.walk_order:
+        sp = plan.steps[sid]
+        preds = sp.step.predecessor_ids
+        release: int | None = None
+        if all(p in g for p in preds):
+            release = max((g[p] for p in preds), default=frontier - 1)
+        row = rows.get(sid)
+        if row is None:
+            continue
+        if row.pinned:
+            out[sid] = release is not None and is_manual_overlap(sp, row.start_week, release)
+            if release is not None:
+                g[sid] = pinned_release(row.end_week, release)
+        elif row.skipped or sp.skipped or sp.overlap_weeks == 0:
+            g[sid] = row.end_week
+        elif release is not None:
+            g[sid] = max(row.end_week, release)
+    return out
+
+
 def _category_triples(categories: Iterable[CategoryInput]) -> tuple[tuple[int, str, str], ...]:
     return tuple(sorted((c.rank, c.code, c.workflow_id) for c in categories))
 
@@ -790,8 +974,9 @@ def canonical_categories(
 def canonical_schedule_input_asdict(schedule_input: ScheduleInput) -> dict[str, Any]:
     """`dataclasses.asdict(schedule_input)` with the P33 defaults removed
     (R33-7): `wait_weeks` when 0 and `lead_weeks` when None on every step
-    timing row, and `categories` when it equals the seeded default; and the
-    P36 default (R36-1(g)): a project's `band_rank` when None. On an
+    timing row, and `categories` when it equals the seeded default; the
+    P36 default (R36-1(g)): a project's `band_rank` when None; and the P40
+    default (R40-12): a project's `step_pins` when empty. On an
     input that uses none of them the result equals the pre-P33 `asdict`
     exactly, so a hash over it (e.g. `services.priority_preview`'s token) is
     unchanged by the deploy. Non-default values are kept as `asdict` writes
@@ -803,6 +988,22 @@ def canonical_schedule_input_asdict(schedule_input: ScheduleInput) -> dict[str, 
         # before the field existed.
         if project.get("band_rank") is None:
             project.pop("band_rank", None)
+        # P40 (ADR 0054, R40-12, I48(a)): a project without pins serialises
+        # exactly as before the field existed; set pins are sorted by step id.
+        if "step_pins" in project:
+            if not project["step_pins"]:
+                del project["step_pins"]
+            else:
+                project["step_pins"] = tuple(
+                    sorted(
+                        project["step_pins"],
+                        key=lambda r: (
+                            str(r["step_id"]),
+                            repr(r["start_week"]),
+                            repr(r["end_week"]),
+                        ),
+                    )
+                )
         for row in project["step_timing"]:
             if row.get("wait_weeks") == 0:
                 del row["wait_weeks"]
@@ -810,6 +1011,30 @@ def canonical_schedule_input_asdict(schedule_input: ScheduleInput) -> dict[str, 
                 del row["lead_weeks"]
     if is_default_categories(schedule_input.categories):
         del data["categories"]
+    return data
+
+
+#: ADR 0054 (R40-12): output fields omitted from the canonical form at False.
+_OUTCOME_PIN_FLAGS: tuple[str, ...] = ("manual_overlap", "pin_lapsed")
+_STEP_PIN_FLAGS: tuple[str, ...] = ("pinned", "manual_overlap")
+
+
+def canonical_schedule_output_asdict(schedule_output: ScheduleOutput) -> dict[str, Any]:
+    """`dataclasses.asdict(schedule_output)` with the P40 output flags removed
+    at their default (R40-12, I48(a)): `pinned` / `manual_overlap` on every
+    step row and `manual_overlap` / `pin_lapsed` on every outcome, when
+    False. A run with no pin therefore serialises exactly as before P40; use
+    this (not `asdict`) wherever an output is hashed or stored as JSON."""
+
+    data = dataclasses.asdict(schedule_output)
+    for outcome in data["project_outcomes"]:
+        for key in _OUTCOME_PIN_FLAGS:
+            if outcome.get(key) is False:
+                del outcome[key]
+        for step in outcome["steps"]:
+            for key in _STEP_PIN_FLAGS:
+                if step.get(key) is False:
+                    del step[key]
     return data
 
 
@@ -1099,6 +1324,7 @@ def analyse_project(
         progress_tracked=tracked,
         blocked=blocked,
         held_step_ids=frozenset(held),
+        pins=_applicable_pins(project, workflow, plans) if project.step_pins else {},
     )
 
 
@@ -1141,6 +1367,10 @@ def unconstrained_end_week(plan: ProjectPlan, current_week: int) -> int | None:
     P33 (R33-4/R33-5): the gate includes a Not Started step's wait
     (`release + 1 + w`), a plan input like the floor.
 
+    P40 (ADR 0054, R40-8): a pinned step sits on its effective window
+    (`pin_windows`) and passes on `G = max(end, release)`; the one-leader rule
+    below also avoids the project's pinned design windows.
+
     P33 (R33-6) one-leader rule: a non-frozen, Not Started design step is
     placed at the first week `>= floor` whose window `[w, w + span)` does not
     intersect the window of any design step of the same project already
@@ -1159,12 +1389,27 @@ def unconstrained_end_week(plan: ProjectPlan, current_week: int) -> int | None:
     # R33-6: design windows of this project already placed, in walk order.
     design_windows: list[tuple[int, int]] = []
     one_leader = not plan.project.frozen
+    # ADR 0054 (R40-8): pins are plan inputs, placed on their effective
+    # windows (a Blocked hold is assumed to clear, as above, so every
+    # applicable pin counts). They are fixed before any search in the
+    # schedulers, so the one leader is busy in a pinned design window
+    # whatever the walk order. No pin: nothing below changes.
+    pins = pin_windows(plan, current_week, include_held=True) if plan.pins else {}
+    if one_leader:
+        for win in pins.values():
+            if plan.steps[win.step_id].step.kind == "design":
+                design_windows.append((win.start_week, win.end_week))
     for sid in plan.workflow.walk_order:
         sp = plan.steps[sid]
         release = release_week(sp.step, g, frontier)
         if sp.skipped:
             starts[sid] = ends[sid] = release
             g[sid] = release
+            continue
+        if sid in pins:
+            starts[sid] = pins[sid].start_week
+            ends[sid] = pins[sid].end_week
+            g[sid] = pinned_release(ends[sid], release)
             continue
         gate = step_gate(sp, release, (starts[r] for r in plan.start_anchor_ids(sid)), frontier)
         if sp.status == STATUS_DONE:

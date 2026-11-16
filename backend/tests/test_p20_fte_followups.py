@@ -26,6 +26,7 @@ from services.capacity_priority import remaining_run_load_by_project
 from services.run_step_effort import effort_from, spread_effort
 from services.schedule_persistence import build_schedule_input_from_db, persist_schedule_output
 from services.workspace import health_badge, planned_span_weeks, row_span_fte, stage_overrun
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import clear_current_principal_override
 from tests.factories import make_engineer, make_hub, make_schedule_run
 from tests.p12_helpers import act_as, client_for, plan_step, set_progress, stepped_project
@@ -155,7 +156,7 @@ async def test_seeded_half_fte_totals_unchanged(db_session):
     for e in (await db_session.execute(select(Engineer))).scalars().all():
         e.fte = 0.5
     await db_session.flush()
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     output = run_greedy_sgs(schedule_input)
     await persist_schedule_output(
         db_session, schedule_input, output, solver_type=SolverType.GREEDY,
@@ -417,7 +418,7 @@ async def test_persisted_span_fte_matches_the_run_input(db_session):
     for i, e in enumerate(all_eng):
         e.fte = 0.5 if i % 2 == 0 else 1.0
     await db_session.flush()
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     output = run_greedy_sgs(schedule_input)
     run = await persist_schedule_output(
         db_session, schedule_input, output, solver_type=SolverType.GREEDY,

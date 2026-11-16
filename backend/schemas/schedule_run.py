@@ -132,5 +132,12 @@ class ScheduleRunChanges(BaseModel):
     run_version: int
     against_run_id: uuid.UUID
     against_run_version: int
+    #: P37-T04 (ADR 0052 R37-4, API_CONTRACT_P37 §3): the two runs' stored
+    #: `current_week` (`against` run = baseline). When they differ, the list
+    #: also carries the effect of the week passing, and the UI labels it
+    #: "includes the move from W<baseline_week> to W<run_week>". Rows are
+    #: unchanged (I20).
+    baseline_week: int
+    run_week: int
     hidden_count: int
     rows: list[ScheduleRunChangeRow]

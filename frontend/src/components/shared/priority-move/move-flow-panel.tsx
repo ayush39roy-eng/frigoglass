@@ -64,7 +64,9 @@ function ChangesBody({
 }
 
 /**
- * Non-modal floating panel (bottom-right) for what follows a confirm that did
+ * Non-modal side panel, docked on the right edge where the preview sheet was
+ * (owner request 2026-11-17: the calculation and the changes live in the side
+ * bar), for what follows a confirm that did
  * not apply in-process (a `queued` run, `deferred`, `not_needed`) and for the
  * Registration form's PATCH path:
  * solver progress, the "Timeline updated" list, or the honest outcome copy.
@@ -96,11 +98,12 @@ export function MoveFlowPanel({
     <section
       aria-labelledby={headingId}
       className={cn(
-        'fixed bottom-4 right-4 z-40 flex max-h-[min(36rem,calc(100vh-2rem))] w-[min(30rem,calc(100vw-2rem))] flex-col gap-3 overflow-y-auto',
-        'rounded-dash border-[1.5px] border-dash-hairline bg-surface p-4 text-text shadow-pop',
-        'motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2',
+        'fixed inset-y-0 right-0 z-40 flex w-full flex-col gap-3 overflow-y-auto sm:max-w-md',
+        'border-l-[1.5px] border-dash-hairline bg-surface p-4 text-text shadow-pop',
+        'motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right',
       )}
       data-testid="priority-move-panel"
+      data-side="right"
       data-kind={flow.kind}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && closable) onClose();

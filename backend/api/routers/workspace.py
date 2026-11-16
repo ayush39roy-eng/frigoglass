@@ -125,6 +125,7 @@ from schemas.workspace import (
 )
 from services.file_sniff import EXTENSION_FOR_CONTENT_TYPE, UploadRejected, extension_of, sniff
 from services.notifications import generate_stage_blocked_notifications
+from services.plan_clock import PlanClock, get_plan_clock
 from services.project_access import authorize_project_action
 from services.project_effort import TRIGGER_STAGE_STATUS, rederive_project_effort
 from services.project_steps import WorkflowChangeWithProgress, sync_project_steps
@@ -132,6 +133,7 @@ from services.rate_limit import TokenBucketLimiter
 from services.run_dispatch import dispatch_greedy, enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 from services.schedule_stale import mark_projects_stale
+from services.step_pin_clear import clear_pin_if_started
 from services.template_apply import lock_projects
 from services.workspace import (
     ACTIVITY_DEFAULT_LIMIT,
@@ -188,9 +190,10 @@ async def get_workspace(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> WorkspaceRead:
     project = await _project_or_404(db, project_id, current_user)
-    return await build_workspace(db, project, current_user)
+    return await build_workspace(db, project, current_user, current_week=clock.week)
 
 
 @router.get("/{project_id}/activity", response_model=list[ActivityItem])
@@ -219,6 +222,7 @@ async def patch_stage(
     body: StageUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> WorkspaceRead:
     # P33-T10 (R33-10): the project row lock a template apply takes, before
     # anything is read, so a stage cannot cross Not Started between an
@@ -240,7 +244,9 @@ async def patch_stage(
             "This project is frozen. Unfreeze on the Gantt to record stage progress.",
         )
     try:
-        await sync_project_steps(db, project, project.hub.is_oem)
+        await sync_project_steps(
+            db, project, project.hub.is_oem, actor_user_id=current_user.user_id
+        )
     except WorkflowChangeWithProgress as exc:  # pragma: no cover - needs corrupt data
         raise CodedHTTPException(
             HTTP_422, "WORKFLOW_CHANGE_WITH_PROGRESS", str(exc)
@@ -302,8 +308,14 @@ async def patch_stage(
     before_state = _stage_state(project, row)
     was_blocked = row.status == WorkflowStepStatus.BLOCKED
     was_started = row.status != WorkflowStepStatus.NOT_STARTED
+    stage_before = row.status
     for name, value in merged.items():
         setattr(row, name, value)
+    # P40 (ADR 0054 R40-4): leaving Not Started clears the step's pin, in this
+    # transaction, under the project row lock taken above.
+    clear_pin_if_started(
+        db, project, row, stage_before=stage_before, actor_user_id=current_user.user_id
+    )
     await db.flush()
     await mark_projects_stale(db, [project.id])
     if was_started != (row.status != WorkflowStepStatus.NOT_STARTED):
@@ -343,7 +355,7 @@ async def patch_stage(
     )
     await db.commit()
     await db.refresh(project)
-    return await build_workspace(db, project, current_user)
+    return await build_workspace(db, project, current_user, current_week=clock.week)
 
 
 def _stage_state(project: Project, row: ProjectWorkflowStep) -> dict[str, Any]:

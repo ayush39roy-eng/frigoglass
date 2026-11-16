@@ -27,18 +27,30 @@ from __future__ import annotations
 
 import io
 import math
+import uuid
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
-from api.deps import require_permission
-from api.errors import HTTP_413, CodedHTTPException
+from api.deps import require_permission, require_roles
+from api.errors import HTTP_413, HTTP_422, CodedHTTPException
 from core.principal import Principal
 from core.rbac import Action, Surface
+from models.enums import RoleName
+from schemas.import_scenarios import (
+    ImportFormatOut,
+    ImportFormatResetIn,
+    ImportFormatUpdateIn,
+    SavedScenarioListOut,
+    SavedScenarioOut,
+    ScenarioExportIn,
+    ScenarioPatchIn,
+    ScenarioSaveIn,
+)
 from schemas.whatif import (
     AskRequest,
     AskResponse,
@@ -54,9 +66,23 @@ from schemas.whatif_import import (
     ImportSimulateRequest,
     ImportSimulateResponse,
 )
+from services import whatif_import_scenarios as scenarios
 from services.file_sniff import UploadRejected, extension_of, sniff
+from services.import_format import (
+    current_aliases,
+    format_out,
+    reset_format,
+    template_xlsx,
+    update_format,
+)
 from services.llm_client import LlmClient, configured_llm_client
-from services.plan_import_xlsx import MAX_FILE_BYTES, ImportFormatError, parse_plan_workbook
+from services.plan_clock import PlanClock, get_plan_clock
+from services.plan_import_xlsx import (
+    MAX_FILE_BYTES,
+    FieldAliases,
+    ImportFormatError,
+    parse_plan_workbook,
+)
 from services.rate_limit import TokenBucketLimiter
 from services.whatif import (
     WHATIF_TIME_CAP_SECONDS,
@@ -84,6 +110,8 @@ from services.whatif_import import (
 router = APIRouter(prefix="/whatif", tags=["whatif"])
 
 _read = require_permission(Surface.CAPACITY_PLANNING, Action.READ)
+#: ADR 0055 D1: the import format is edited by Admin and Super Admin only.
+_format_admin = require_roles(RoleName.ADMIN, RoleName.SUPER_ADMIN)
 
 #: Per user. Estimate and simulate are cheap (tens of ms); solve runs up to 60
 #: schedules; a chat message costs real money (as in ADR 0014).
@@ -114,9 +142,10 @@ async def estimate(
     body: EstimateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> EstimateResponse:
     _throttle(WHATIF_RATE_LIMIT, current_user)
-    ctx = await load_context(db, current_user)
+    ctx = await load_context(db, current_user, clock=clock)
     result = await do_estimate(ctx, body.scenario, basis=body.basis, designer_fte=body.designer_fte)
     await audit_whatif(
         db, current_user, "estimate",
@@ -131,9 +160,10 @@ async def simulate_scenario(
     body: SimulateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> SimulateResponse:
     _throttle(WHATIF_RATE_LIMIT, current_user)
-    ctx = await load_context(db, current_user)
+    ctx = await load_context(db, current_user, clock=clock)
     result = await do_simulate(ctx, body.scenario)
     await audit_whatif(db, current_user, "simulate", scenario_shape(body.scenario))
     await db.commit()
@@ -145,9 +175,10 @@ async def solve(
     body: SolveRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> SolveResponse:
     _throttle(WHATIF_SOLVE_RATE_LIMIT, current_user)
-    ctx = await load_context(db, current_user)
+    ctx = await load_context(db, current_user, clock=clock)
     result = await do_solve(
         ctx,
         body.scenario,
@@ -170,6 +201,7 @@ async def ask(
     body: AskRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
     llm: LlmClient | None = Depends(get_llm_client),
 ) -> AskResponse | JSONResponse:
     if llm is None:
@@ -179,7 +211,7 @@ async def ask(
             content={"error": "AGENT_UNAVAILABLE"},
         )
     _throttle(WHATIF_ASK_RATE_LIMIT, current_user)
-    ctx = await load_context(db, current_user)
+    ctx = await load_context(db, current_user, clock=clock)
     try:
         result = await run_chat(db, current_user, ctx, llm, body)
     except httpx.HTTPError as exc:
@@ -224,12 +256,13 @@ def _read_upload_capped(upload: UploadFile) -> bytes | None:
     return bytes(buf)
 
 
-def _parse_or_error(data: bytes, pctx: object) -> object:
+def _parse_or_error(data: bytes, pctx: object, aliases: FieldAliases) -> object:
     """Run in the What-if pool. A format problem is RETURNED (not raised) so
-    `run_capped` does not turn it into a scenario error."""
+    `run_capped` does not turn it into a scenario error. `aliases` is the
+    stored import format (ADR 0055 D1)."""
 
     try:
-        return parse_plan_workbook(data, pctx)  # type: ignore[arg-type]
+        return parse_plan_workbook(data, pctx, aliases)  # type: ignore[arg-type]
     except ImportFormatError as exc:
         return exc
 
@@ -239,6 +272,7 @@ async def import_parse(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> ImportParseResponse:
     _throttle(WHATIF_RATE_LIMIT, current_user)
     data = await run_in_threadpool(_read_upload_capped, file)
@@ -252,10 +286,13 @@ async def import_parse(
         await run_in_threadpool(sniff, "xlsx", io.BytesIO(data))
     except UploadRejected as exc:
         raise import_format_error(f"Only .xlsx workbooks can be imported. {exc}") from exc
-    ctx = await load_context(db, current_user)
+    ctx = await load_context(db, current_user, clock=clock)
     pctx = await build_parse_context(db, current_user, ctx)
+    aliases = await current_aliases(db)
     result = await run_capped(
-        lambda: _parse_or_error(data, pctx), WHATIF_TIME_CAP_SECONDS, user_key=ctx.user_key
+        lambda: _parse_or_error(data, pctx, aliases),
+        WHATIF_TIME_CAP_SECONDS,
+        user_key=ctx.user_key,
     )
     if isinstance(result, ImportFormatError):
         raise import_format_error(str(result))
@@ -270,10 +307,211 @@ async def import_simulate(
     body: ImportSimulateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> ImportSimulateResponse:
     _throttle(WHATIF_RATE_LIMIT, current_user)
-    ctx = await load_context(db, current_user)
+    ctx = await load_context(db, current_user, clock=clock)
     result = await do_import_simulate(ctx, body)
     await audit_import_simulate(db, current_user, body, result)
     await db.commit()
     return result
+
+
+# --- P41 (ADR 0055, docs/API_CONTRACT_P41.md): import format, saved scenarios, exports --------
+
+
+def _xlsx_response(data: bytes, filename: str) -> Response:
+    return Response(
+        content=data,
+        media_type=scenarios.XLSX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/import/format", response_model=ImportFormatOut)
+async def get_import_format(
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> ImportFormatOut:
+    return await format_out(db, current_user)
+
+
+@router.put("/import/format", response_model=ImportFormatOut)
+async def put_import_format(
+    body: ImportFormatUpdateIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_format_admin),
+) -> ImportFormatOut:
+    _throttle(WHATIF_RATE_LIMIT, current_user)
+    await update_format(db, current_user, version=body.version, changes=body.fields)
+    await db.commit()
+    return await format_out(db, current_user)
+
+
+@router.post("/import/format/reset", response_model=ImportFormatOut)
+async def reset_import_format(
+    body: ImportFormatResetIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_format_admin),
+) -> ImportFormatOut:
+    _throttle(WHATIF_RATE_LIMIT, current_user)
+    await reset_format(db, current_user, version=body.version)
+    await db.commit()
+    return await format_out(db, current_user)
+
+
+@router.get("/import/format/template.xlsx", response_class=Response)
+async def import_format_template(
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> Response:
+    _throttle(WHATIF_RATE_LIMIT, current_user)
+    data = template_xlsx(await current_aliases(db))
+    return _xlsx_response(data, "plan-import-template.xlsx")
+
+
+@router.post("/import/export.xlsx", response_class=Response)
+async def export_current_result(
+    body: ScenarioExportIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
+) -> Response:
+    """ADR 0055 D5: the server recomputes from the request; a browser-supplied
+    result is never accepted."""
+
+    _throttle(WHATIF_RATE_LIMIT, current_user)
+    ctx = await load_context(db, current_user, clock=clock)
+    result = await do_import_simulate(ctx, body.request)
+    data = scenarios.current_result_xlsx(result, body.name)
+    scenarios.audit_export(
+        db, current_user, "current",
+        names=[body.name] if body.name else [], projects=len(result.projects),
+    )  # fmt: skip
+    await db.commit()
+    return _xlsx_response(data, scenarios.safe_download_name(body.name, "whatif-import-result"))
+
+
+@router.post(
+    "/import/scenarios", response_model=SavedScenarioOut, status_code=status.HTTP_201_CREATED
+)
+async def save_import_scenario(
+    body: ScenarioSaveIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
+) -> SavedScenarioOut:
+    _throttle(WHATIF_RATE_LIMIT, current_user)
+    ctx = await load_context(db, current_user, clock=clock)
+    out = await scenarios.save_scenario(db, current_user, ctx, body)
+    await db.commit()
+    return out
+
+
+@router.get("/import/scenarios", response_model=SavedScenarioListOut)
+async def list_import_scenarios(
+    source_file_sha256: str | None = Query(default=None, pattern=r"^[0-9a-f]{64}$"),
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> SavedScenarioListOut:
+    items = await scenarios.list_scenarios(db, current_user, source_file_sha256)
+    return SavedScenarioListOut(items=items)
+
+
+def _compare_ids(ids: str) -> list[uuid.UUID]:
+    parts = [p.strip() for p in ids.split(",") if p.strip()]
+    try:
+        parsed = [uuid.UUID(p) for p in parts]
+    except ValueError as exc:
+        raise CodedHTTPException(
+            HTTP_422, scenarios.INVALID_COMPARE, "ids must be scenario ids, comma-separated."
+        ) from exc
+    if not scenarios.MIN_COMPARE <= len(parsed) <= scenarios.MAX_COMPARE or len(set(parsed)) != len(
+        parsed
+    ):
+        raise CodedHTTPException(
+            HTTP_422,
+            scenarios.INVALID_COMPARE,
+            f"Compare takes {scenarios.MIN_COMPARE} to {scenarios.MAX_COMPARE} different "
+            "scenarios.",
+        )
+    return parsed
+
+
+# Declared before `/import/scenarios/{scenario_id}` so `compare.xlsx` is not
+# read as an id.
+@router.get("/import/scenarios/compare.xlsx", response_class=Response)
+async def export_scenario_comparison(
+    ids: str = Query(..., max_length=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> Response:
+    _throttle(WHATIF_RATE_LIMIT, current_user)
+    parsed = _compare_ids(ids)
+    rows = await scenarios.visible_rows(db, current_user, parsed)
+    data = scenarios.compare_xlsx(rows)
+    scenarios.audit_export(
+        db, current_user, "compare",
+        ids=[r.id for r in rows], names=[r.name for r in rows],
+        projects=sum(len(r.result.get("projects", [])) for r in rows),
+    )  # fmt: skip
+    await db.commit()
+    return _xlsx_response(data, "whatif-scenario-comparison.xlsx")
+
+
+@router.get("/import/scenarios/{scenario_id}", response_model=SavedScenarioOut)
+async def get_import_scenario(
+    scenario_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> SavedScenarioOut:
+    return await scenarios.get_scenario(db, current_user, scenario_id)
+
+
+@router.patch("/import/scenarios/{scenario_id}", response_model=SavedScenarioOut)
+async def patch_import_scenario(
+    scenario_id: uuid.UUID,
+    body: ScenarioPatchIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> SavedScenarioOut:
+    _throttle(WHATIF_RATE_LIMIT, current_user)
+    out = await scenarios.patch_scenario(db, current_user, scenario_id, body)
+    await db.commit()
+    return out
+
+
+@router.delete(
+    "/import/scenarios/{scenario_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def delete_import_scenario(
+    scenario_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> Response:
+    _throttle(WHATIF_RATE_LIMIT, current_user)
+    await scenarios.delete_scenario(db, current_user, scenario_id)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/import/scenarios/{scenario_id}/export.xlsx", response_class=Response)
+async def export_import_scenario(
+    scenario_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> Response:
+    _throttle(WHATIF_RATE_LIMIT, current_user)
+    (row,) = await scenarios.visible_rows(db, current_user, [scenario_id])
+    data = scenarios.saved_scenario_xlsx(row)
+    scenarios.audit_export(
+        db, current_user, "scenario",
+        ids=[row.id], names=[row.name], projects=len(row.result.get("projects", [])),
+    )  # fmt: skip
+    await db.commit()
+    return _xlsx_response(data, scenarios.safe_download_name(row.name, "whatif-scenario"))

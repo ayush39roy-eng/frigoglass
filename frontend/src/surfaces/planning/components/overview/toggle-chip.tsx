@@ -9,6 +9,11 @@ import { cn } from '@/lib/utils';
  * ("Allow category B for Lokesh") and stays the same in both states, as the
  * WAI-ARIA toggle-button pattern asks. The check mark and the filled style are
  * the visual state; colour is never the only cue.
+ *
+ * Owner ask 2026-11-17: toggle chips only appear while the card is in edit
+ * mode; a toggle changes the card's draft, not the server. `changed` marks a
+ * chip whose state differs from the saved one (dashed amber outline; the row
+ * also carries a visible "Unsaved" tag, which is what screen readers get).
  */
 export interface ToggleChipProps {
   pressed: boolean;
@@ -16,6 +21,7 @@ export interface ToggleChipProps {
   onToggle: () => void;
   tone: 'primary' | 'success';
   disabled?: boolean;
+  changed?: boolean;
   title?: string | undefined;
   children: React.ReactNode;
 }
@@ -25,7 +31,7 @@ const TONE = {
   success: 'aria-pressed:border-success aria-pressed:bg-success-subtle aria-pressed:text-success-subtle-fg',
 } as const;
 
-export function ToggleChip({ pressed, label, onToggle, tone, disabled, title, children }: ToggleChipProps): React.JSX.Element {
+export function ToggleChip({ pressed, label, onToggle, tone, disabled, changed, title, children }: ToggleChipProps): React.JSX.Element {
   return (
     <button
       type="button"
@@ -33,6 +39,7 @@ export function ToggleChip({ pressed, label, onToggle, tone, disabled, title, ch
       aria-label={label}
       title={title ?? label}
       disabled={disabled}
+      data-changed={changed ? 'true' : undefined}
       onClick={onToggle}
       className={cn(
         'inline-flex min-h-6 items-center gap-0.5 rounded-pill border border-border bg-surface px-1.5 text-2xs font-semibold',
@@ -40,6 +47,7 @@ export function ToggleChip({ pressed, label, onToggle, tone, disabled, title, ch
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         'disabled:cursor-wait disabled:opacity-60 motion-reduce:transition-none',
         TONE[tone],
+        'data-[changed=true]:outline-dashed data-[changed=true]:outline-2 data-[changed=true]:outline-offset-1 data-[changed=true]:outline-warning',
       )}
     >
       {pressed ? <Check aria-hidden="true" className="size-3 shrink-0" /> : null}

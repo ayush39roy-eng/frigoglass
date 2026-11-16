@@ -64,9 +64,9 @@ export interface SurfaceNavItem {
   surface: SurfaceKey | null;
   /**
    * P32-R04: further surfaces whose READ also shows this item (OR with
-   * `surface`). `/settings/workflow` carries the per-project step timing,
-   * readable with `gantt` read; its template tabs stay on `workflow_settings`
-   * inside the page, and the server enforces both.
+   * `surface`). `/settings/workflow` is readable with `workflow_settings` or
+   * `workflow_templates` read; each tab gates its own writes, and the server
+   * enforces both.
    */
   alsoReadableVia?: readonly SurfaceKey[];
   /**
@@ -179,16 +179,16 @@ export const SURFACES: readonly SurfaceNavItem[] = [
   {
     path: '/settings/workflow',
     surface: 'workflow_settings',
-    // P32-R04 (owner 2026-11-04): per-project step timing lives here too, for
-    // everyone who reads the Timeline (read-only since P33-T15, ADR 0048).
     // P33 (ADR 0045 §7): the category templates have their own surface.
-    alsoReadableVia: ['gantt', 'workflow_templates'],
+    // (`gantt` read no longer opens the page: the P32-R04 "Project step
+    // timing" tab was removed at the owner's request, 2026-11-16.)
+    alsoReadableVia: ['workflow_templates'],
     label: 'Workflow',
     title: 'Workflow Settings',
     icon: Workflow,
     task: 'P9-T04',
     summary:
-      "Project step timing (read-only, follows the category template). The two workflow templates (PDD / OEM): step kinds and precedence, the client lead-time table, hub work calendars and chamber downtime (ADRs 0007–0009). Admin and Super Admin edit the category templates (lead times, timelines, new categories); Super Admin edits the rest.",
+      "The two workflow templates (PDD / OEM): step kinds and precedence, the client lead-time table, hub work calendars and chamber downtime (ADRs 0007–0009). Admin and Super Admin edit the category templates (lead times, timelines, new categories); Super Admin edits the rest.",
     group: 'Configure',
     density: 'working',
   },

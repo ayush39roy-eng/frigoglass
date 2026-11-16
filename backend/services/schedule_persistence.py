@@ -85,12 +85,15 @@ from scheduling.types import (
     ProjectInput,
     ScheduleInput,
     ScheduleOutput,
+    StepPinInput,
     StepProgressInput,
     StepSchedule,
     StepTimingInput,
+    require_plan_week,
 )
 from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
 from scheduling.workflow import canonical_categories, is_valid_fte
+from services import plan_clock
 from services.categories import load_catalog
 from services.notifications import generate_schedule_change_notifications
 from services.schedule_stale import clear_stale_for_run
@@ -203,7 +206,50 @@ def build_workflow_snapshot_from_input(schedule_input: ScheduleInput) -> dict[st
     categories = canonical_categories(schedule_input.categories)
     if categories is not None:
         snapshot["categories"] = categories
+    # P40 (ADR 0054 R40-12): the manual pins the run was solved with, only
+    # when some project has one, so a run without pins snapshots exactly as
+    # before (I48 (a)) and a run with pins can be replayed (I14, I15).
+    step_pins = [
+        {
+            "project_id": p.project_id,
+            "step_id": pin.step_id,
+            "start_week": pin.start_week,
+            "end_week": pin.end_week,
+        }
+        for p in sorted(schedule_input.projects, key=lambda p: p.project_id)
+        for pin in sorted(p.step_pins, key=lambda pin: pin.step_id)
+    ]
+    if step_pins:
+        snapshot["step_pins"] = step_pins
     return snapshot
+
+
+def _project_step_pins(
+    rows: Sequence[ProjectWorkflowStep],
+    workflow_id: str,
+    template_workflow: dict[str, str],
+) -> tuple[StepPinInput, ...]:
+    """P40 (ADR 0054 R40-12): a project's `ProjectInput.step_pins`, the live
+    pins of its current workflow's steps, sorted by step id. Every live pin
+    is passed (the scheduler decides which apply: started, skipped and held
+    steps are inert there, R40-4 / R40-9). A pin left on another workflow's
+    step cannot exist (a re-point clears it) and is dropped like timing."""
+
+    pinned = [
+        r
+        for r in rows
+        if r.manual_start_week is not None
+        and r.manual_end_week is not None
+        and template_workflow.get(r.step_template_id) == workflow_id
+    ]
+    return tuple(
+        StepPinInput(
+            step_id=r.step_template_id,
+            start_week=r.manual_start_week,  # type: ignore[arg-type]
+            end_week=r.manual_end_week,  # type: ignore[arg-type]
+        )
+        for r in sorted(pinned, key=lambda r: r.step_template_id)
+    )
 
 
 def _project_step_timing(
@@ -231,12 +277,16 @@ def _project_step_timing(
 async def build_schedule_input_from_db(
     db: AsyncSession,
     *,
-    current_week: int = dc.CURRENT_WEEK,
+    current_week: int,
     horizon_weeks: int = dc.HORIZON_WEEKS,
     within_year_week: int = dc.WITHIN_YEAR_WEEK,
 ) -> ScheduleInput:
     """Load every `Project`/`Engineer`/`Chamber`/`WorkflowStepTemplate` row and
     map it into `scheduling.types.ScheduleInput`.
+
+    P37-T04 (ADR 0052 R37-2, I38): `current_week` is required. The worker
+    passes the run row's stored week; a synchronous solve passes the request's
+    `plan_clock` week. It never defaults to a value bound at import.
 
     All projects are included (not pre-filtered by status) — `run_greedy_sgs`
     itself classifies non-schedulable statuses (Commercialized/On Hold/Draft)
@@ -244,6 +294,8 @@ async def build_schedule_input_from_db(
     risk silently diverging from `scheduling/`'s own logic.
     """
 
+    # I41: the clock's or a stored row's week must be a plan week (1..52).
+    current_week = require_plan_week(current_week)
     project_rows = (
         (await db.execute(select(Project).options(selectinload(Project.hub)))).scalars().all()
     )
@@ -282,6 +334,9 @@ async def build_schedule_input_from_db(
         .all()
     )
     progress_by_project: dict[uuid.UUID, list[StepProgressInput]] = {}
+    rows_by_project: dict[uuid.UUID, list[ProjectWorkflowStep]] = {}
+    for s in step_rows:
+        rows_by_project.setdefault(s.project_id, []).append(s)
     timing_by_project: dict[uuid.UUID, list[StepTimingInput]] = {}
     template_workflow = {t.id: t.workflow_id for t in template_rows}
     # P33-T08 (contract F4, OR-3): the table and the immutable R2 weights by
@@ -390,6 +445,13 @@ async def build_schedule_input_from_db(
             # ADR 0050 (P36): the planner-set position inside the band,
             # scheduling order key 3a. None for non-members (I37b).
             band_rank=p.band_rank,
+            # P40 (ADR 0054 R40-12): the live pins, `()` when none (the
+            # default, omitted from the hashed form: I48 (a)).
+            step_pins=_project_step_pins(
+                rows_by_project.get(p.id, ()),
+                workflow_id_for_hub(p.hub.is_oem),
+                template_workflow,
+            ),
         )
         for p in project_rows
     )
@@ -475,6 +537,9 @@ def run_step_span_fte(
     data error). Persisted as `ScheduleRunProjectStep.span_fte`."""
 
     if step.kind != "design" or step.skipped or project.frozen:
+        return None
+    # P40 (ADR 0054 R40-3): a pin replaces the FTE span.
+    if step.pinned:
         return None
     if step.assigned_engineer_id is None:
         return None
@@ -586,7 +651,15 @@ async def persist_schedule_output(
         run.status = ScheduleRunStatus.COMPLETED
         run.is_active = activate
         run.horizon_weeks = schedule_input.horizon_weeks
-        run.current_week = schedule_input.current_week
+        # P37-T04 (R37-2, I38): the row's week was fixed when it was queued
+        # and the worker built the input with it. A mismatch would mean the
+        # input was built at another week; refuse instead of overwriting.
+        if run.current_week != schedule_input.current_week:
+            raise ValueError(
+                "persist_schedule_output: schedule_input.current_week "
+                f"({schedule_input.current_week}) differs from the run row's week "
+                f"({run.current_week}); build the input with current_week=run.current_week"
+            )
         run.objective_value = objective_value
         run.trigger_reason = trigger_reason
         run.completed_at = datetime.now(UTC)
@@ -665,6 +738,9 @@ async def persist_schedule_output(
                     chamber_overlap=outcome.overlap,
                     skipped=step.skipped,
                     span_fte=span_fte,
+                    # P40 (ADR 0054 R40-12, I45 / I47).
+                    pinned=step.pinned,
+                    manual_overlap=step.manual_overlap,
                 )
             )
             if sync_live_workflow_steps:
@@ -701,6 +777,8 @@ async def persist_schedule_output(
                 blocked=outcome.blocked,
                 progress_pct=outcome.progress_pct,
                 data_error=outcome.data_error,
+                manual_overlap=outcome.manual_overlap,
+                pin_lapsed=outcome.pin_lapsed,
             )
         )
 
@@ -730,13 +808,22 @@ async def create_queued_schedule_run(
     trigger_reason: str,
     triggered_by_user_id: uuid.UUID | None,
     horizon_weeks: int = dc.HORIZON_WEEKS,
-    current_week: int = dc.CURRENT_WEEK,
+    current_week: int | None = None,
 ) -> ScheduleRun:
     """Create and COMMIT (not just flush) a new `ScheduleRun` row in
     `QUEUED` status, reserving its `version` number, before any solver runs
-    at all. **P3-T06-only** — used by `api/routers/schedule_runs.py`'s async
-    CP-SAT dispatch endpoint so a stable `schedule_run_id` exists for the
-    client to reference (and, once `celery_task_id` is set immediately after
+    at all.
+
+    P37-T04 (ADR 0052 R37-2, I38): the run's week is fixed HERE. With
+    `current_week=None` (every production caller) the plan clock is read once,
+    now, and stored; the worker later builds the solver input with
+    `current_week=run.current_week` and never re-reads the clock, so a run
+    queued Sunday 23:59 Athens and executed Monday solves at the Sunday week.
+    An explicit value is for tests and scripts only.
+
+    **P3-T06-only** — used by `api/routers/schedule_runs.py`'s async CP-SAT
+    dispatch endpoint so a stable `schedule_run_id` exists for the client to
+    reference (and, once `celery_task_id` is set immediately after
     this call returns, for a P3-T05 SSE connection to be opened against)
     before the actual solve has even been enqueued.
 
@@ -760,6 +847,9 @@ async def create_queued_schedule_run(
     is_active` rows; it is never the active one.
     """
 
+    if current_week is None:
+        current_week = plan_clock.current_week()
+    current_week = require_plan_week(current_week)  # I41
     version = await _next_version(db)
     # P9-T03 (I15): snapshot the settings in force at creation too, so even a
     # run that later fails or is cancelled records them. On completion,

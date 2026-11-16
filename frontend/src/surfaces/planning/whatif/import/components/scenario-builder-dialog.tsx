@@ -35,7 +35,7 @@ import {
   type RuleDimension,
   type ScenarioRules,
 } from '../scenario-rules';
-import { defaultScenarioName, MAX_SCENARIO_NAME, MAX_SCENARIOS, useImportScenarios } from '../scenarios-store';
+import { defaultScenarioName, MAX_SCENARIO_NAME, MAX_SCENARIOS, sessionCount, useImportScenarios } from '../scenarios-store';
 import { classifyImportError, useImportSimulation } from '../use-import';
 
 /**
@@ -46,7 +46,7 @@ import { classifyImportError, useImportSimulation } from '../use-import';
  */
 export function ScenarioBuilderButton({ onSaved }: { onSaved?: (id: string) => void }): React.JSX.Element {
   const [open, setOpen] = React.useState(false);
-  const full = useImportScenarios((s) => s.scenarios.length >= MAX_SCENARIOS);
+  const full = useImportScenarios((s) => sessionCount(s.scenarios) >= MAX_SCENARIOS);
   return (
     <>
       <Button
@@ -75,6 +75,7 @@ function BuilderDialog({
   const rows = useImportPlan((s) => s.rows);
   const options = useImportPlan((s) => s.options);
   const edits = useImportPlan((s) => s.edits);
+  const excludedPlanIds = useImportPlan((s) => s.excludedPlanIds);
   const fileName = useImportPlan((s) => s.parsed?.file_name ?? null);
   const scenarios = useImportScenarios((s) => s.scenarios);
   const save = useImportScenarios((s) => s.save);
@@ -98,6 +99,7 @@ function BuilderDialog({
       rows: body.rows,
       options: { ...options, mode: body.mode },
       edits,
+      excludedPlanIds: body.exclude_plan_project_ids ?? [],
       response,
     });
     onClose();
@@ -113,7 +115,7 @@ function BuilderDialog({
     e.preventDefault();
     if (name.trim() === '' || included === 0) return;
     pendingName.current = name;
-    simulation.run(buildSimulateRequest(variantRows, { ...options, mode: rules.mode }, edits));
+    simulation.run(buildSimulateRequest(variantRows, { ...options, mode: rules.mode }, edits, excludedPlanIds));
   };
 
   return (

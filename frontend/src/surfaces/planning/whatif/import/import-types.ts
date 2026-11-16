@@ -136,6 +136,11 @@ export interface ImportSimulateRequest {
   expand_multi: boolean;
   rows: ImportRow[];
   edits: ImportStepEdit[];
+  /**
+   * P41 (ADR 0055 D2, contract B): plan projects unticked in the project picker, taken out
+   * of both runs. Merge mode only; sent only when non-empty (the contract default is `[]`).
+   */
+  exclude_plan_project_ids?: string[] | undefined;
 }
 
 export interface ImportKpis {
@@ -154,6 +159,8 @@ export interface ImportKpis {
   after_within_plan_year_existing: number | null;
   newly_slipping: number;
   recovered: number;
+  /** P41 (contract B): plan projects taken out by `exclude_plan_project_ids`, served. */
+  plan_excluded?: number | undefined;
 }
 
 export interface ImportResultStep {
@@ -356,4 +363,80 @@ export interface ImportSimulateResponse {
    * renders (the Executive tab then falls back to the KPI figures).
    */
   breakdowns?: ImportBreakdowns | undefined;
+  /**
+   * P41 (contract B): every in-scope plan project that could be in the run, before
+   * exclusion, for the project picker. Merge mode only (`[]` in file_only); optional so a
+   * stored response from before P41 still validates.
+   */
+  plan_projects?: ImportPlanProject[] | undefined;
+}
+
+/** P41 (contract B): one tickable plan project, as served. */
+export interface ImportPlanProject {
+  id: string;
+  name: string;
+  hub: string;
+  category: string;
+  priority: string;
+  status: string;
+}
+
+// --- P41 A: import format (ADR 0055 D1) ------------------------------------------------------
+
+export interface ImportFormatField {
+  key: string;
+  label: string;
+  required: boolean;
+  aliases: string[];
+  default_aliases: string[];
+}
+
+export interface ImportFormat {
+  /** 0 = the built-in default (no stored row yet). */
+  version: number;
+  is_default: boolean;
+  fields: ImportFormatField[];
+  updated_at: string | null;
+  updated_by_name: string | null;
+  /** Served: true for Admin / Super Admin. */
+  can_edit: boolean;
+}
+
+export interface ImportFormatUpdate {
+  version: number;
+  fields: Record<string, string[]>;
+}
+
+// --- P41 C: saved import scenarios (ADR 0055 D3) ---------------------------------------------
+
+export interface SavedScenarioSummary {
+  id: string;
+  name: string;
+  note: string | null;
+  source_file_name: string;
+  source_file_sha256: string;
+  imported_at: string;
+  created_at: string;
+  created_by_name: string | null;
+  can_edit: boolean;
+  mode: ImportMode;
+  plan_year_end_week: number;
+  simulated_week: number;
+  plan_version: number | null;
+  hub_codes: string[];
+  kpis: ImportKpis;
+}
+
+export interface SavedScenario extends SavedScenarioSummary {
+  request: ImportSimulateRequest;
+  result: ImportSimulateResponse;
+}
+
+export interface SaveScenarioBody {
+  name: string;
+  note?: string | undefined;
+  source_file_name: string;
+  source_file_sha256: string;
+  imported_at: string;
+  request: ImportSimulateRequest;
 }

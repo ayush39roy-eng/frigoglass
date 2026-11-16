@@ -152,3 +152,31 @@ describe('<MultiSelectDropdown>', () => {
     expect(await seriousAxeViolations(document.body)).toEqual([]);
   });
 });
+
+describe('MultiSelectDropdown emptySummary (P40-T01 compact toolbar)', () => {
+  it('shows the field name while nothing is picked, the selection otherwise; the clear row keeps allLabel', async () => {
+    const user = userEvent.setup();
+    function Compact(): React.JSX.Element {
+      const [value, setValue] = React.useState<string[]>([]);
+      return (
+        <MultiSelectDropdown
+          label="Status"
+          hideLabel
+          allLabel="All statuses"
+          emptySummary="Status"
+          options={STATUSES}
+          value={value}
+          onChange={setValue}
+        />
+      );
+    }
+    render(<Compact />);
+    const trigger = screen.getByRole('button', { name: 'Status' });
+    expect(trigger).toHaveAccessibleDescription('Status');
+    await user.click(trigger);
+    expect(await screen.findByRole('option', { name: 'All statuses' })).toHaveAttribute('aria-selected', 'true');
+    await user.click(screen.getByRole('option', { name: 'On Hold' }));
+    await user.keyboard('{Escape}');
+    expect(trigger).toHaveAccessibleDescription('On Hold');
+  });
+});

@@ -67,6 +67,7 @@ const DATA: CompletingWithinYear = {
   left_out_count: 1,
   blocked_count: 1,
   priority_delivery: [],
+  regions: [],
   rows: ROWS,
 };
 

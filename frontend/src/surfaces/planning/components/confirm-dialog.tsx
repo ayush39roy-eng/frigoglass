@@ -23,6 +23,12 @@ export interface ConfirmDialogProps {
   title: string;
   description: string;
   confirmLabel?: string;
+  /** Shown on the confirm button while `busy` (default "Deleting…"). */
+  busyLabel?: string;
+  /** `danger` (default) for destructive actions; `primary` otherwise (P38 Reactivate). */
+  tone?: 'danger' | 'primary';
+  /** An error from the last attempt; the dialog stays open to show it. */
+  error?: string | null;
   busy?: boolean;
   onConfirm: () => void;
 }
@@ -33,6 +39,9 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel = 'Delete',
+  busyLabel = 'Deleting…',
+  tone = 'danger',
+  error = null,
   busy = false,
   onConfirm,
 }: ConfirmDialogProps): React.JSX.Element {
@@ -43,12 +52,17 @@ export function ConfirmDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
+        {error ? (
+          <p role="alert" className="text-2xs text-danger">
+            {error}
+          </p>
+        ) : null}
         <DialogFooter>
           <Button type="button" variant="secondary" size="sm" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button type="button" variant="danger" size="sm" disabled={busy} onClick={onConfirm}>
-            {busy ? 'Deleting…' : confirmLabel}
+          <Button type="button" variant={tone} size="sm" disabled={busy} onClick={onConfirm}>
+            {busy ? busyLabel : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

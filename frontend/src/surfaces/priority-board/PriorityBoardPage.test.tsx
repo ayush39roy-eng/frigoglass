@@ -602,9 +602,10 @@ describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
     // Names only: no score, chips or status in a row; the position and the name.
     const alpha = rows.find((r) => r.textContent?.includes('Alpha Cooler')) as HTMLElement;
     // Names only, plus the same suggested-band chip as the grid ("P1"). P36: the
-    // position is the served band_rank (with its spoken form for screen readers).
-    expect(alpha).toHaveTextContent(/^2Position 2 in P1\.Alpha CoolerP1$/);
-    expect(within(alpha).getByTestId('board-list-rank')).toHaveTextContent('2');
+    // position is the served band_rank — for a session that may re-rank, an
+    // editable field (owner request 2026-11-17) labelled with its spoken form.
+    expect(alpha).toHaveTextContent(/^#Alpha CoolerP1$/);
+    expect(within(alpha).getByRole('textbox', { name: /^Position of Alpha Cooler in P1/ })).toHaveValue('2');
     expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveAttribute('title', 'Alpha Cooler');
     // Owner feedback: the full name over up to two lines (fixed 46 px row), never one truncated line.
     expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveClass('line-clamp-2');
@@ -760,9 +761,10 @@ describe('PriorityBoardPage — P36 reorder within a column', () => {
     );
     renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Alpha Cooler' });
-    expect(within(cardEl('Gated Cooler')).getByTestId('board-rank-chip')).toHaveTextContent('#1');
-    expect(within(cardEl('Alpha Cooler')).getByTestId('board-rank-chip')).toHaveTextContent('#2');
-    expect(within(cardEl('Alpha Cooler')).getByTestId('board-rank-chip')).toHaveTextContent('Position 2 in P1');
+    // A session that may re-rank gets the served band_rank as an editable field (owner request 2026-11-17).
+    expect(within(cardEl('Gated Cooler')).getByTestId('board-rank-input')).toHaveValue('1');
+    expect(within(cardEl('Alpha Cooler')).getByTestId('board-rank-input')).toHaveValue('2');
+    expect(within(cardEl('Alpha Cooler')).getByRole('textbox', { name: /^Position of Alpha Cooler in P1\./ })).toBeInTheDocument();
     expect(within(cardEl('Beta Freezer')).getByTestId('board-frozen-badge')).toHaveTextContent('Frozen');
     expect(within(cardEl('Alpha Cooler')).queryByTestId('board-frozen-badge')).not.toBeInTheDocument();
   });
@@ -1058,7 +1060,7 @@ describe('PriorityBoardPage — P36 reorder within a column', () => {
     renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Ann Cooler' });
     await user.click(screen.getByRole('button', { name: 'List' }));
-    const ranks = within(column('P1')).getAllByTestId('board-list-rank').map((r) => r.textContent);
+    const ranks = within(column('P1')).getAllByTestId('board-rank-input').map((r) => (r as HTMLInputElement).value);
     expect(ranks).toEqual(['1', '2', '3']);
     rankDrop('Bob Cooler', 'Ann Cooler', 'above');
     expect(move.previewProjectBandRank).toHaveBeenCalledWith(

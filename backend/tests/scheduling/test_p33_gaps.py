@@ -661,6 +661,7 @@ def test_canonical_schedule_input_asdict_omits_p33_defaults() -> None:
     raw = dataclasses.asdict(si)
     del raw["categories"]
     del raw["projects"][0]["band_rank"]  # P36 (R36-1(g)): omitted when None
+    del raw["projects"][0]["step_pins"]  # P40 (R40-12): omitted when empty
     for row in raw["projects"][0]["step_timing"]:
         del row["wait_weeks"], row["lead_weeks"]
     assert data == raw

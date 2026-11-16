@@ -21,6 +21,7 @@ from scheduling import (
     run_greedy_sgs,
     validate_invariants,
 )
+from scheduling._selftest_common import SELFTEST_WEEK
 from tests.scheduling._fixtures import (
     CHAMBER_GR1,
     ENGINEER_A,
@@ -44,6 +45,7 @@ def test_i1_engineer_double_booked_non_frozen_is_caught():
     p1 = base_project(project_id="p-i1-a")
     p2 = base_project(project_id="p-i1-b")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -98,6 +100,7 @@ def test_i2_chamber_over_capacity_non_frozen_is_caught():
     p1 = base_project(project_id="p-i2-a")
     p2 = base_project(project_id="p-i2-b", leader_engineer_id="eng-b")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),  # max_concurrent=1
@@ -151,6 +154,7 @@ def test_i3_steps_overlap_within_project_is_caught():
 
     p1 = base_project(project_id="p-i3-a")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -195,6 +199,7 @@ def test_i4_wrong_lab_region_and_disallowed_stage_is_caught():
         allowed_stages=("PDD-H",),  # not PDD-F
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1, romania_chamber),
@@ -231,6 +236,7 @@ def test_i5_incomplete_schedule_not_flagged_left_out_is_caught():
 
     p1 = base_project(project_id="p-i5-a")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -266,6 +272,7 @@ def test_i6_negative_design_duration_is_caught():
 
     p1 = base_project(project_id="p-i6-a")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -301,6 +308,7 @@ def test_i7_negative_lab_duration_is_caught():
 
     p1 = base_project(project_id="p-i7-a")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -348,6 +356,7 @@ def test_i8_determinism_has_no_broken_output_counterpart():
 
     p1 = base_project(project_id="p-i8-a")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -370,6 +379,7 @@ def test_i9_within_year_flag_inconsistent_with_formula_is_caught():
 
     p1 = base_project(project_id="p-i9-a", delay_weeks=0)
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -408,6 +418,7 @@ def test_i10_frozen_project_dates_mutated_is_caught():
         project_id="p-i10-a", frozen=True, actual_start_week=10, status="In Development"
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),

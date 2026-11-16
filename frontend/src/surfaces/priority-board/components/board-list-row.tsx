@@ -9,6 +9,7 @@ import { BoardScenarioContext } from '../lib/board-scenario';
 import { handleLabel, type DisplayCard } from '../lib/board-model';
 import type { BoardCardProps } from './board-card';
 import { HardGateLock } from './board-badges';
+import { BandRankInput, BandRankStepButtons } from './band-rank-controls';
 
 export interface BoardListRowProps extends Omit<BoardCardProps, 'item'> {
   item: DisplayCard;
@@ -36,6 +37,10 @@ export const BoardListRow = React.memo(function BoardListRow({
   onPointerDragEnd,
   onHandleKeyDown,
   onHandleBlur,
+  rankable = false,
+  rankInert = false,
+  knownLast = false,
+  onRankTo,
 }: BoardListRowProps): React.JSX.Element {
   const { card, servedPriority, pending } = item;
   const locked = card.hard_gated && servedPriority === 'P1';
@@ -45,6 +50,8 @@ export const BoardListRow = React.memo(function BoardListRow({
   const code = card.external_code ?? null;
   const suggested = card.suggested_band ?? card.band;
   const rank = card.band_rank ?? null;
+  const rankControls = rankable && rank !== null && onRankTo !== undefined;
+  const rankTo = React.useCallback((toRank: number) => onRankTo?.(item, toRank), [item, onRankTo]);
   return (
     <div
       className={cn(
@@ -62,18 +69,45 @@ export const BoardListRow = React.memo(function BoardListRow({
       data-pending={pending ? 'true' : undefined}
       data-staged={staged ? 'true' : undefined}
     >
-      {/* P36 (ADR 0050): the served band_rank — the position in the whole band, which
-          filters never change. While a move is pending the served rank is stale: "…". */}
-      <span
-        className="mt-1 w-6 shrink-0 text-right font-mono text-2xs tabular-nums text-text-muted"
-        aria-hidden="true"
-        data-numeric=""
-        data-testid="board-list-rank"
-        title={rank !== null ? `Position ${String(rank)} in ${servedPriority}: its scheduling order inside the band` : undefined}
-      >
-        {pending ? '…' : (rank ?? position)}
-      </span>
-      {rank !== null && !pending ? <span className="sr-only">{`Position ${String(rank)} in ${servedPriority}.`}</span> : null}
+      {rankControls ? (
+        // Owner request 2026-11-17: the position as an input in place, with ↑ / ↓ beside it.
+        <>
+          <BandRankInput
+            name={card.name}
+            band={servedPriority}
+            rank={rank}
+            inert={rankInert}
+            pending={pending}
+            onSubmit={rankTo}
+            dense
+            className="mt-0.5"
+          />
+          <BandRankStepButtons
+            name={card.name}
+            band={servedPriority}
+            rank={rank}
+            inert={rankInert || pending}
+            knownLast={knownLast}
+            onMove={rankTo}
+            orientation="stack"
+          />
+        </>
+      ) : (
+        <>
+          {/* P36 (ADR 0050): the served band_rank — the position in the whole band, which
+              filters never change. While a move is pending the served rank is stale: "…". */}
+          <span
+            className="mt-1 w-6 shrink-0 text-right font-mono text-2xs tabular-nums text-text-muted"
+            aria-hidden="true"
+            data-numeric=""
+            data-testid="board-list-rank"
+            title={rank !== null ? `Position ${String(rank)} in ${servedPriority}: its scheduling order inside the band` : undefined}
+          >
+            {pending ? '…' : (rank ?? position)}
+          </span>
+          {rank !== null && !pending ? <span className="sr-only">{`Position ${String(rank)} in ${servedPriority}.`}</span> : null}
+        </>
+      )}
       {draggable ? (
         <button
           type="button"

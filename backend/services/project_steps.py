@@ -33,12 +33,15 @@ Planned weeks are not touched here. They belong to schedule runs.
 
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.enums import WorkflowStepStatus
 from models.project import Project, workflow_id_for_hub
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
+from services.step_pin_clear import clear_pin_on_repoint
 from services.template_copy import (
     CopyChanges,
     copy_template,
@@ -52,11 +55,20 @@ class WorkflowChangeWithProgress(Exception):
 
 
 async def sync_project_steps(
-    db: AsyncSession, project: Project, hub_is_oem: bool, *, recopy_template: bool = False
+    db: AsyncSession,
+    project: Project,
+    hub_is_oem: bool,
+    *,
+    recopy_template: bool = False,
+    actor_user_id: uuid.UUID | None = None,
 ) -> CopyChanges:
     """See the module docstring. Returns the template-copy changes
     (`services.template_copy.CopyChanges`) of the existing rows; a created
-    row's first copy is not a change."""
+    row's first copy is not a change.
+
+    P40 (ADR 0054 R40-9): a re-pointed row loses its manual pin, with a
+    `project.step_pin_cleared` audit row (`cause = "workflow_change"`,
+    actor `actor_user_id`)."""
 
     workflow_id = workflow_id_for_hub(hub_is_oem)
     templates = (
@@ -97,7 +109,12 @@ async def sync_project_steps(
             if target is None:  # pragma: no cover - both workflows have 14 steps
                 await db.delete(row)
                 continue
+            old_step_id = row.step_template_id
             row.step_template_id = target.id
+            # P40 (R40-9): a pin belonged to the old step.
+            clear_pin_on_repoint(
+                db, project, row, old_step_id=old_step_id, actor_user_id=actor_user_id
+            )
             # ADR 0048 (p33c): the Gantt-set timing fields are always null
             # (CHECK), so nothing of them carries across.
             # ADR 0041 R6: the derived effort belonged to the old step too;

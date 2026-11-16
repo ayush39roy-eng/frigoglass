@@ -9,6 +9,7 @@ import {
   delayConnectorGeometry,
   type WeekScale,
 } from '../lib/gantt-coordinates';
+import { stepHatchId, stepTint, type StepColor } from '../lib/step-colors';
 
 /**
  * Domain component (`frontend-builder` SKILL — never sourced externally): the
@@ -27,6 +28,12 @@ import {
  * - **No bar at all** = a `skipped` step (0-week lead time, or a lab step on
  *   a project without certification testing) — it occupies nothing.
  *
+ * P40-T01 (owner ask 2026-11-17): with a `color` (the step's entry in
+ * `lib/step-colors.ts`) the same four marks are drawn in the STEP's colour —
+ * solid for the plan, a hatch of the step colour for actuals, a light tint
+ * with a step-colour outline for an elapsed step, a dashed outline for a
+ * frozen project. Without one, the original planned-blue / actual-amber.
+ *
  * Every x / width here is `barGeometry(...)` / `delayConnectorGeometry(...)` of
  * server week numbers mapped through the week→pixel `scale`. No position is ever
  * computed by summing `duration_weeks`.
@@ -36,9 +43,33 @@ export const GANTT_HATCH_PATTERN_ID = 'gantt-hatch-pattern';
 /** Vertical sheen on planned bars (2026-10-01 Gantt polish) — lighter top edge. */
 export const GANTT_PLANNED_GRADIENT_ID = 'gantt-planned-gradient';
 
-export function GanttHatchDefs(): React.JSX.Element {
+/**
+ * P40-T01: one hatch per step slot — stripes of the step colour over a light
+ * tint of it, so an actual bar keeps its step's hue and still reads as
+ * "hatched = actual". Only the slots a row draws are rendered.
+ */
+function StepHatchPattern({ slot }: { slot: number }): React.JSX.Element {
+  const color = `var(--step-${String(slot)})`;
+  return (
+    <pattern
+      id={stepHatchId(slot)}
+      patternUnits="userSpaceOnUse"
+      width={5}
+      height={5}
+      patternTransform="rotate(45)"
+    >
+      <rect width={5} height={5} fill={`hsl(${color} / 0.28)`} />
+      <line x1={0} y1={0} x2={0} y2={5} stroke={`hsl(${color})`} strokeWidth={2} />
+    </pattern>
+  );
+}
+
+export function GanttHatchDefs({ slots = [] }: { slots?: readonly number[] } = {}): React.JSX.Element {
   return (
     <defs>
+      {[...new Set(slots)].map((slot) => (
+        <StepHatchPattern key={slot} slot={slot} />
+      ))}
       <pattern
         id={GANTT_HATCH_PATTERN_ID}
         patternUnits="userSpaceOnUse"
@@ -84,6 +115,9 @@ export interface GanttBarGroupProps {
   kind?: WorkflowStepKind | undefined;
   /** A skipped step renders no bar at all. */
   skipped?: boolean | undefined;
+  /** P40-T01: the step's colour (`stepColor(step_id)`); omitted = the
+   *  original planned / actual palette. */
+  color?: StepColor | undefined;
 }
 
 export function GanttBarGroup({
@@ -99,6 +133,7 @@ export function GanttBarGroup({
   compact = false,
   kind,
   skipped = false,
+  color,
 }: GanttBarGroupProps): React.JSX.Element | null {
   if (skipped) return null;
   const elapsed = kind === 'elapsed';
@@ -130,20 +165,31 @@ export function GanttBarGroup({
           height={barH}
           rx={radius}
           data-bar={elapsed ? 'elapsed' : 'planned'}
+          data-step-slot={color?.slot}
           className="gantt-bar-grow"
           fill={
-            elapsed
-              ? 'hsl(var(--color-gantt-planned) / 0.12)'
-              : frozen
-                ? 'hsl(var(--color-gantt-planned-frozen))'
-                : `url(#${GANTT_PLANNED_GRADIENT_ID})`
+            color
+              ? elapsed
+                ? stepTint(color, 0.16)
+                : color.fill
+              : elapsed
+                ? 'hsl(var(--color-gantt-planned) / 0.12)'
+                : frozen
+                  ? 'hsl(var(--color-gantt-planned-frozen))'
+                  : `url(#${GANTT_PLANNED_GRADIENT_ID})`
           }
           stroke={
-            elapsed
-              ? 'hsl(var(--color-gantt-planned))'
-              : frozen
+            color
+              ? elapsed
+                ? color.fill
+                : frozen
+                  ? 'hsl(var(--color-text))'
+                  : 'none'
+              : elapsed
                 ? 'hsl(var(--color-gantt-planned))'
-                : 'none'
+                : frozen
+                  ? 'hsl(var(--color-gantt-planned))'
+                  : 'none'
           }
           strokeWidth={elapsed || frozen ? 1.5 : 0}
           strokeDasharray={frozen ? '3 2' : undefined}
@@ -156,9 +202,10 @@ export function GanttBarGroup({
           width={actualGeom.width}
           height={barH}
           rx={radius}
+          data-bar="actual"
           className="gantt-bar-grow"
-          fill={`url(#${GANTT_HATCH_PATTERN_ID})`}
-          stroke="hsl(var(--color-gantt-actual-hatch))"
+          fill={`url(#${color ? stepHatchId(color.slot) : GANTT_HATCH_PATTERN_ID})`}
+          stroke={color ? color.fill : 'hsl(var(--color-gantt-actual-hatch))'}
           strokeWidth={1}
         />
       ) : null}
@@ -169,7 +216,7 @@ export function GanttBarGroup({
           dominantBaseline="central"
           fontSize={10}
           fontWeight={700}
-          fill="white"
+          fill={color ? color.ink : 'white'}
           pointerEvents="none"
           className="gantt-bar-label tabular-nums"
         >

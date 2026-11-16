@@ -50,6 +50,7 @@ from scheduling import (
 )
 from scheduling._selftest_common import (
     LEAD_TIMES,
+    SELFTEST_WEEK,
     TEMPLATE,
     load_seed_schedule_input,
     seed_path,
@@ -105,6 +106,7 @@ def scenario_normal_case() -> None:
         leader_engineer_id="eng-a",
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(proj,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -144,6 +146,7 @@ def scenario_single_engineer_contention() -> None:
     p1 = ProjectInput(project_id="p-eng-1", name="First", priority="P1", **common)
     p2 = ProjectInput(project_id="p-eng-2", name="Second", priority="P2", **common)
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p2, p1),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1, CHAMBER_GR2),
@@ -173,6 +176,7 @@ def scenario_chamber_saturation() -> None:
     p1 = ProjectInput(project_id="p-lab-1", name="First", leader_engineer_id="eng-a", **common)
     p2 = ProjectInput(project_id="p-lab-2", name="Second", leader_engineer_id="eng-b", **common)
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),
@@ -244,6 +248,7 @@ def scenario_category_mismatch() -> None:
         leader_engineer_id="eng-c",
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(proj,),
         engineers=(ENGINEER_C_NARROW,),
         chambers=(CHAMBER_GR1,),
@@ -279,6 +284,7 @@ def scenario_oem_hub_requires_oem_allowed_category() -> None:
         "ch-in1", "IN-CH1", "India", max_concurrent=2, allowed_stages=("PDD-F",)
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p_no, p_yes),
         engineers=(eng_without_oem, eng_with_oem),
         chambers=(india_chamber,),
@@ -401,6 +407,7 @@ def scenario_excluded_statuses() -> None:
     on_hold = ProjectInput(project_id="p-hold", name="Paused", status="On Hold", **common)
     active = ProjectInput(project_id="p-active", name="Active", status="In Queue", **common)
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(commercialized, on_hold, active),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -442,6 +449,7 @@ def scenario_no_leader() -> None:
         leader_engineer_id=None,
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(proj,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -480,6 +488,7 @@ def scenario_no_eligible_chamber() -> None:
         "ch-in1", "IN-CH1", "India", max_concurrent=2, allowed_stages=("PDD-F",)
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(proj,),
         engineers=(ENGINEER_A,),
         chambers=(india_chamber,),
@@ -535,6 +544,7 @@ def scenario_two_frozen_projects_engineer_conflict() -> None:
         actual_start_week=10,  # exact same weeks -> guaranteed conflict
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -626,6 +636,7 @@ def scenario_two_frozen_projects_chamber_overlap() -> None:
         actual_start_week=10,
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),  # max_concurrent=1

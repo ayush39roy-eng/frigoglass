@@ -36,6 +36,7 @@ from services.priority_scoring import (
     FillProject,
     fill_p1_capacity,
 )
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
@@ -205,7 +206,7 @@ async def _hub10(db_session, name=HubName.RD_GREECE, region=LabRegion.GREECE):
             medical_leave_days=0,
             casual_leave_days=0,
             annual_leave_days=0,
-            weeks_in_year=dc.CURRENT_WEEK + 10,
+            weeks_in_year=TEST_WEEK + 10,
         )
     )
     await make_engineer(db_session, hub, fte=1.0)
@@ -238,8 +239,8 @@ async def _project(db_session, hub, run, name, pct, weeks, *, pid=None, **overri
                 step_template_id="PDD-A",
                 sequence_order=1,
                 duration_weeks=weeks,
-                start_week=dc.CURRENT_WEEK,
-                end_week=dc.CURRENT_WEEK + weeks - 1,
+                start_week=TEST_WEEK,
+                end_week=TEST_WEEK + weeks - 1,
             )
         )
         # ADR 0041 R12 (P30): the fill's load is the REMAINING DEMAND of the
@@ -527,12 +528,12 @@ async def test_constant_query_count(db_session):
     engine = db_session.bind.sync_engine
     event.listen(engine, "before_cursor_execute", _count)
     try:
-        small = await compute_capacity_fill(db_session, {hub.id})
+        small = await compute_capacity_fill(db_session, {hub.id}, current_week=TEST_WEEK)
         n_small = len(statements)
         for i in range(27):
             await _project(db_session, hub, run, f"L{i}", 40 + i % 30, 1 + i % 3)
         statements.clear()
-        large = await compute_capacity_fill(db_session, {hub.id})
+        large = await compute_capacity_fill(db_session, {hub.id}, current_week=TEST_WEEK)
         n_large = len(statements)
     finally:
         event.remove(engine, "before_cursor_execute", _count)

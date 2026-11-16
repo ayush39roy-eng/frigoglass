@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 
 import { ProjectRowBadges, StepRowBadges } from './gantt-badges';
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
-import { P13_GANTT_ROW_DEFAULTS } from '../test-fixtures';
+import { P13_GANTT_ROW_DEFAULTS, P40_GANTT_STEP_PIN_DEFAULTS } from '../test-fixtures';
 
 const baseProject: GanttProjectRow = {
   project_id: 'p1',
@@ -54,6 +54,7 @@ const baseStep: GanttStepRow = {
   gap_weeks: 0,
   own_effort: false,
   predecessor_ids: [],
+  ...P40_GANTT_STEP_PIN_DEFAULTS,
 };
 
 describe('ProjectRowBadges — each chip is a server flag rendered verbatim', () => {

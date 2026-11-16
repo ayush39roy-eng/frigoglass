@@ -20,7 +20,7 @@ Purity contract:
     byte-identical output. No dependence on dict/set iteration order.
 
 This package imports `backend/domain_constants.py` (pure data) for
-`CURRENT_WEEK`, `HORIZON_WEEKS`, `WITHIN_YEAR_WEEK`, `PRIORITY_ORDER`,
+`HORIZON_WEEKS`, `WITHIN_YEAR_WEEK`, `PRIORITY_ORDER`,
 `SCHEDULABLE_STATUS_ORDER`, `HUB_LAB_REGION` and `OEM_HUBS` only (the last two
 through `scheduling.hubs`, which accepts both spellings of the renamed
 `OEM-Seltek` / `OEM-Seitek` hub, ADR 0041 §4). The workflow
@@ -31,6 +31,12 @@ factor are defined in `scheduling.types` (transcribed from DOMAIN_RULES.md).
 
 from __future__ import annotations
 
+from scheduling.active_weeks import (
+    EngineerActiveWeeks,
+    InactivePeriod,
+    active_week_count,
+    covered_plan_weeks,
+)
 from scheduling.cp_sat import CpSatSolveInfo, run_cp_sat
 from scheduling.demand import (
     DemandLoad,
@@ -59,6 +65,9 @@ from scheduling.hubs import canonical_hub_name
 from scheduling.invariants import (
     CrossCapacityHubLeader,
     InvariantViolation,
+    check_i38_run_week,
+    check_i41_week_domain,
+    check_pin_load_neutrality,
     check_scheduler_determinism,
     check_wait_invariance,
     compute_design_load_by_capacity_hub,
@@ -66,6 +75,7 @@ from scheduling.invariants import (
     compute_lab_load_by_hub,
     cross_capacity_hub_leaders,
     validate_invariants,
+    without_pins,
     without_waits,
 )
 from scheduling.monte_carlo import (
@@ -95,6 +105,8 @@ from scheduling.template_timeline import (
 from scheduling.types import (
     CATEGORY_RANK,
     LAB_CONSUMPTION_PER_PROJECT_WEEK,
+    PLAN_WEEK_MAX,
+    PLAN_WEEK_MIN,
     CategoryInput,
     ChamberInput,
     EngineerInput,
@@ -103,6 +115,7 @@ from scheduling.types import (
     ProjectScheduleOutcome,
     ScheduleInput,
     ScheduleOutput,
+    StepPinInput,
     StepProgressInput,
     StepSchedule,
     StepTimingInput,
@@ -110,6 +123,8 @@ from scheduling.types import (
     default_categories,
     default_lead_times,
     default_workflow_templates,
+    require_plan_week,
+    validate_current_week,
 )
 from scheduling.whatif import (
     MAX_ADDED_CHAMBERS_TOTAL,
@@ -149,6 +164,7 @@ from scheduling.workflow import (
     WAIT_MAX_WEEKS,
     WAIT_MIN_WEEKS,
     CategoryMaps,
+    PinWindow,
     ProjectPlan,
     analyse_project,
     build_category_maps,
@@ -156,6 +172,7 @@ from scheduling.workflow import (
     build_workflows,
     canonical_categories,
     canonical_schedule_input_asdict,
+    canonical_schedule_output_asdict,
     canonical_step_timing,
     canonical_step_timing_dict,
     compute_progress_pct,
@@ -166,12 +183,20 @@ from scheduling.workflow import (
     is_step_skipped,
     is_valid_fte,
     merged_step_override,
+    pin_window,
+    pin_windows,
+    pins_lapsed,
     project_progress_pct,
     step_effective_weeks,
     unconstrained_end_week,
+    validate_step_pins,
 )
 
 __all__ = [
+    "EngineerActiveWeeks",
+    "InactivePeriod",
+    "active_week_count",
+    "covered_plan_weeks",
     "AddChamber",
     "AddEngineer",
     "AddProject",
@@ -200,6 +225,8 @@ __all__ = [
     "validate_scenario_limits",
     "CATEGORY_RANK",
     "LAB_CONSUMPTION_PER_PROJECT_WEEK",
+    "PLAN_WEEK_MAX",
+    "PLAN_WEEK_MIN",
     "ChamberInput",
     "CpSatSolveInfo",
     "DeliveryForecast",
@@ -227,6 +254,8 @@ __all__ = [
     "canonical_step_timing_dict",
     "OVERLAP_MAX_WEEKS",
     "OVERLAP_MIN_WEEKS",
+    "check_i38_run_week",
+    "check_i41_week_domain",
     "check_scheduler_determinism",
     "compare_solvers",
     "CrossCapacityHubLeader",
@@ -237,6 +266,8 @@ __all__ = [
     "compute_progress_pct",
     "default_lead_times",
     "default_workflow_templates",
+    "require_plan_week",
+    "validate_current_week",
     "derive_remaining",
     "forecast_delivery",
     "fte_span",
@@ -296,4 +327,14 @@ __all__ = [
     "is_default_categories",
     "template_timeline",
     "without_waits",
+    # P40 (ADR 0054, R40-12): manual step pins.
+    "PinWindow",
+    "StepPinInput",
+    "canonical_schedule_output_asdict",
+    "check_pin_load_neutrality",
+    "pin_window",
+    "pin_windows",
+    "pins_lapsed",
+    "validate_step_pins",
+    "without_pins",
 ]

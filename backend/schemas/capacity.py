@@ -466,5 +466,9 @@ class EngineerUtilizationRow(BaseModel):
 
 class EngineerUtilizationResponse(BaseModel):
     week_range: tuple[int, int]
+    #: P37-T04 (API_CONTRACT_P37 §2): the calendar week (the "now" column).
     current_week: int
+    #: P37-T04: the active run's stored week (the booked cells' basis), null
+    #: without an active run.
+    run_week: int | None = None
     engineers: list[EngineerUtilizationRow]

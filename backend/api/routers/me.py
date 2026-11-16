@@ -17,7 +17,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import domain_constants as dc
 from api.db import get_db
 from api.deps import get_current_principal
 from core.config import is_dev_mode
@@ -26,7 +25,15 @@ from core.rbac import Action, Surface, role_allows
 from models.engineer import Engineer
 from models.enums import RoleName
 from models.user import User, UserRole
-from schemas.session import DevUser, MeResponse, SurfacePermission, SurfacePermissions
+from schemas.session import (
+    DevUser,
+    MeResponse,
+    PlanWeek,
+    SurfacePermission,
+    SurfacePermissions,
+)
+from services.plan_clock import PlanClock, get_plan_clock
+from services.plan_week import plan_week_state
 from services.project_access import has_any_manageable_project
 
 router = APIRouter(prefix="/me", tags=["session"])
@@ -73,6 +80,7 @@ async def _is_delegate_manager(db: AsyncSession, principal: Principal) -> bool:
 async def get_me(
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(get_current_principal),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> MeResponse:
     engineer_id = (
         await db.execute(select(Engineer.id).where(Engineer.user_id == principal.user_id))
@@ -88,8 +96,18 @@ async def get_me(
         permissions=resolve_permissions(principal.roles),
         dev_mode=is_dev_mode(),
         is_delegate_manager=await _is_delegate_manager(db, principal),
-        current_week=dc.CURRENT_WEEK,
-        weeks_left_in_year=max(0, dc.WITHIN_YEAR_WEEK - dc.CURRENT_WEEK),
+        current_week=clock.week,
+        weeks_left_in_year=clock.weeks_left_in_year,
+        as_of_date=clock.as_of_date,
+        plan_year=clock.plan_year,
+        plan_year_closed=clock.plan_year_closed,
+        week_source=clock.source,
+        week_ends_at=clock.week_ends_at,
+        plan_week=(
+            PlanWeek(run_week=state[0], run_version=state[1], status=state[2])
+            if (state := await plan_week_state(db, clock)) is not None
+            else None
+        ),
     )
 
 

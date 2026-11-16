@@ -36,6 +36,7 @@ from scheduling.invariants import check_i37b_band_ranks_dense
 from scheduling.types import ScheduleInput
 from services.band_rank import default_band_orders
 from services.schedule_persistence import build_schedule_input_from_db
+from tests._plan_week import TEST_WEEK
 from tests.conftest import run_alembic
 
 _BEFORE = "p33a_categories"
@@ -116,7 +117,11 @@ def _python_rule(url: str) -> dict[str, int]:
 
 
 def _schedule_input(url: str) -> ScheduleInput:
-    result: ScheduleInput = asyncio.run(_with_session(url, build_schedule_input_from_db))
+    result: ScheduleInput = asyncio.run(
+        _with_session(
+            url, lambda db: build_schedule_input_from_db(db, current_week=TEST_WEEK)
+        )
+    )
     return result
 
 

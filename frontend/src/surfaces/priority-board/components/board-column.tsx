@@ -29,6 +29,13 @@ export interface BoardColumnProps extends CardHandlers {
   column: DisplayColumn;
   /** Whether a given card may be dragged right now. */
   canDragCard: (item: DisplayCard) => boolean;
+  /** Owner request 2026-11-17: the session may re-rank this card with ↑ / ↓ / a typed position. */
+  canRankCard?: (item: DisplayCard) => boolean;
+  /** A move is in flight: the rank controls do nothing (they stay focusable). */
+  rankInert?: boolean;
+  /** Cards the board KNOWS are last in their full band (served data only); ↓ is disabled on them. */
+  lastInBandIds?: ReadonlySet<string>;
+  onRankTo?: (item: DisplayCard, toRank: number) => void;
   /** The project id lifted by the keyboard, if any. */
   liftedId: string | null;
   /** This column is the current drop target (pointer hover or keyboard target). */
@@ -113,6 +120,12 @@ function CardSlot({
   /** The visible 1-based index — only a fallback when no `band_rank` is served. */
   position: number;
 }): React.JSX.Element {
+  const rank = {
+    rankable: props.canRankCard?.(item) ?? false,
+    rankInert: props.rankInert ?? false,
+    knownLast: props.lastInBandIds?.has(item.card.project_id) ?? false,
+    onRankTo: props.onRankTo,
+  };
   if (props.layout === 'list') {
     return (
       <BoardListRow
@@ -125,6 +138,7 @@ function CardSlot({
         onPointerDragEnd={props.onPointerDragEnd}
         onHandleKeyDown={props.onHandleKeyDown}
         onHandleBlur={props.onHandleBlur}
+        {...rank}
       />
     );
   }
@@ -138,6 +152,7 @@ function CardSlot({
       onPointerDragEnd={props.onPointerDragEnd}
       onHandleKeyDown={props.onHandleKeyDown}
       onHandleBlur={props.onHandleBlur}
+      {...rank}
     />
   );
 }

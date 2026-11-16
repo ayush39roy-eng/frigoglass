@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { handleLabel, type DisplayCard } from '../lib/board-model';
 import { BoardScenarioContext } from '../lib/board-scenario';
 import { BandRankChip, FrozenBadge, HardGateLock } from './board-badges';
+import { BandRankInput, BandRankStepButtons } from './band-rank-controls';
 
 export interface BoardCardProps {
   item: DisplayCard;
@@ -27,6 +28,14 @@ export interface BoardCardProps {
   onPointerDragEnd: () => void;
   onHandleKeyDown: (item: DisplayCard, event: React.KeyboardEvent<HTMLButtonElement>) => void;
   onHandleBlur: (item: DisplayCard) => void;
+  /** Owner request 2026-11-17: the session may re-rank this card (same permission as drag; a served `band_rank`). */
+  rankable?: boolean;
+  /** A move is in flight: the rank controls stay focusable but do nothing. */
+  rankInert?: boolean;
+  /** The board knows from served data the card is last in its full band (↓ disabled). */
+  knownLast?: boolean;
+  /** ↑ / ↓ / typed position → the shared preview with `to_rank`. */
+  onRankTo?: ((item: DisplayCard, toRank: number) => void) | undefined;
 }
 
 /**
@@ -34,7 +43,9 @@ export interface BoardCardProps {
  * `GET /priority-board` from the active run (I9, I13). The card itself is not
  * interactive; it holds a drag handle (pointer and keyboard), a link to the
  * Workspace, and the shared P11 priority move control, so dragging is never
- * the only way to move a project (ADR 0018 §5).
+ * the only way to move a project (ADR 0018 §5). For a session that may
+ * re-rank, the position chip is an input and ↑ / ↓ sit in the footer
+ * (owner request 2026-11-17), both through the same preview side panel.
  */
 export const BoardCard = React.memo(function BoardCard({
   item,
@@ -45,9 +56,15 @@ export const BoardCard = React.memo(function BoardCard({
   onPointerDragEnd,
   onHandleKeyDown,
   onHandleBlur,
+  rankable = false,
+  rankInert = false,
+  knownLast = false,
+  onRankTo,
 }: BoardCardProps): React.JSX.Element {
   const { card, servedPriority, pending } = item;
   const rank = card.band_rank ?? null;
+  const rankControls = rankable && rank !== null && onRankTo !== undefined;
+  const rankTo = React.useCallback((toRank: number) => onRankTo?.(item, toRank), [item, onRankTo]);
   const locked = card.hard_gated && servedPriority === 'P1';
   const staged = React.useContext(BoardScenarioContext).has(card.project_id);
   // P25-T03: the served suggested (promoted) band; a pre-P25-T03 API only serves `band`.
@@ -95,7 +112,19 @@ export const BoardCard = React.memo(function BoardCard({
             </span>
           )
         ) : null}
-        {rank !== null && !pending ? <BandRankChip rank={rank} band={servedPriority} className="mt-0.5" /> : null}
+        {rankControls ? (
+          <BandRankInput
+            name={card.name}
+            band={servedPriority}
+            rank={rank}
+            inert={rankInert}
+            pending={pending}
+            onSubmit={rankTo}
+            className="mt-0.5"
+          />
+        ) : rank !== null && !pending ? (
+          <BandRankChip rank={rank} band={servedPriority} className="mt-0.5" />
+        ) : null}
         <h3 className="min-w-0 flex-1 text-xs font-semibold leading-snug text-text">
           <Link
             to={`/projects/${card.project_id}`}
@@ -151,12 +180,24 @@ export const BoardCard = React.memo(function BoardCard({
         ) : (
           <span className="text-2xs text-text-subtle">{card.status}</span>
         )}
-        <PriorityMoveControl
-          projectId={card.project_id}
-          projectName={card.name}
-          priority={servedPriority}
-          status={card.status}
-        />
+        <span className="flex items-center gap-1">
+          {rankControls ? (
+            <BandRankStepButtons
+              name={card.name}
+              band={servedPriority}
+              rank={rank}
+              inert={rankInert || pending}
+              knownLast={knownLast}
+              onMove={rankTo}
+            />
+          ) : null}
+          <PriorityMoveControl
+            projectId={card.project_id}
+            projectName={card.name}
+            priority={servedPriority}
+            status={card.status}
+          />
+        </span>
       </div>
     </div>
   );

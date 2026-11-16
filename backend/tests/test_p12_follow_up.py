@@ -52,6 +52,7 @@ from models.schedule import ScheduleRun
 from services.priority_move import apply_priority_change
 from services.project_steps import sync_project_steps
 from services.schedule_persistence import build_schedule_input_from_db, create_queued_schedule_run
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import clear_current_principal_override, make_principal
 from tests.conftest import run_alembic
 from tests.factories import make_hub, make_schedule_run, make_user, rank_all_bands
@@ -261,7 +262,7 @@ async def test_burst_of_deferred_collapses_into_one_follow_up(real_db, delays):
     assert (await _flag(url)).pending is False
 
     async def _input_priority(db):
-        schedule_input = await build_schedule_input_from_db(db)
+        schedule_input = await build_schedule_input_from_db(db, current_week=TEST_WEEK)
         [proj] = [p for p in schedule_input.projects if p.project_id == str(project_id)]
         return proj.priority
 
@@ -313,7 +314,7 @@ async def test_worker_failure_hands_over_to_follow_up(real_db, delays, monkeypat
     run_id = await _new_run(url, ScheduleRunStatus.QUEUED)
     await _register_follow_up(url)
 
-    async def _boom(_db):
+    async def _boom(_db, **_kwargs):
         raise RuntimeError("solver input exploded")
 
     monkeypatch.setattr(schedule_tasks, "build_schedule_input_from_db", _boom)

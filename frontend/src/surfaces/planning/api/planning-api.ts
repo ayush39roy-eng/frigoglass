@@ -17,7 +17,11 @@ import type {
   ChamberCreateRequest,
   ChamberRead,
   ChamberUpdateRequest,
+  DeactivateRequest,
+  DeactivateResponse,
+  DeactivationPreview,
   EngineerCreateRequest,
+  EngineerStatusFilter,
   EngineerRead,
   EngineerUpdateRequest,
   CapacityBasis,
@@ -36,11 +40,17 @@ type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
 export function fetchEngineers(
   hubIds: readonly string[] | undefined,
   ctx: FetchCtx = {},
+  status: EngineerStatusFilter = 'active',
 ): Promise<EngineerRead[]> {
   // Multi-select: repeated `hub_id` (ORed by the server); empty = every visible engineer.
+  // P38: `status` is sent only when it is not the server default (`active`), so
+  // the default request is unchanged.
   return apiGet<EngineerRead[]>('/engineers', {
     ...ctx,
-    query: { hub_id: hubIds && hubIds.length > 0 ? [...hubIds].sort() : undefined },
+    query: {
+      hub_id: hubIds && hubIds.length > 0 ? [...hubIds].sort() : undefined,
+      status: status === 'active' ? undefined : status,
+    },
   });
 }
 
@@ -55,12 +65,23 @@ export function updateEngineer(
   return apiSend<EngineerRead>('PATCH', `/engineers/${engineerId}`, body);
 }
 
-/** `DELETE /engineers/{id}` — 409 if still referenced by a project/workflow
- *  step/schedule-run snapshot (`api/routers/engineers.py::delete_engineer`'s
- *  own by-design "never silently orphan schedule data" rule). Resolves to
- *  `void`, matching the 204 the backend returns. */
-export function deleteEngineer(engineerId: string): Promise<void> {
-  return apiSend<void>('DELETE', `/engineers/${engineerId}`);
+// P38 (ADR 0053): `DELETE /engineers/{id}` is retired (410
+// ENGINEER_DELETE_RETIRED); engineers are deactivated instead. No fetcher.
+
+/** `GET /engineers/{id}/deactivation-preview` (Admin / Super Admin). */
+export function fetchDeactivationPreview(engineerId: string, ctx: FetchCtx = {}): Promise<DeactivationPreview> {
+  return apiGet<DeactivationPreview>(`/engineers/${engineerId}/deactivation-preview`, ctx);
+}
+
+/** `POST /engineers/{id}/deactivate` (Admin / Super Admin): one transaction,
+ *  then at most one recalculation (`run.status`). */
+export function deactivateEngineer(engineerId: string, body: DeactivateRequest): Promise<DeactivateResponse> {
+  return apiSend<DeactivateResponse>('POST', `/engineers/${engineerId}/deactivate`, body);
+}
+
+/** `POST /engineers/{id}/reactivate` (Admin / Super Admin): empty body, no run. */
+export function reactivateEngineer(engineerId: string): Promise<EngineerRead> {
+  return apiSend<EngineerRead>('POST', `/engineers/${engineerId}/reactivate`);
 }
 
 // --- Chambers ---

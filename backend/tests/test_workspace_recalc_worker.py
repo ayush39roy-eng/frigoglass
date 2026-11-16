@@ -279,3 +279,54 @@ def test_solver_messages_expire_with_the_in_flight_window():
     for task in (schedule_tasks.run_greedy_schedule, schedule_tasks.run_cp_sat_schedule):
         assert task.expires == window
         assert task._get_exec_options()["expires"] == window
+
+
+async def test_r37_2_queued_sunday_executed_monday_solves_at_the_sunday_week(
+    postgres_url, monkeypatch
+):
+    """ADR 0052 R37-2 / I38: the week is read once, when the QUEUED row is
+    created. A run queued Sun 15 Nov 2026 23:59 Athens (W46) and executed Mon
+    16 Nov (W47) stores AND solves at W46; the worker never re-reads the
+    clock."""
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from services import plan_clock
+
+    athens = ZoneInfo("Europe/Athens")
+    monkeypatch.delenv("RPD_CURRENT_WEEK", raising=False)
+    monkeypatch.delenv("RPD_PLAN_YEAR", raising=False)
+    with plan_clock.override_now(datetime(2026, 11, 15, 23, 59, tzinfo=athens)):
+        project_id, _previous_id, run_id = await _seed(
+            # A hub no other test of this module uses (one shared database).
+            postgres_url, HubName.OEM_HCK, 9001, SolverType.GREEDY
+        )
+
+    solved_at: list[int] = []
+
+    def _spy(schedule_input):
+        solved_at.append(schedule_input.current_week)
+        return run_greedy_sgs(schedule_input)
+
+    monkeypatch.setattr(schedule_tasks, "run_greedy_sgs", _spy)
+    with plan_clock.override_now(datetime(2026, 11, 16, 9, 0, tzinfo=athens)):
+        assert plan_clock.now().week == 47
+        result = await schedule_tasks._run_cp_sat_schedule_async(
+            _FakeTask(),
+            schedule_run_id=str(run_id),
+            triggered_by_user_id=None,
+            deterministic_time=1.0,
+            activate=True,
+            recalc_project_id=str(project_id),
+            solver=SolverType.GREEDY,
+        )
+    assert result["status"] == "completed"
+    assert solved_at == [46]
+
+    async def _check(db):
+        return await db.get(ScheduleRun, run_id)
+
+    run = await _read(postgres_url, _check)
+    assert run.status == ScheduleRunStatus.COMPLETED
+    assert run.current_week == 46

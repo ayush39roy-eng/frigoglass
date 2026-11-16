@@ -216,6 +216,24 @@ _NULLABILITY_ALLOWLIST: dict[tuple[str, str], str] = {
 }
 
 
+# Backend response fields served ahead of their frontend mirror. An "exact"
+# row tolerates exactly these as "only in backend" until the frontend task
+# named in the reason adds them; that task removes the entry (a stale entry
+# fails `test_pending_frontend_fields_are_still_pending`).
+_PENDING_FRONTEND_FIELDS: dict[tuple[str, str], str] = {
+    ("MeResponse", "as_of_date"): "P37-T04, frontend P37-T06",
+    ("MeResponse", "plan_year"): "P37-T04, frontend P37-T06",
+    ("MeResponse", "plan_year_closed"): "P37-T04, frontend P37-T06",
+    ("MeResponse", "week_source"): "P37-T04, frontend P37-T06",
+    ("MeResponse", "week_ends_at"): "P37-T04, frontend P37-T06",
+    ("MeResponse", "plan_week"): "P37-T04, frontend P37-T06",
+    ("ScheduleRunChanges", "baseline_week"): "P37-T04 (R37-4), frontend P37-T06",
+    ("ScheduleRunChanges", "run_week"): "P37-T04 (R37-4), frontend P37-T06",
+    ("EngineerUtilizationResponse", "run_week"): "P37-T04, frontend P37-T06",
+    ("ResourceLoadResponse", "run_week"): "P37-T04, frontend P37-T06",
+}
+
+
 # --------------------------------------------------------------------------
 # Per-surface (frontend file, mapping) tables.
 #
@@ -269,6 +287,8 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_DASHBOARD_TS, "CompletingWithinYearRow", "CompletingWithinYearRow", "exact"),
     (_DASHBOARD_TS, "CompletingWithinYear", "CompletingWithinYear", "exact"),
     (_DASHBOARD_TS, "PriorityDeliveryBand", "PriorityDeliveryBand", "exact"),
+    # Owner request 2026-11-16: per-country delivery buckets.
+    (_DASHBOARD_TS, "DeliveryRegionRow", "DeliveryRegionRow", "exact"),
     (_DASHBOARD_TS, "ProjectFilterRow", "ProjectFilterRow", "exact"),
     (_DASHBOARD_TS, "ProjectFilterResult", "ProjectFilterResult", "exact"),
     # P13 (docs/API_CONTRACT_P13.md §2–§3): country chips and register facets.
@@ -407,6 +427,12 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # P13-T13 (docs/API_CONTRACT_P13.md §7).
     (_GANTT_TS, "GanttWeeklyActiveCount", "GanttWeeklyActiveCount", "exact"),
     (_GANTT_TS, "FreezeToggleRequest", "FreezeToggleRequest", "exact"),
+    # P40-T03b (docs/API_CONTRACT_P40.md §1): `PUT /gantt/step-pins`.
+    (_GANTT_TS, "StepPinItem", "StepPinItem", "exact"),
+    (_GANTT_TS, "StepPinsRequest", "StepPinsRequest", "exact"),
+    (_GANTT_TS, "StepPinChange", "StepPinChange", "exact"),
+    (_GANTT_TS, "StepPinsResponse", "StepPinsResponse", "exact"),
+    (_GANTT_TS, "StepPinError", "StepPinError", "exact"),
     # P12 (docs/API_CONTRACT_P12.md §3): the Gantt drag's `StepTimingRequest`
     # / `StepTimingResponse` are gone with the endpoint (P33-T13, ADR 0048:
     # it answers 410 `STEP_TIMING_RETIRED`) and their TS mirrors (P33-T15).
@@ -632,8 +658,13 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_PRIORITY_MOVE_TS, "PriorityPreviewResponse", "PriorityPreviewResponse", "exact"),
     # P36-T03 (ADR 0050, API_CONTRACT_P36 §2–§3): the re-rank bodies. The
     # responses reuse PriorityPreviewResponse / PriorityMoveResponse (above).
-    (_PRIORITY_MOVE_TS, "BandRankPreviewRequest", "BandRankPreviewRequest", "exact"),
-    (_PRIORITY_MOVE_TS, "BandRankMoveRequest", "BandRankMoveRequest", "exact"),
+    # 2026-11-17 (contract §6, `to_rank`): the TS body is now a union of two
+    # placement interfaces (anchors | to_rank) and the request types are type
+    # aliases, so each half is a "subset" of the backend request and
+    # `test_band_rank_request_union_p36_to_rank` pins that the halves together
+    # cover the backend fields exactly and never mix.
+    (_PRIORITY_MOVE_TS, "BandRankAnchorPlacement", "BandRankPreviewRequest", "subset"),
+    (_PRIORITY_MOVE_TS, "BandRankToRankPlacement", "BandRankPreviewRequest", "subset"),
     # --- P18-T03: What-if planner (backend/schemas/whatif.py, ADR 0031) ---
     (_WHATIF_TS, "AddProjectIn", "AddProjectIn", "exact"),
     (_WHATIF_TS, "AddEngineerIn", "AddEngineerIn", "exact"),
@@ -688,6 +719,26 @@ def openapi_schemas() -> dict[str, Any]:
 def ts_interfaces_by_file() -> dict[Path, dict[str, dict[str, Any]]]:
     files = {row[0] for row in CONTRACT_TABLE}
     return {f: _extract_ts_interfaces(f) for f in files}
+
+
+def test_pending_frontend_fields_are_still_pending(
+    ts_interfaces_by_file: dict[Path, dict[str, dict[str, Any]]],
+) -> None:
+    """Every `_PENDING_FRONTEND_FIELDS` entry is a real backend field that its
+    exact TS mirror still lacks; once the frontend adds it, drop the entry."""
+
+    exact = {(be, f): ts for f, ts, be, mode in CONTRACT_TABLE if mode == "exact"}
+    for (schema, field), _reason in _PENDING_FRONTEND_FIELDS.items():
+        backend_props, _ = _backend_fields(schema)
+        assert field in backend_props, (schema, field)
+        mirrors = [(f, ts) for (be, f), ts in exact.items() if be == schema]
+        assert mirrors, f"{schema} has no exact TS mirror"
+        for ts_file, ts_interface in mirrors:
+            ts_fields = _resolve_ts_fields_with_imports(ts_file, ts_interface)
+            assert field not in ts_fields, (
+                f"{ts_interface}.{field} now exists in {ts_file.name}: remove it "
+                "from _PENDING_FRONTEND_FIELDS"
+            )
 
 
 class TestTsParserSelfTest:
@@ -772,7 +823,11 @@ class TestOpenApiFrontendContract:
 
         if mode == "exact":
             extra_in_frontend = ts_names - backend_props
-            missing_in_frontend = backend_props - ts_names
+            missing_in_frontend = {
+                n
+                for n in backend_props - ts_names
+                if (backend_schema, n) not in _PENDING_FRONTEND_FIELDS
+            }
             assert not extra_in_frontend and not missing_in_frontend, (
                 f"{ts_file.relative_to(FRONTEND_SRC.parent.parent)} "
                 f"`{ts_interface}` drifted from backend `{backend_schema}`: "
@@ -791,7 +846,11 @@ class TestOpenApiFrontendContract:
             # TS contract; a response field the backend always happens to
             # populate today is likewise not unsafe to treat as required. So
             # only the backend-requires-but-TS-optional direction fails here.
-            required_mismatch_frontend_optional = backend_required - ts_required
+            required_mismatch_frontend_optional = {
+                n
+                for n in backend_required - ts_required
+                if (backend_schema, n) not in _PENDING_FRONTEND_FIELDS
+            }
             assert not required_mismatch_frontend_optional, (
                 f"{ts_interface}: backend requires "
                 f"{sorted(required_mismatch_frontend_optional)} but the TS "
@@ -1040,3 +1099,23 @@ def test_register_edit_error_shape_p35() -> None:
     ts_fields = _resolve_ts_fields_with_imports(_REGISTER_EDITS_TS, "RegisterEditError")
     assert set(ts_fields) == {"project_id", "code", "message"}
     assert not any(f["optional"] for f in ts_fields.values())
+
+
+def test_band_rank_request_union_p36_to_rank() -> None:
+    """2026-11-17 (API_CONTRACT_P36 §6): the band-rank body is anchors OR
+    `to_rank`. The two TS placement interfaces are disjoint and together
+    declare exactly `BandRankPreviewRequest`'s fields; the confirm body is the
+    preview body plus `preview_token` on both sides."""
+
+    anchors = _resolve_ts_fields_with_imports(_PRIORITY_MOVE_TS, "BandRankAnchorPlacement")
+    to_rank = _resolve_ts_fields_with_imports(_PRIORITY_MOVE_TS, "BandRankToRankPlacement")
+    assert set(anchors) == {"before_project_id", "after_project_id"}
+    assert set(to_rank) == {"to_rank"}
+    preview_props, preview_required = _backend_fields("BandRankPreviewRequest")
+    assert preview_props == set(anchors) | set(to_rank)
+    assert preview_required == set()
+    move_props, move_required = _backend_fields("BandRankMoveRequest")
+    assert move_props == preview_props | {"preview_token"}
+    assert move_required == {"preview_token"}
+    src = _strip_ts_comments(_PRIORITY_MOVE_TS.read_text())
+    assert "BandRankMoveRequest = BandRankPreviewRequest & { preview_token: string }" in src

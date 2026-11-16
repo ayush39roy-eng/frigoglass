@@ -43,6 +43,7 @@ from models.project import Project
 from models.project_access import ProjectAccessGrant
 from models.schedule import ScheduleRun
 from services.schedule_persistence import build_schedule_input_from_db
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
@@ -184,7 +185,7 @@ async def test_post_queued_dispatches_one_greedy_activating_run(db_session, disp
     assert w.project.schedule_stale is True
     # I20: the worker builds its input from the DB after this commit, and
     # that input carries the new priority.
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     moved = next(p for p in schedule_input.projects if p.project_id == str(w.project.id))
     assert moved.priority == "P2"
 

@@ -64,6 +64,20 @@ leader picker (`whatif._pick_leader`) and the service-side pickers — and the
 key of the capacity-hub load aggregate; workflow and lab region still follow
 `project.hub` (`_is_oem_hub`, `_lab_region_for_hub`).
 
+Manual step pins (ADR 0054 as ruled at P40-T02, R40-3..R40-7; DOMAIN_RULES
+"Manual step weeks"): `ProjectInput.step_pins` fixes a step on its effective
+window (`workflow.pin_windows`: the pin, or `cw .. cw + L - 1` when a
+non-frozen pin has lapsed). A frozen project's pins are booked in its walk
+(phase 2); a non-frozen project's pins are pre-booked with the anchored steps
+(phase 3, `prebook_anchored_steps`), before any search. Pins are booked like
+anchored steps, regardless of conflict (`_book_anchored`), and two fixed
+design placements of the same project sharing a week raise ENG_CONFLICT when
+one is a pin (`_ResourceState.book_engineer`). A pinned step ignores its own
+gate and passes on `max(end, release)`; `manual_overlap` is evaluated on the
+emitted rows (`workflow.manual_overlap_by_row`). The row reports `eff` as
+`duration_weeks` (R40-3). With no pin anywhere every run is byte-identical to
+before P40 (I48(a)).
+
 No DB access, no network access, no filesystem access, no randomness, no
 wall-clock dependence. Every collection this module iterates is explicitly
 sorted before iteration.
@@ -102,7 +116,11 @@ from scheduling.workflow import (
     first_step_frontier,
     is_default_categories,
     leader_fte_of,
+    manual_overlap_by_row,
     passed_release,
+    pin_windows,
+    pinned_release,
+    pins_lapsed,
     release_week,
     step_gate,
     unconstrained_end_week,
@@ -234,14 +252,28 @@ class _ResourceState:
         # second booker.
         self.eng_owners: dict[str, dict[int, set[str]]] = {}
         self.eng_conflict_projects: set[str] = set()
+        # ADR 0054 (R40-6, F4): which projects hold an engineer-week through a
+        # *pinned* placement, so two fixed design placements of the same
+        # project sharing a week raise ENG_CONFLICT when one of them is a pin.
+        # Empty in every run without pins, so nothing else changes.
+        self.eng_pin_owners: dict[str, dict[int, set[str]]] = {}
 
-    def book_engineer(self, engineer_id: str, weeks: range, project_id: str) -> bool:
+    def book_engineer(
+        self, engineer_id: str, weeks: range, project_id: str, *, pinned: bool = False
+    ) -> bool:
         """Consume `weeks` regardless of conflict; return True if any was busy.
         On a conflict, `project_id` and every earlier holder of the clashing
-        weeks are added to `eng_conflict_projects`."""
+        weeks are added to `eng_conflict_projects`.
+
+        ADR 0054 (R40-6, F4): a week the same project already holds is also a
+        conflict when either booking is a pin (`pinned`, or an earlier pinned
+        booking of this project in that week): pin and pin, pin and anchored
+        tail, pin and frozen step. Two non-pinned bookings of one project stay
+        unflagged, exactly as before P40."""
 
         busy = self.eng_busy.setdefault(engineer_id, set())
         owners = self.eng_owners.setdefault(engineer_id, {})
+        pin_owners = self.eng_pin_owners.get(engineer_id)
         conflict = False
         for wk in weeks:
             holders = owners.setdefault(wk, set())
@@ -249,8 +281,19 @@ class _ResourceState:
                 conflict = True
                 self.eng_conflict_projects.update(holders)
                 self.eng_conflict_projects.add(project_id)
+            elif (
+                wk in busy
+                and project_id in holders
+                and (pinned or (pin_owners is not None and project_id in pin_owners.get(wk, ())))
+            ):
+                conflict = True
+                self.eng_conflict_projects.add(project_id)
             busy.add(wk)
             holders.add(project_id)
+            if pinned:
+                self.eng_pin_owners.setdefault(engineer_id, {}).setdefault(wk, set()).add(
+                    project_id
+                )
         return conflict
 
     def engineer_free(self, engineer_id: str, weeks: range) -> bool:
@@ -458,6 +501,7 @@ def _no_leader_outcome(
         projected_end_week=None,
         blocked=plan.blocked,
         progress_pct=compute_progress_pct(plan),
+        pin_lapsed=pins_lapsed(plan, current_week) if plan.pinned_step_ids else False,
     )
 
 
@@ -508,22 +552,32 @@ def prebook_anchored_steps(
     anchored step behind a Not-Started predecessor (inconsistent data) is
     placed during the walk instead.
 
+    ADR 0054 (R40-6): the manual pins of these projects are pre-booked in the
+    same pass, in the same order (per project in scheduling order, steps in
+    walk order), on their effective windows (R40-5), so a later-priority
+    project's pin keeps its weeks against a higher-priority project that has
+    not started (as Gate ruling 4 does for anchored steps). A pin whose window
+    ends past the horizon is not booked (the walk makes the project LEFT_OUT);
+    a lab pin with no eligible chamber is not booked either (`no_chamber`).
+
     Returns `(placements[project_id][step_id], (eng_conflict, overlap)[project_id])`.
     """
 
     current_week = ctx.schedule_input.current_week
+    horizon = ctx.schedule_input.horizon_weeks
     placements: dict[str, dict[str, _Placement]] = {}
     flags: dict[str, tuple[bool, bool]] = {}
 
     for project in projects:
         plan = ctx.plans[project.project_id]
-        if plan.data_error is not None or not plan.progress_tracked:
+        if plan.data_error is not None or not (plan.progress_tracked or plan.pinned_step_ids):
             continue
         leader = ctx.engineers_by_id.get(project.leader_engineer_id or "")
         if leader is None:
             continue  # no_leader -> LEFT_OUT with nothing booked (unchanged)
         region = _lab_region_for_hub(project.hub)
         frontier = first_step_frontier(project, current_week)
+        pins = pin_windows(plan, current_week) if plan.pinned_step_ids else {}
 
         # ADR 0043: `known_g[q]` is the release G(q) a known step passes on
         # (== its end when it has no overlap) and `known_starts[q]` its start
@@ -565,6 +619,34 @@ def prebook_anchored_steps(
                     )
                 elif release is not None and sp.status != STATUS_BLOCKED:
                     _know(known_g, known_starts, sp, release, release, release)
+                continue
+
+            if sid in pins:
+                # ADR 0054: a fixed placement on the effective window, booked
+                # regardless of conflict; it ignores its own gate (R40-7).
+                win = pins[sid]
+                if win.end_week > horizon:
+                    continue  # R40-5: LEFT_OUT in the walk, nothing booked
+                placement, conflict, over = _book_anchored(
+                    ctx,
+                    state,
+                    sp,
+                    leader,
+                    region,
+                    win.start_week,
+                    win.end_week,
+                    project_id=project.project_id,
+                    consume_from=current_week,
+                    pinned=True,
+                )
+                if placement is None:
+                    continue  # no eligible chamber: the walk reports no_chamber / LEFT_OUT
+                eng_conflict |= conflict
+                overlap |= over
+                placed[sid] = placement
+                known_starts[sid] = placement.start_week
+                if release is not None:
+                    known_g[sid] = pinned_release(placement.end_week, release)
                 continue
 
             if sp.status == STATUS_DONE:
@@ -676,6 +758,7 @@ def _book_anchored(
     project_id: str,
     consume_from: int,
     reported_start: int | None = None,
+    pinned: bool = False,
 ) -> tuple[_Placement | None, bool, bool]:
     """Consume capacity for `[max(start, consume_from) .. end]` regardless of
     conflict (DOMAIN_RULES.md: capacity is only tracked for weeks >=
@@ -686,13 +769,17 @@ def _book_anchored(
     Lab steps (DOMAIN_RULES "Gate remediation rulings" #1): the first eligible
     chamber, in chamber_id order, with room for every consumed week; only
     when none has room is the step booked over capacity (into the first
-    eligible chamber) and OVERLAP raised."""
+    eligible chamber) and OVERLAP raised.
+
+    ADR 0054 (R40-6): a manual pin is booked through here too (`pinned`), on
+    its effective window: a design pin books the leader in every week, a lab
+    pin one platform of one chamber per week, an elapsed pin nothing."""
 
     weeks = range(max(start, consume_from), end + 1)
     shown_start = reported_start if reported_start is not None else start
     kind = sp.step.kind
     if kind == "design":
-        conflict = state.book_engineer(leader.engineer_id, weeks, project_id)
+        conflict = state.book_engineer(leader.engineer_id, weeks, project_id, pinned=pinned)
         return _Placement(shown_start, end, leader.engineer_id, None), conflict, False
     if kind == "lab":
         eligible = _eligible_chambers(ctx.chambers_by_id, region, sp.step.step_id)
@@ -733,6 +820,8 @@ def _schedule_one_project(
     region = _lab_region_for_hub(project.hub)
     frontier = first_step_frontier(project, current_week)
     frozen = project.frozen
+    # ADR 0054: the pins this walk places (effective windows, R40-5).
+    pins = pin_windows(plan, current_week) if plan.pinned_step_ids else {}
 
     eng_conflict, overlap = pre_flags
     left_out = False
@@ -750,10 +839,14 @@ def _schedule_one_project(
         ch: str | None,
         *,
         skipped: bool = False,
+        pinned: bool = False,
     ) -> None:
         ends[sp.step.step_id] = end
         starts[sp.step.step_id] = start
-        g[sp.step.step_id] = passed_release(sp, end, release)
+        # R40-7: a pinned step passes on max(end, release).
+        g[sp.step.step_id] = (
+            pinned_release(end, release) if pinned else passed_release(sp, end, release)
+        )
         steps_out[sp.step.step_id] = StepSchedule(
             step_id=sp.step.step_id,
             sequence_order=sp.step.sequence_order,
@@ -764,6 +857,7 @@ def _schedule_one_project(
             assigned_engineer_id=eng,
             assigned_chamber_id=ch,
             skipped=skipped,
+            pinned=pinned,
         )
 
     release = frontier - 1
@@ -788,6 +882,46 @@ def _schedule_one_project(
                 emit(sp, sp.actual_start_week, max(sp.actual_start_week, hold_week - 1), None, None)
             else:
                 emit(sp, release, release, None, None)
+            continue
+
+        if sid in pins:
+            # ADR 0054 (R40-5 / R40-6 / R40-7): the step sits exactly on its
+            # effective window, ignoring its own gate, wait, overlap, floor and
+            # the frontier. Non-frozen pins were pre-booked; a frozen
+            # project's pins are booked here, in walk order (phase 2).
+            win = pins[sid]
+            if win.end_week > horizon:
+                left_out = True
+                break
+            if sid in prebooked:
+                pl = prebooked[sid]
+                emit(sp, pl.start_week, pl.end_week, pl.engineer_id, pl.chamber_id, pinned=True)
+                continue
+            placement, conflict, over = _book_anchored(
+                ctx,
+                state,
+                sp,
+                leader,
+                region,
+                win.start_week,
+                win.end_week,
+                project_id=project.project_id,
+                consume_from=win.start_week if frozen else current_week,
+                pinned=True,
+            )
+            if placement is None:
+                left_out, no_chamber_step_id = True, sid
+                break
+            eng_conflict |= conflict
+            overlap |= over
+            emit(
+                sp,
+                placement.start_week,
+                placement.end_week,
+                placement.engineer_id,
+                placement.chamber_id,
+                pinned=True,
+            )
             continue
 
         if sid in prebooked:
@@ -924,7 +1058,22 @@ def _schedule_one_project(
         for sid in plan.workflow.walk_order:
             if sid in prebooked and sid not in steps_out:
                 pl = prebooked[sid]
-                emit(plan.steps[sid], pl.start_week, pl.end_week, pl.engineer_id, pl.chamber_id)
+                emit(
+                    plan.steps[sid],
+                    pl.start_week,
+                    pl.end_week,
+                    pl.engineer_id,
+                    pl.chamber_id,
+                    pinned=sid in pins,
+                )
+
+    manual_overlap = False
+    if pins:
+        # R40-7 / I47(a): evaluated on this walk's own rows.
+        for sid, flagged in manual_overlap_by_row(plan, steps_out, frontier).items():
+            if flagged:
+                steps_out[sid] = replace(steps_out[sid], manual_overlap=True)
+                manual_overlap = True
 
     steps_tuple = tuple(sorted(steps_out.values(), key=lambda s: (s.sequence_order, s.step_id)))
     non_skipped = [s for s in steps_tuple if not s.skipped]
@@ -958,4 +1107,6 @@ def _schedule_one_project(
         blocked=plan.blocked,
         progress_pct=compute_progress_pct(plan),
         data_error=None,
+        manual_overlap=manual_overlap,
+        pin_lapsed=pins_lapsed(plan, current_week) if pins else False,
     )

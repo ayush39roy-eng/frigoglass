@@ -1,11 +1,18 @@
 import { create } from 'zustand';
 
-import { editKey, editsForRequest, isEmptyEdit, type EditMap, type ImportOptions } from './import-rows';
-import type { ImportParseResponse, ImportRow, ImportSimulateResponse, ImportStepEdit } from './import-types';
+import { editKey, editsForRequest, isEmptyEdit, isMappedStatus, type EditMap, type ImportOptions } from './import-rows';
+import type {
+  ImportParseResponse,
+  ImportRow,
+  ImportSimulateRequest,
+  ImportSimulateResponse,
+  ImportStepEdit,
+  PlanYearEndWeek,
+} from './import-types';
 
 /**
- * Plan-import state (P32-T06, ADR 0044). Session only: no `persist`, nothing is saved
- * server-side, a page refresh clears it. Holds the parsed response, the planner's edited
+ * Plan-import state (P32-T06, ADR 0044). Session only: no `persist`, a page refresh clears
+ * it (a saved import scenario lives on the server, P41 / ADR 0055 D3, and is loaded on demand). Holds the parsed response, the planner's edited
  * rows, the options, the Gantt edits map (with an undo stack) and the last served result.
  * The result is stored exactly as served; nothing here derives a figure from it.
  */
@@ -20,6 +27,35 @@ export const DEFAULT_IMPORT_OPTIONS: ImportOptions = {
   expandMulti: true,
 };
 const UNDO_LIMIT = 50;
+
+/**
+ * P41 (ADR 0055 D3): the workbook the session's rows came from, sent with a saved scenario
+ * so the library can group by file. `sha256` is the browser's digest of the uploaded bytes
+ * (null when the browser could not hash it; saving is then off).
+ */
+export interface ImportSource {
+  file_name: string;
+  sha256: string | null;
+  imported_at: string;
+}
+
+/**
+ * P41: a scenario shown read-only on the results instead of the current result. `session`
+ * is a variant of this session; `saved` is a frozen server record (ADR 0055 D3).
+ */
+export type ScenarioView =
+  | { kind: 'session'; id: string; name: string; result: ImportSimulateResponse; request: ImportSimulateRequest }
+  | {
+      kind: 'saved';
+      id: string;
+      name: string;
+      result: ImportSimulateResponse;
+      request: ImportSimulateRequest;
+      simulated_week: number;
+      plan_version: number | null;
+      source: ImportSource;
+      can_edit: boolean;
+    };
 
 export type StepEditPatch = Partial<Pick<ImportStepEdit, 'duration_weeks' | 'start_not_before_week' | 'overlap_weeks'>>;
 
@@ -44,6 +80,14 @@ export interface ImportState {
    */
   ganttFocus: { ref: string; name: string } | null;
   ganttFocusNonce: number;
+  /** P41: the uploaded workbook (set after a parse). */
+  source: ImportSource | null;
+  /** P41 (contract B): plan projects unticked in the picker, sent in merge mode. */
+  excludedPlanIds: string[];
+  /** P41: a scenario shown read-only instead of the current result, or null. */
+  view: ScenarioView | null;
+  /** P41: bumped by "Re-run on today's plan" so an unchanged body still re-simulates. */
+  rerunNonce: number;
 
   /** A fresh parse: rows reset to the served ones, edits and result cleared. */
   setParsed: (parsed: ImportParseResponse) => void;
@@ -68,6 +112,20 @@ export interface ImportState {
   pruneEdits: () => void;
   /** Back to an empty upload. */
   reset: () => void;
+  setSource: (source: ImportSource | null) => void;
+  /**
+   * The project picker's "Compute scenario": file rows in `includedKeys` are included (a
+   * not-mapped status stays out), the others excluded; `excludedPlanIds` replaces the list.
+   * Back to the current result, which then re-simulates.
+   */
+  applyPicks: (includedKeys: ReadonlySet<string>, excludedPlanIds: readonly string[]) => void;
+  openView: (view: ScenarioView) => void;
+  closeView: () => void;
+  /**
+   * "Re-run on today's plan": the stored request becomes the session's rows, options,
+   * edits and exclusions, and is simulated again (always, even when unchanged).
+   */
+  restoreRequest: (request: ImportSimulateRequest, source: ImportSource | null) => void;
 }
 
 const EMPTY = {
@@ -82,6 +140,10 @@ const EMPTY = {
   yearFilter: 'all',
   ganttFocus: null as { ref: string; name: string } | null,
   ganttFocusNonce: 0,
+  source: null as ImportSource | null,
+  excludedPlanIds: [] as string[],
+  view: null as ScenarioView | null,
+  rerunNonce: 0,
 };
 
 function pushUndo(stack: EditMap[], edits: EditMap): EditMap[] {
@@ -148,7 +210,7 @@ export const useImportPlan = create<ImportState>()((set) => ({
     set((s) => (Object.keys(s.edits).length === 0 ? {} : { edits: {}, undoStack: pushUndo(s.undoStack, s.edits) })),
   pruneEdits: () =>
     set((s) => {
-      const kept = editsForRequest(s.edits, s.rows, s.options);
+      const kept = editsForRequest(s.edits, s.rows, s.options, s.excludedPlanIds);
       if (kept.length === Object.keys(s.edits).length) return {};
       return {
         edits: Object.fromEntries(kept.map((e) => [editKey(e.project_ref, e.step_id), e])),
@@ -156,4 +218,31 @@ export const useImportPlan = create<ImportState>()((set) => ({
       };
     }),
   reset: () => set({ ...EMPTY }),
+  setSource: (source) => set({ source }),
+  applyPicks: (includedKeys, excludedPlanIds) =>
+    set((s) => ({
+      rows: s.rows.map((r) => {
+        const include = includedKeys.has(r.key) && isMappedStatus(r.status);
+        return r.include === include ? r : { ...r, include };
+      }),
+      excludedPlanIds: [...new Set(excludedPlanIds)].sort(),
+      view: null,
+    })),
+  openView: (view) => set({ view }),
+  closeView: () => set((s) => (s.view === null ? {} : { view: null })),
+  restoreRequest: (request, source) =>
+    set((s) => ({
+      rows: request.rows.map((r) => ({ ...r })),
+      options: {
+        mode: request.mode,
+        planYearEndWeek: request.plan_year_end_week as PlanYearEndWeek,
+        expandMulti: request.expand_multi,
+      },
+      edits: Object.fromEntries(request.edits.map((e) => [editKey(e.project_ref, e.step_id), { ...e }])),
+      undoStack: [],
+      excludedPlanIds: [...(request.exclude_plan_project_ids ?? [])],
+      source: source ?? s.source,
+      view: null,
+      rerunNonce: s.rerunNonce + 1,
+    })),
 }));

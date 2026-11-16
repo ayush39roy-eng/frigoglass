@@ -1,25 +1,42 @@
 import * as React from 'react';
 
 import { isThemePreference, THEME_STORAGE_KEY, ThemeContext } from './theme-context';
-import type { ResolvedTheme, ThemePreference } from './theme-context';
+import type { ThemePreference } from './theme-context';
 
 const MEDIA_QUERY = '(prefers-color-scheme: dark)';
 
-function readStoredPreference(): ThemePreference {
+function osTheme(): ThemePreference {
   try {
-    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-    return isThemePreference(stored) ? stored : 'system';
+    return window.matchMedia(MEDIA_QUERY).matches ? 'dark' : 'light';
   } catch {
-    return 'system';
+    return 'light';
   }
 }
 
-function systemTheme(): ResolvedTheme {
-  return window.matchMedia(MEDIA_QUERY).matches ? 'dark' : 'light';
+/**
+ * The stored Light/Dark choice. A first visit (nothing stored) or a legacy 'system' value
+ * (the option was removed 2026-11-16) resolves the OS preference ONCE and saves that concrete
+ * value, so later visits keep it and the OS is not followed live. Mirrors index.html.
+ */
+function readInitialPreference(): ThemePreference {
+  let stored: string | null;
+  try {
+    stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  } catch {
+    return osTheme();
+  }
+  if (isThemePreference(stored)) return stored;
+  const resolved = osTheme();
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, resolved);
+  } catch {
+    /* localStorage unavailable — the resolved theme still applies for this session */
+  }
+  return resolved;
 }
 
-function applyTheme(resolved: ResolvedTheme): void {
-  document.documentElement.classList.toggle('dark', resolved === 'dark');
+function applyTheme(theme: ThemePreference): void {
+  document.documentElement.classList.toggle('dark', theme === 'dark');
 }
 
 export interface ThemeProviderProps {
@@ -30,40 +47,25 @@ export interface ThemeProviderProps {
 
 export function ThemeProvider({ children, defaultPreference }: ThemeProviderProps): React.JSX.Element {
   const [preference, setPreferenceState] = React.useState<ThemePreference>(
-    () => defaultPreference ?? readStoredPreference(),
+    () => defaultPreference ?? readInitialPreference(),
   );
-  const [systemResolved, setSystemResolved] = React.useState<ResolvedTheme>(() => systemTheme());
-
-  // Track OS changes so `system` stays live without a reload.
-  React.useEffect(() => {
-    const mql = window.matchMedia(MEDIA_QUERY);
-    const onChange = () => setSystemResolved(mql.matches ? 'dark' : 'light');
-    mql.addEventListener('change', onChange);
-    return () => mql.removeEventListener('change', onChange);
-  }, []);
-
-  const resolvedTheme: ResolvedTheme = preference === 'system' ? systemResolved : preference;
 
   React.useEffect(() => {
-    applyTheme(resolvedTheme);
-  }, [resolvedTheme]);
+    applyTheme(preference);
+  }, [preference]);
 
   const setPreference = React.useCallback((next: ThemePreference) => {
     setPreferenceState(next);
     try {
-      if (next === 'system') {
-        window.localStorage.removeItem(THEME_STORAGE_KEY);
-      } else {
-        window.localStorage.setItem(THEME_STORAGE_KEY, next);
-      }
+      window.localStorage.setItem(THEME_STORAGE_KEY, next);
     } catch {
       /* localStorage unavailable — in-memory preference still applies for this session */
     }
   }, []);
 
   const value = React.useMemo(
-    () => ({ preference, resolvedTheme, setPreference }),
-    [preference, resolvedTheme, setPreference],
+    () => ({ preference, resolvedTheme: preference, setPreference }),
+    [preference, setPreference],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

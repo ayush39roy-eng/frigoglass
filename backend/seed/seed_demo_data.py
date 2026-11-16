@@ -141,6 +141,7 @@ from seed.initial_scoring_rubric import (  # noqa: E402
     seed_priority_score,
 )
 from seed.seed_vip_board import seed_vip_board  # noqa: E402
+from services import plan_clock  # noqa: E402
 from services.audit_helpers import project_audit_state  # noqa: E402
 from services.band_rank import assign_default_band_ranks, provisional_band_rank  # noqa: E402
 from services.schedule_persistence import (  # noqa: E402
@@ -748,7 +749,9 @@ async def seed_client_2026(
 
     projects: list[dict[str, Any]] = data["projects"]
     lead_times = lead_time_lookup(dc.LEAD_TIME_SEED)
-    current_week = dc.CURRENT_WEEK
+    # R37-5 (ADR 0052 §7): progress is derived as of the client's status week;
+    # the summary run below solves at the calendar week.
+    status_week = c26.SEED_STATUS_WEEK
     # ADR 0037: scores are computed under the CURRENT rubric.
     rubric = await ensure_scoring_rubric(session)
 
@@ -790,7 +793,7 @@ async def seed_client_2026(
     leader_names = [provisional.get(i, workbook_leaders[i]) for i in range(len(projects))]
 
     # Progress, in scheduling order, so the higher-priority project gets the
-    # free leader / chamber platform at CURRENT_WEEK (client_2026 docstring).
+    # free leader / chamber platform at the status week (client_2026 docstring).
     # A project with no leader books nothing, so it uses a private ledger.
     progress: dict[int, list[c26.StepProgress]] = {}
     ledger = c26.ResourceLedger()
@@ -803,7 +806,7 @@ async def seed_client_2026(
             specs[i],
             leader=leader_names[i],
             lab_region=hub.lab_region.value,
-            current_week=current_week,
+            current_week=status_week,
             ledger=ledger if shared else c26.ResourceLedger(),
         )
 
@@ -902,6 +905,8 @@ async def seed_client_2026(
     await assign_default_band_ranks(session)
 
     # --- Summary run: one in-memory greedy run (nothing persisted) ---------
+    # R37-5: the calendar week (or the pin), read once; the summary prints it.
+    current_week = plan_clock.current_week()
     schedule_input = await build_schedule_input_from_db(session, current_week=current_week)
     output = run_greedy_sgs(schedule_input)
 
@@ -972,7 +977,10 @@ async def schedule_after_seed(session_factory: async_sessionmaker[AsyncSession])
 
     async with session_factory() as session:
         _step("scheduling: reading projects/engineers/chambers...")
-        schedule_input = await build_schedule_input_from_db(session)
+        # R37-2 / R37-5: a synchronous solve reads the clock once.
+        schedule_input = await build_schedule_input_from_db(
+            session, current_week=plan_clock.current_week()
+        )
         _step("scheduling: running greedy scheduler...")
         schedule_output = run_greedy_sgs(schedule_input)
         _step("scheduling: saving the schedule run (slowest step on a remote DB)...")

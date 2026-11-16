@@ -2,23 +2,85 @@ import * as React from 'react';
 
 import { CURRENT_WEEK, SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 
+import type { GanttProjectRow } from '../api/types';
+import { STEP_COLORS, STEP_LETTERS, stepTint, type StepCode } from '../lib/step-colors';
+
+/** Hatch swatch (CSS) matching the SVG actual-bar pattern. */
+function hatch(slotVar: string): React.CSSProperties {
+  return {
+    backgroundImage: `repeating-linear-gradient(45deg, hsl(var(${slotVar})) 0 2px, hsl(var(${slotVar}) / 0.28) 2px 5px)`,
+    borderColor: `hsl(var(${slotVar}))`,
+  };
+}
+
+/**
+ * P40-T01: which colour is which step. One row per workflow present in the
+ * view (PDD, OEM), one chip per step: the colour, the step letter and the
+ * SERVED step name (read from the rows' `step_name`, never typed here).
+ */
+export function StepColorLegend({ rows }: { rows: readonly GanttProjectRow[] }): React.JSX.Element | null {
+  const names = React.useMemo(() => {
+    const out = new Map<string, string>();
+    for (const r of rows) for (const st of r.steps) if (!out.has(st.step_id)) out.set(st.step_id, st.step_name);
+    return out;
+  }, [rows]);
+  const workflows = (['PDD', 'OEM'] as const).filter((wf) => STEP_LETTERS.some((l) => names.has(`${wf}-${l}`)));
+  if (workflows.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1" data-testid="gantt-step-legend" role="group" aria-label="Step colours">
+      {workflows.map((wf) => (
+        <div key={wf} className="flex items-start gap-1">
+        <span className="w-9 shrink-0 pt-px text-2xs font-bold text-text" aria-hidden="true">{wf}</span>
+        <ul className="flex flex-wrap items-center gap-1" aria-label={`${wf} steps`} data-testid={`gantt-step-legend-${wf.toLowerCase()}`}>
+          {STEP_LETTERS.map((l) => {
+            const code = `${wf}-${l}` as StepCode;
+            const name = names.get(code);
+            if (name === undefined) return null;
+            const c = STEP_COLORS[code];
+            return (
+              <li
+                key={code}
+                className="flex min-w-0 items-center gap-1 rounded-sm border border-border bg-surface px-1 py-px text-[0.625rem] leading-4 text-text"
+                title={`${code} · ${name}`}
+                data-step={code}
+                data-step-slot={c.slot}
+              >
+                <span
+                  aria-hidden="true"
+                  className="grid h-3 min-w-3 place-items-center rounded-[3px] px-0.5 text-[0.5625rem] font-extrabold leading-none"
+                  style={{ background: c.fill, color: c.ink }}
+                >
+                  {l}
+                </span>
+                <span className="max-w-32 truncate">{name}</span>
+              </li>
+            );
+          })}
+        </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Legend for the timeline marks. Every colour is paired with text — colour is
- * never the sole signal (`ui-ux-pro-max` SKILL).
+ * never the sole signal (`ui-ux-pro-max` SKILL). P40-T01: bars take their
+ * STEP's colour (`StepColorLegend`); the marks below are drawn in it.
  */
-export function GanttLegend(): React.JSX.Element {
+export function GanttLegend({ rows = [] }: { rows?: readonly GanttProjectRow[] }): React.JSX.Element {
+  const sample = STEP_COLORS['PDD-A'];
   return (
+    <div className="flex flex-col gap-2" data-testid="gantt-legend">
+    <StepColorLegend rows={rows} />
     <dl className="flex flex-wrap gap-x-4 gap-y-1.5 text-2xs text-text-muted">
       <div className="flex items-center gap-1.5">
-        <span className="h-2.5 w-5 rounded-sm bg-gantt-planned" aria-hidden="true" />
-        <dt>Planned (schedule run)</dt>
+        <span className="h-2.5 w-5 rounded-sm" style={{ background: sample.fill }} aria-hidden="true" />
+        <dt>Planned (schedule run), solid in the step colour</dt>
       </div>
       <div className="flex items-center gap-1.5">
-        <span
-          className="h-2.5 w-5 rounded-sm border border-gantt-actual bg-gantt-actual/30"
-          aria-hidden="true"
-        />
-        <dt>Actual / delayed</dt>
+        <span className="h-2.5 w-5 rounded-sm border" style={hatch(`--step-${String(sample.slot)}`)} aria-hidden="true" />
+        <dt>Actual / delayed, hatched in the step colour</dt>
       </div>
       <div className="flex items-center gap-1.5">
         <span className="h-0.5 w-5 bg-gantt-delay" aria-hidden="true" />
@@ -26,10 +88,11 @@ export function GanttLegend(): React.JSX.Element {
       </div>
       <div className="flex items-center gap-1.5">
         <span
-          className="h-2.5 w-5 rounded-sm border border-gantt-planned bg-gantt-planned/10"
+          className="h-2.5 w-5 rounded-sm border"
+          style={{ background: stepTint(sample, 0.18), borderColor: sample.fill }}
           aria-hidden="true"
         />
-        <dt>Elapsed step (books nobody)</dt>
+        <dt>Elapsed step (books nobody), tinted</dt>
       </div>
       <div className="flex items-center gap-1.5">
         <span
@@ -80,6 +143,11 @@ export function GanttLegend(): React.JSX.Element {
         <span className="h-3 w-0.5 border-l-2 border-gantt-marker-now" aria-hidden="true" />
         <dt>Week {CURRENT_WEEK} — now</dt>
       </div>
+      <div className="flex items-center gap-1.5">
+        <span className="h-2.5 w-5 rounded-sm border-[1.25px] border-dashed border-text" aria-hidden="true" />
+        <dt>Frozen project (dashed outline)</dt>
+      </div>
     </dl>
+    </div>
   );
 }

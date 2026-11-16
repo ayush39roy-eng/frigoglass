@@ -45,6 +45,7 @@ from models.schedule import ScheduleRun
 from models.workflow import ProjectWorkflowStep
 from services.project_steps import sync_project_steps
 from services.schedule_persistence import build_schedule_input_from_db
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import clear_current_principal_override
 from tests.factories import make_engineer, make_hub, make_project, make_schedule_run
 from tests.p12_helpers import act_as, client_for
@@ -231,7 +232,7 @@ async def test_db_check_rejects_any_hand_set_value(
 
 async def test_schedule_input_omits_steps_without_timing(db_session: AsyncSession) -> None:
     w = await _world(db_session)
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     (p,) = [p for p in schedule_input.projects if p.project_id == str(w.project.id)]
     assert p.step_timing == ()
 
@@ -245,7 +246,7 @@ async def test_builder_carries_gaps_and_copies_but_never_a_floor_or_user_overrid
     k = await _step(db_session, w.project, "PDD-K")
     k.plan_gap_weeks = 3
     await db_session.flush()
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     (p,) = [p for p in schedule_input.projects if p.project_id == str(w.project.id)]
     timing = {t.step_id: t for t in p.step_timing}
     assert set(timing) == {"PDD-E", "PDD-K"}
@@ -265,7 +266,7 @@ async def test_schedule_input_drops_timing_of_another_workflow(db_session: Async
     w.project.hub_id, w.project.category = oem.id, ProjectCategory.A_OEM
     await db_session.flush()
     db_session.expire_all()
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     (p,) = [p for p in schedule_input.projects if p.project_id == str(w.project.id)]
     assert p.workflow_id == "OEM" and p.step_timing == ()
 

@@ -80,7 +80,12 @@ export interface PriorityBoardResponse {
 }
 
 export type { PriorityBoardFilters } from '@/lib/query-keys';
-export { moveProjectBandRank, previewProjectBandRank, type BandRankPlacement } from '@/lib/api/priority-move';
+export {
+  moveProjectBandRank,
+  previewProjectBandRank,
+  type BandRankAnchorPlacement,
+  type BandRankPlacement,
+} from '@/lib/api/priority-move';
 
 /** True when no toolbar filter is set (the key then keeps its P12 shape). */
 export function isEmptyBoardFilters(filters: PriorityBoardFilters | undefined): boolean {

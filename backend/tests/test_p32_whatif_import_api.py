@@ -43,6 +43,7 @@ from models.workflow import ProjectWorkflowStep
 from scheduling.plan_import import run_plan_import
 from scheduling.whatif import WhatIfBudgetExceeded
 from schemas.whatif_import import ImportSimulateRequest
+from services import plan_clock
 from services.rate_limit import TokenBucketLimiter
 from services.whatif_baseline import load_context
 from tests.auth_helpers import (
@@ -385,9 +386,13 @@ async def test_admin_kpis_equal_the_engine(db_session):
         body = (await c.post("/whatif/import/simulate", json=sim_body(rows))).json()
     from tests.auth_helpers import make_principal as mp
 
-    ctx = await load_context(db_session, mp(RoleName.ADMIN, user_id=user.id))
+    ctx = await load_context(
+        db_session, mp(RoleName.ADMIN, user_id=user.id), clock=plan_clock.now()
+    )
     er = import_service.to_engine_request(ctx, ImportSimulateRequest.model_validate(sim_body(rows)))
     raw = run_plan_import(ctx.baseline, er.request)
+    # P41 (ADR 0055 D2): `plan_excluded` is served on top of the engine's KPIs.
+    assert body["kpis"].pop("plan_excluded") == 0
     assert body["kpis"] == vars(raw.kpis)
     assert body["workings"] == list(raw.workings)
 
@@ -804,7 +809,9 @@ async def test_priorities_workbook_parse_and_simulate_end_to_end(db_session):
         assert a["priority"] == "P2" and a["priority_source"] == "matched"
         from tests.auth_helpers import make_principal as mp
 
-        ctx = await load_context(db_session, mp(RoleName.ADMIN, user_id=user.id))
+        ctx = await load_context(
+            db_session, mp(RoleName.ADMIN, user_id=user.id), clock=plan_clock.now()
+        )
         expected_stage = import_service.plan_current_steps(ctx)[str(world.alpha.id)]
         assert expected_stage not in (None, "PDD-A", "PDD-B", "PDD-C", "PDD-D")
         assert a["stage_step_id"] == expected_stage

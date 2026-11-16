@@ -4,9 +4,11 @@ import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-quer
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import {
+  BAD_RANK,
   BOTH_ANCHORS,
   fetchScheduleRunChanges,
   HARD_GATE_FORCES_P1,
+  isToRankPlacement,
   moveProjectBandRank,
   moveProjectPriority,
   NOT_RANKABLE,
@@ -24,7 +26,7 @@ import { invalidateRunDerivedQueries, useScheduleRunFollow } from '@/lib/use-sch
 import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
 import type { ProjectPriority } from '@/types/enums';
 
-import { MOVE_COPY, notNeededCopy, RANK_COPY } from './move-copy';
+import { badRankCopy, MOVE_COPY, notNeededCopy, RANK_COPY } from './move-copy';
 import { MoveFlowPanel } from './move-flow-panel';
 import { PriorityPreviewDialog } from './priority-preview-dialog';
 import type {
@@ -59,6 +61,8 @@ import type {
  * P36 (ADR 0050): `requestRankMove` runs the same flow for a move inside the
  * band (`POST …/band-rank/preview`, then `POST …/band-rank` with the token);
  * every state then carries `rank` (the placement and its display position).
+ * The placement is anchors (drag and drop) or, since 2026-11-17, `{ to_rank }`
+ * (the board's ↑ / ↓ buttons and typed position); 422 `BAD_RANK` gets its own copy.
  *
  * The server decides every branch. The browser only shows what it was told.
  * The state lives with the page, not with the control, so a virtualized Gantt
@@ -116,8 +120,12 @@ function invalidatePriorityWrite(queryClient: QueryClient): void {
 }
 
 /** P36: honest copy for the re-rank refusals (contract §2); null for any other error. */
-function rankErrorCopy(err: unknown): string | null {
-  if (!(err instanceof ApiError)) return null;
+function rankErrorCopy(err: unknown, target: PriorityMoveTarget, band: ProjectPriority, rank: RankMoveSpec | null): string | null {
+  if (!(err instanceof ApiError) || !rank) return null;
+  if (err.code === BAD_RANK) {
+    const to = isToRankPlacement(rank.placement) ? rank.placement.to_rank : rank.position;
+    return badRankCopy(target.projectName, band, to, rank.fromPosition);
+  }
   if (err.code === NOT_RANKABLE) return RANK_COPY.notRankable;
   if (err.code === NOT_SAME_BAND || err.code === BOTH_ANCHORS) return RANK_COPY.notSameBand;
   return null;
@@ -242,7 +250,7 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
             ? MOVE_COPY.hardGate
             : err instanceof ApiError && err.status === 429
               ? MOVE_COPY.previewRateLimited
-              : (rankErrorCopy(err) ?? apiErrorMessage(err, MOVE_COPY.previewFailed));
+              : (rankErrorCopy(err, target, next, rank) ?? apiErrorMessage(err, MOVE_COPY.previewFailed));
         setFlow({ kind: 'previewError', target, next, rank, body });
       }
     },
@@ -272,7 +280,9 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
       settle('cancelled'); // an earlier, unconfirmed request is superseded
       settleRef.current = options?.onSettled ?? null;
       const rank: RankMoveSpec = {
-        placement: { before_project_id: placement.before_project_id, after_project_id: placement.after_project_id },
+        placement: isToRankPlacement(placement)
+          ? { to_rank: placement.to_rank }
+          : { before_project_id: placement.before_project_id, after_project_id: placement.after_project_id },
         position: options?.position ?? null,
         fromPosition: options?.fromPosition ?? null,
       };
@@ -310,7 +320,7 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
       const body =
         err instanceof ApiError && err.code === HARD_GATE_FORCES_P1
           ? MOVE_COPY.hardGate
-          : (rankErrorCopy(err) ??
+          : (rankErrorCopy(err, target, next, rank) ??
             apiErrorMessage(err, rank ? 'The position could not be changed.' : 'The priority could not be changed.'));
       setFlow({ kind: 'previewError', target, next, rank, body });
     }

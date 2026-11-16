@@ -89,10 +89,12 @@ def test_stage_is_due_rules():
     # Active status, window elsewhere or none.
     assert stage_is_due(_live(WorkflowStepStatus.IN_PROGRESS, start=20), _run(10, 20), **kw)
     assert stage_is_due(_live(WorkflowStepStatus.BLOCKED, start=20), None, **kw)
-    # Not started, window in the future / past / none.
+    # Not started, window in the future / none: not due.
     assert not stage_is_due(_live(), _run(32, 40), **kw)
-    assert not stage_is_due(_live(), _run(10, 30), **kw)
     assert not stage_is_due(_live(), None, **kw)
+    # R37-1 (P37-T04): Not Started with a planned start already past (the plan
+    # is behind the calendar) stays due, whether or not its window has ended.
+    assert stage_is_due(_live(), _run(10, 30), **kw)
     # Done never; skipped never.
     assert not stage_is_due(_live(WorkflowStepStatus.DONE), _run(28, 34), **kw)
     assert not stage_is_due(_live(), _run(28, 34, skipped=True), **kw)
@@ -122,18 +124,21 @@ def test_due_since_week():
     assert due_since_week(_live(WorkflowStepStatus.IN_PROGRESS, start=29), _run(20, 25), CW) == 20
     # Active with neither a start nor a window: due from this week.
     assert due_since_week(_live(WorkflowStepStatus.BLOCKED), None, CW) == CW
+    # R37-1: a Not Started stage whose whole window is past is due since its
+    # planned start.
+    assert due_since_week(_live(), _run(10, 30), CW) == 10
 
 
 def test_status_from_due_stages():
-    assert status_from_due_stages([]) == "idle"
-    assert status_from_due_stages([_stage(this=True), _stage(this=True)]) == "live"
+    assert status_from_due_stages([], CW) == "idle"
+    assert status_from_due_stages([_stage(this=True), _stage(this=True)], CW) == "live"
     # One missing this week but reported last week → due.
-    assert status_from_due_stages([_stage(this=True), _stage(last=True, since=20)]) == "due"
+    assert status_from_due_stages([_stage(this=True), _stage(last=True, since=20)], CW) == "due"
     # Newly due this week, never reported → due, not overdue.
-    assert status_from_due_stages([_stage(since=CW)]) == "due"
+    assert status_from_due_stages([_stage(since=CW)], CW) == "due"
     # Due since last week, nothing this week or last → overdue.
-    assert status_from_due_stages([_stage(since=CW - 1)]) == "overdue"
-    assert status_from_due_stages([_stage(this=True), _stage(since=10)]) == "overdue"
+    assert status_from_due_stages([_stage(since=CW - 1)], CW) == "overdue"
+    assert status_from_due_stages([_stage(this=True), _stage(since=10)], CW) == "overdue"
 
 
 async def test_tracking_status_for_each_status(db_session):
@@ -173,7 +178,7 @@ async def test_tracking_status_for_each_status(db_session):
                        start=28, end=30)
 
     ids = [p.id for p in (live, due, overdue, idle, active, parked, done)]
-    result = await tracking_status_for(db_session, ids)
+    result = await tracking_status_for(db_session, ids, current_week=CW)
     assert result == {
         live.id: "live",
         due.id: "due",
@@ -183,7 +188,7 @@ async def test_tracking_status_for_each_status(db_session):
         parked.id: "idle",
         done.id: "idle",
     }
-    assert await tracking_status_for(db_session, []) == {}
+    assert await tracking_status_for(db_session, [], current_week=CW) == {}
 
 
 async def test_due_stages_carry_plan_and_checkin_fields(db_session):
@@ -197,7 +202,7 @@ async def test_due_stages_carry_plan_and_checkin_fields(db_session):
     await add_checkin(db_session, project, "PDD-E", 29, user)
     await add_checkin(db_session, project, "PDD-E", CW, user)
 
-    stages = (await due_stages_for(db_session, [project.id]))[project.id]
+    stages = (await due_stages_for(db_session, [project.id], current_week=CW))[project.id]
     assert [s.step_id for s in stages] == ["PDD-E", "PDD-F"]
     e, f = stages
     assert (e.planned_start_week, e.planned_end_week, e.plan_percent) == (28, 34, 57)
@@ -213,11 +218,12 @@ async def test_no_active_run_only_active_stages_are_due(db_session):
     project = await stepped_project(db_session, hub, name="No run")
     await set_progress(db_session, project, "PDD-C", WorkflowStepStatus.BLOCKED, percent=10,
                        start=30, reason="Waiting for parts")
-    stages = (await due_stages_for(db_session, [project.id]))[project.id]
+    stages = (await due_stages_for(db_session, [project.id], current_week=CW))[project.id]
     assert [(s.step_id, s.planned_start_week, s.plan_percent) for s in stages] == [
         ("PDD-C", None, None)
     ]
-    assert (await tracking_status_for(db_session, [project.id]))[project.id] == "overdue"
+    status = await tracking_status_for(db_session, [project.id], current_week=CW)
+    assert status[project.id] == "overdue"
 
 
 @pytest.mark.parametrize(

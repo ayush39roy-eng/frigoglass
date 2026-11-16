@@ -168,9 +168,9 @@ def tool_definitions() -> list[dict[str, Any]]:
 # --- the allowlisted views the model sees ----------------------------------------------------
 
 
-def _reference() -> dict[str, Any]:
+def _reference(current_week: int) -> dict[str, Any]:
     return {
-        "current_week": dc.CURRENT_WEEK,
+        "current_week": current_week,
         "year_end_week": dc.WITHIN_YEAR_WEEK,
         "near_full_threshold_pct": dc.BOOKING_NEAR_FULL_PCT,
         "full_threshold_pct": dc.BOOKING_FULL_PCT,
@@ -187,10 +187,10 @@ _UTIL_FIELDS = (
 )  # fmt: skip
 
 
-def view_estimate(r: EstimateResponse) -> dict[str, Any]:
+def view_estimate(r: EstimateResponse, *, current_week: int) -> dict[str, Any]:
     return {
         "tool": "estimate_requirements",
-        "reference": _reference(),
+        "reference": _reference(current_week),
         "basis": r.basis,
         "extra_design_weeks_total": r.extra_design_weeks_total,
         "extra_lab_weeks_total": r.extra_lab_weeks_total,
@@ -282,19 +282,19 @@ def _view_simulation_body(r: SimulateResponse) -> dict[str, Any]:
     }
 
 
-def view_simulation(r: SimulateResponse) -> dict[str, Any]:
+def view_simulation(r: SimulateResponse, *, current_week: int) -> dict[str, Any]:
     return {
         "tool": "simulate_scenario",
-        "reference": _reference(),
+        "reference": _reference(current_week),
         **_view_simulation_body(r),
         "workings": r.workings,
     }
 
 
-def view_solution(r: SolveResponse) -> dict[str, Any]:
+def view_solution(r: SolveResponse, *, current_week: int) -> dict[str, Any]:
     return {
         "tool": "find_minimum_additions",
-        "reference": _reference(),
+        "reference": _reference(current_week),
         "target": r.target,
         "met": r.met,
         "met_attainable": r.met_attainable,
@@ -320,10 +320,10 @@ def view_solution(r: SolveResponse) -> dict[str, Any]:
     }
 
 
-def view_snapshot(r: CapacitySnapshotResponse) -> dict[str, Any]:
+def view_snapshot(r: CapacitySnapshotResponse, *, current_week: int) -> dict[str, Any]:
     return {
         "tool": "get_capacity_snapshot",
-        "reference": _reference(),
+        "reference": _reference(current_week),
         "has_active_schedule_run": r.has_active_schedule_run,
         "hubs": [
             {
@@ -362,10 +362,12 @@ def view_snapshot(r: CapacitySnapshotResponse) -> dict[str, Any]:
 async def capacity_snapshot(
     db: AsyncSession, principal: Principal, ctx: WhatIfContext
 ) -> CapacitySnapshotResponse:
-    summary = await hub_load_vs_capacity(hub_id=None, region=None, db=db, current_user=principal)
+    summary = await hub_load_vs_capacity(
+        hub_id=None, region=None, db=db, current_user=principal, clock=ctx.clock
+    )
     return CapacitySnapshotResponse(
         scope=scope_info(ctx.scope),
-        current_week=dc.CURRENT_WEEK,
+        current_week=ctx.clock.week,
         year_end_week=dc.WITHIN_YEAR_WEEK,
         near_full_threshold_pct=float(summary.near_full_threshold_pct),
         full_threshold_pct=float(summary.full_threshold_pct),
@@ -517,23 +519,25 @@ async def _execute(
 
     tool: ToolName = call.name  # type: ignore[assignment]
     scenario: ChatScenario | None = None
+    # P37-T04: the request's calendar week, the week every solve here uses.
+    week = ctx.clock.week
     try:
         if isinstance(args, _EstimateArgs):
             scenario = args.scenario
             est = await do_estimate(ctx, scenario, basis=args.basis, designer_fte=args.designer_fte)
             result: Any = est
-            view = view_estimate(est)
+            view = view_estimate(est, current_week=week)
         elif isinstance(args, _SimulateArgs):
             scenario = args.scenario
             sim = await do_simulate(ctx, scenario)
-            result, view = sim, view_simulation(sim)
+            result, view = sim, view_simulation(sim, current_week=week)
         elif isinstance(args, _SolveArgs):
             scenario = args.scenario
             sol = await do_solve(ctx, scenario, target=args.target, designer_fte=args.designer_fte)
-            result, view = sol, view_solution(sol)
+            result, view = sol, view_solution(sol, current_week=week)
         else:
             snap = await capacity_snapshot(db, principal, ctx)
-            result, view = snap, view_snapshot(snap)
+            result, view = snap, view_snapshot(snap, current_week=week)
     except HTTPException as exc:
         # CodedHTTPException (422/403/503) and the 429 in-flight limit alike:
         # the model is told, the request does not fail.

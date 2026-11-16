@@ -49,6 +49,19 @@ export function rankPositionCopy(position: number | null, band: string): string 
   return `position ${position} in ${band}`;
 }
 
+/**
+ * 422 `BAD_RANK` (owner request 2026-11-17): the asked position is outside the
+ * band. Never states the band's size (P36-R02): the browser does not know it.
+ * One past the current rank (the ↓ button) means the project is already last.
+ */
+export function badRankCopy(name: string, band: string, toRank: number | null, fromRank: number | null): string {
+  if (toRank !== null && fromRank !== null && toRank === fromRank + 1) {
+    return `${name} is already last in ${band}, so it can't move down. Nothing was changed.`;
+  }
+  if (toRank === null) return `That position does not exist in ${band}. Choose a smaller number. Nothing was changed.`;
+  return `There is no position ${toRank} in ${band}: the band has fewer projects than that. Choose a smaller number. Nothing was changed.`;
+}
+
 /** Preview `not_needed`: nothing is computed, but Yes still saves the priority. */
 export function previewNotNeededCopy(status: string | null | undefined): string {
   return status

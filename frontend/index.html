@@ -14,6 +14,8 @@
           var stored = localStorage.getItem('rpd-theme');
           var system = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
           var theme = stored === 'light' || stored === 'dark' ? stored : system;
+          // No stored value (first visit) or a legacy 'system': resolve the OS once and save it.
+          if (theme !== stored) localStorage.setItem('rpd-theme', theme);
           document.documentElement.classList.toggle('dark', theme === 'dark');
         } catch (e) {
           /* localStorage unavailable — fall back to the CSS default (light) */

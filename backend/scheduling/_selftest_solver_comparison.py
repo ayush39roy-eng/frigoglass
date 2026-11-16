@@ -39,6 +39,7 @@ from scheduling import (
 )
 from scheduling._selftest_common import (
     LEAD_TIMES,
+    SELFTEST_WEEK,
     TEMPLATE,
     load_seed_schedule_input,
     seed_path,
@@ -167,6 +168,7 @@ def scenario_solvers_agree() -> None:
         leader_engineer_id="eng-a",
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(proj,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),

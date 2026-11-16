@@ -26,6 +26,7 @@ from models.hub import HubWorkCalendar
 from models.project import Project
 from models.workflow import ProjectWorkflowStep, WorkflowLeadTime, WorkflowStepTemplate
 from services.project_steps import sync_project_steps
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
@@ -144,7 +145,7 @@ async def test_get_settings_shape_and_derived_figures(db_session):
     # 52 − 13/6 − 2 − 11 − 1 = 35.8333; × 0.6 × 4 = 86.0
     assert ch["working_weeks_per_chamber"] == 35.83
     assert ch["efficient_lab_weeks"] == 86.0
-    assert body["current_week"] == dc.CURRENT_WEEK
+    assert body["current_week"] == TEST_WEEK
     assert body["updated_by"] is None
 
 

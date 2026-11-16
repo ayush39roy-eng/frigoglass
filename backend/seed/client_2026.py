@@ -167,6 +167,7 @@ import math
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Final
 
 import domain_constants as dc
 from scheduling.effort_split import EffortStepInput, derive_project_effort
@@ -239,6 +240,14 @@ PROVISIONAL_LEADER_SOURCE: str = "provisional_leader_adr_0042"
 
 _UNSCHEDULED = frozenset({"Commercialized", "On Hold", "Cancelled", "Draft"})
 UNDER_INDUSTRIALIZATION_AFTER = "H"  # current step: the first non-skipped one after this letter
+
+#: ADR 0052 §7 / R37-5 (P37-T04): the week the client's status ("April",
+#: ADR 0041) is derived "as of": stage progress (Done history, In Progress
+#: tails) is laid out against this week, whatever the calendar says, so a
+#: reseed in December does not invent progress. It drives ONLY the progress
+#: derivation; the seed's summary run and its persisted first run solve at the
+#: calendar week (`services.plan_clock`). Not "today": not a current week.
+SEED_STATUS_WEEK: Final[int] = 42
 
 #: Registration year of a project flagged `Spillover '25`, and of the rest.
 CARRY_OVER_REG_YEAR: int = 2025

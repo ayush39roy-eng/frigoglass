@@ -25,7 +25,6 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import domain_constants as dc
 from models.enums import ProjectPriority, WorkflowStepKind, WorkflowStepStatus
 from models.priority import PriorityScore
 from models.project import Project
@@ -78,8 +77,17 @@ class ProjectCard:
 
 
 async def build_project_cards(
-    db: AsyncSession, projects: Sequence[Project], active_run: ScheduleRun | None
+    db: AsyncSession,
+    projects: Sequence[Project],
+    active_run: ScheduleRun | None,
+    *,
+    current_week: int,
 ) -> dict[uuid.UUID, ProjectCard]:
+    """P37-T04 (ADR 0052 §4): `current_week` is the request's calendar week,
+    used for the tracking status (due stages, R37-1). The health badge reads
+    the active run's stored week (I13); without an active run there is no
+    badge."""
+
     ids = [p.id for p in projects]
     if not ids:
         return {}
@@ -132,8 +140,7 @@ async def build_project_cards(
     fte_by_engineer = await engineer_ftes_for_rows(
         db, (s for steps in run_steps_by_project.values() for s in steps)
     )
-    due = await due_stages_for(db, ids, active_run=active_run)
-    run_week = active_run.current_week if active_run is not None else dc.CURRENT_WEEK
+    due = await due_stages_for(db, ids, active_run=active_run, current_week=current_week)
 
     cards: dict[uuid.UUID, ProjectCard] = {}
     for project in projects:
@@ -150,7 +157,7 @@ async def build_project_cards(
                 outcome,
                 run_steps,
                 live_by_step,
-                run_week,
+                active_run.current_week,
                 fte_by_engineer=fte_by_engineer,
                 frozen=project.frozen,
             )
@@ -209,10 +216,8 @@ async def build_project_cards(
             health=health,
             progress_pct=progress,
             current_stage=current,
-            tracking_status=status_from_due_stages(due.get(project.id, [])),
-            run_step_ranges=tuple(
-                (s.start_week, s.end_week) for s in run_steps if not s.skipped
-            ),
+            tracking_status=status_from_due_stages(due.get(project.id, []), current_week),
+            run_step_ranges=tuple((s.start_week, s.end_week) for s in run_steps if not s.skipped),
             in_active_run=outcome is not None,
             design_weeks_calculated=calculated[WorkflowStepKind.DESIGN],
             lab_weeks_calculated=calculated[WorkflowStepKind.LAB],

@@ -165,3 +165,40 @@ export function capacityCompare(responses: readonly ImportSimulateResponse[]): C
   }
   return rows;
 }
+
+// --- P41 (ADR 0055 D4): scenarios from different imports, weeks and plan versions -----------
+
+interface ComparedLike {
+  fileName: string | null;
+  response: ImportSimulateResponse;
+  stored?: { simulatedWeek: number; planVersion: number | null; id: string } | undefined;
+}
+
+/** The week a scenario was simulated from: the stored `simulated_week`, else the served `current_week`. */
+export function simulatedWeekOf(s: ComparedLike): number {
+  return s.stored?.simulatedWeek ?? s.response.current_week;
+}
+
+/** True when the compared scenarios came from more than one workbook (a source chip per column). */
+export function mixedSources(picked: readonly ComparedLike[]): boolean {
+  return new Set(picked.map((s) => s.fileName ?? '')).size > 1;
+}
+
+/**
+ * True when the compared scenarios were simulated from different weeks or (where known, i.e.
+ * saved ones) against different plan versions: their figures are then not like for like.
+ */
+export function mixedClock(picked: readonly ComparedLike[]): boolean {
+  const weeks = new Set(picked.map(simulatedWeekOf));
+  const versions = new Set(
+    picked.flatMap((s) => (s.stored && s.stored.planVersion !== null ? [s.stored.planVersion] : [])),
+  );
+  return weeks.size > 1 || versions.size > 1;
+}
+
+/** The saved ids for `compare.xlsx`, or null unless 2–4 scenarios are compared and all are saved. */
+export function exportableIds(picked: readonly ComparedLike[]): string[] | null {
+  if (picked.length < 2 || picked.length > 4) return null;
+  const ids = picked.flatMap((s) => (s.stored ? [s.stored.id] : []));
+  return ids.length === picked.length ? ids : null;
+}

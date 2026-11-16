@@ -54,3 +54,32 @@ The wait is bounded (`lock_timeout` 5 s, transaction-local, restored once grante
 is being saved. Please try again in a moment."}`; nothing was written (the transaction is rolled
 back). Clients show the message and let the user retry; do not auto-retry a confirm with the same
 token more than once (re-preview instead if the retry answers 409 `PREVIEW_STALE`).
+
+## 6. Amendment 2026-11-17 — `to_rank` (arrow buttons / typed position)
+
+Owner ask 2026-11-17. Additive; anchor bodies and their tokens are unchanged.
+
+Body of §2 (and §3, plus `preview_token`) gains an alternative to the anchors:
+```json
+{ "to_rank": 3 }
+```
+- `to_rank: int | null` (JSON integer, strict: no string, no bool) = the target position **1..n in the
+  full band** (the same numbering as the card's `band_rank`, not a filtered / scoped position).
+- Placement: the project ends at exactly `to_rank`; every other member keeps its relative order
+  (I37c). Server-side it resolves to the equivalent anchor placement (rank n = last; otherwise
+  "before the member now at that slot once the project is lifted out"), so a scoped caller may land
+  next to a project outside its hub scope without naming it.
+- Resolution order (P36-R01 kept): lookup 404 → authz 403 → rate limit 429 → (confirm only) the
+  global band-rank lock + re-read + scope re-check → `ANCHOR_AND_RANK` → `NOT_RANKABLE` → `BAD_RANK`
+  → placement. The confirm resolves `to_rank` against the band read under the lock.
+- `to_rank` equal to the current rank → `result = "unchanged"` (preview, no token) /
+  `recalc_status = "unchanged"` (confirm, nothing written).
+- Errors: 422 `ANCHOR_AND_RANK` when `to_rank` is given with `before_project_id` or
+  `after_project_id`; 422 `BAD_RANK` when `to_rank` is outside 1..n. **No clamping**: a typed 0 or
+  n+1 is refused, not silently moved to first / last. The `BAD_RANK` message never states n.
+- Token: binds `to_rank` as well as the resolved placement. Confirm with the same body (`to_rank` +
+  `preview_token`); confirming a `to_rank` preview with the equivalent anchor body (or vice versa)
+  is 409 `PREVIEW_STALE`, as is any band change since the preview (re-preview once, as today).
+- Responses unchanged: **no band-size field is added** (P36-R02: never reveal "of M").
+- Audit `project.band_rank_move`: `before_project_id` / `after_project_id` as sent (null) plus
+  `requested_rank`; `to_rank` (the resulting rank) as before.

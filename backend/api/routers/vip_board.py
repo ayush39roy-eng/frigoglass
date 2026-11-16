@@ -69,6 +69,7 @@ from schemas.vip_board import (
 )
 from services.active_run import get_active_run
 from services.hub_scope import HubIdsArg, RegionsArg, hub_scope_filter, narrowed_hub_filter
+from services.plan_clock import PlanClock, get_plan_clock
 from services.project_cards import build_project_cards
 from services.vip_board import (
     AREA_LABELS,
@@ -263,6 +264,7 @@ async def get_vip_board(
     region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> VipBoardResponse:
     hubs, visible_hubs = await _hubs_and_visible(db, current_user, hub_id, region)
     areas = [a for a in AREA_ORDER if a in _visible_areas(hubs, visible_hubs)]
@@ -298,7 +300,9 @@ async def get_vip_board(
         if scope is not None:
             stmt = stmt.where(scope)
         projects = {p.id: p for p in (await db.execute(stmt)).scalars().all()}
-    cards = await build_project_cards(db, list(projects.values()), active_run)
+    cards = await build_project_cards(
+        db, list(projects.values()), active_run, current_week=clock.week
+    )
 
     # ADR 0040: pinned VIP projects per hub, same scope as the links above.
     pinned_by_hub: dict[uuid.UUID, int] = {}

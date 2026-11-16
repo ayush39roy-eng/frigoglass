@@ -4,7 +4,6 @@ import {
   Camera,
   Eye,
   LogOut,
-  Monitor,
   Moon,
   Palette,
   Pencil,
@@ -299,7 +298,6 @@ function IdentityCard(): React.JSX.Element {
 const THEME_OPTIONS: { value: ThemePreference; label: string; icon: typeof Sun; hint: string }[] = [
   { value: 'light', label: 'Light', icon: Sun, hint: 'Bright, high-contrast boxes' },
   { value: 'dark', label: 'Dark', icon: Moon, hint: 'Easier on the eyes at night' },
-  { value: 'system', label: 'System', icon: Monitor, hint: 'Follow your OS setting' },
 ];
 
 function AppearanceCard(): React.JSX.Element {
@@ -318,7 +316,7 @@ function AppearanceCard(): React.JSX.Element {
       <CardContent className="space-y-s5">
         <fieldset className="space-y-s2">
           <legend className="text-sm font-bold text-text">Theme</legend>
-          <div className="grid gap-s3 sm:grid-cols-3">
+          <div className="grid gap-s3 sm:grid-cols-2">
             {THEME_OPTIONS.map((opt) => {
               const active = preference === opt.value;
               return (

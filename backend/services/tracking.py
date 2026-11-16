@@ -5,9 +5,14 @@ Served, never computed in the browser. Every reader of `tracking_status`
 (Priority board, VIP, Gantt project row, `/dashboard/projects`, the check-in
 page) calls `tracking_status_for` here, so they cannot disagree.
 
+`CURRENT_WEEK` below is the **calendar week** (`services.plan_clock`, ADR
+0052 §4 (a)); every function takes it as a required argument.
+
 **Due stage** for week `CURRENT_WEEK`: not skipped, not `Done`, and either
-its status is `In Progress` / `Blocked` or the active run's planned window
-`[start_week, end_week]` (inclusive) for the stage contains `CURRENT_WEEK`.
+its status is `In Progress` / `Blocked` or the active run's planned start for
+the stage is `<= CURRENT_WEEK` (R37-1, P37-T04; before P37 the planned window
+had to contain the week, which is the same rule whenever the run's week is
+the calendar week).
 Skipped: the active run's step row says skipped, or the live row is
 skipped by the one predicate of ADR 0041 R5 as revised by ADR 0046 §B (a lab
 step on a project without certification testing, an own-effort step whose
@@ -31,9 +36,8 @@ stage on it could never be checked in and would read `overdue` forever.
   `CURRENT_WEEK - 1` and has been due since at least `CURRENT_WEEK - 1`;
 - `due`: otherwise.
 
-"Due since" is the earliest of: the planned start (when the planned window
-contains `CURRENT_WEEK`, or the stage is active and its planned start is
-already past) and the recorded `actual_start_week` of an active stage. A
+"Due since" is the earliest of: the planned start (when it is `<=
+CURRENT_WEEK`, R37-1) and the recorded `actual_start_week` of an active stage. A
 stage with neither became due this week.
 
 **Plan-based progress** (`plan_percent`): the share of the planned window
@@ -52,7 +56,6 @@ from typing import Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import domain_constants as dc
 from models.checkin import StageCheckin
 from models.enums import (
     NON_SCHEDULABLE_STATUSES,
@@ -73,7 +76,7 @@ _ACTIVE_STATUSES = frozenset({WorkflowStepStatus.IN_PROGRESS, WorkflowStepStatus
 def plan_percent(
     planned_start_week: int | None,
     planned_end_week: int | None,
-    current_week: int = dc.CURRENT_WEEK,
+    current_week: int,
 ) -> int | None:
     """`clamp(round((CW − start + 1) / (end − start + 1) × 100), 0, 100)`,
     or `None` without a planned window.
@@ -120,7 +123,7 @@ def stage_is_due(
     *,
     kind: WorkflowStepKind | None,
     cert_required: bool,
-    current_week: int = dc.CURRENT_WEEK,
+    current_week: int,
     own_effort: bool | None = None,
 ) -> bool:
     """ADR 0021 §1 for one stage of a schedulable, non-frozen project (the
@@ -135,21 +138,27 @@ def stage_is_due(
         return False
     if live.status in _ACTIVE_STATUSES:
         return True
-    return run_step is not None and run_step.start_week <= current_week <= run_step.end_week
+    # R37-1 (ADR 0052 Ruling Q1): a Not Started stage is due once its
+    # active-run planned start is <= the calendar week, so a stage planned in
+    # a week that has passed while the plan is behind stays on the list. When
+    # the run's week equals the calendar week (every pin) a Not Started step
+    # of a non-frozen project never starts before it, so this equals the old
+    # "window contains the week" rule.
+    return run_step is not None and run_step.start_week <= current_week
 
 
 def due_since_week(
     live: ProjectWorkflowStep,
     run_step: ScheduleRunProjectStep | None,
-    current_week: int = dc.CURRENT_WEEK,
+    current_week: int,
 ) -> int:
     """The first week the (due) stage counted as due; see module docstring."""
 
     candidates: list[int] = []
     active = live.status in _ACTIVE_STATUSES
-    if run_step is not None and run_step.start_week <= current_week and (
-        active or current_week <= run_step.end_week
-    ):
+    # R37-1: a due stage whose planned start is past has been due since that
+    # start, whether or not its window has ended.
+    if run_step is not None and run_step.start_week <= current_week:
         candidates.append(run_step.start_week)
     if active and live.actual_start_week is not None:
         candidates.append(live.actual_start_week)
@@ -180,9 +189,7 @@ class DueStage:
     assigned_engineer_ids: frozenset[uuid.UUID]
 
 
-def status_from_due_stages(
-    stages: Iterable[DueStage], current_week: int = dc.CURRENT_WEEK
-) -> TrackingStatus:
+def status_from_due_stages(stages: Iterable[DueStage], current_week: int) -> TrackingStatus:
     """ADR 0021 §4 for one project's due stages."""
 
     stages = list(stages)
@@ -233,7 +240,7 @@ async def due_stages_for(
     project_ids: Iterable[uuid.UUID],
     *,
     active_run: ScheduleRun | None = None,
-    current_week: int = dc.CURRENT_WEEK,
+    current_week: int,
 ) -> dict[uuid.UUID, list[DueStage]]:
     """`{project_id: [due stages in sequence order]}` for every requested
     project (a project with no due stage maps to `[]`). Reads the active run
@@ -362,10 +369,12 @@ async def tracking_status_for(
     project_ids: Iterable[uuid.UUID],
     *,
     active_run: ScheduleRun | None = None,
+    current_week: int,
 ) -> dict[uuid.UUID, TrackingStatus]:
     """ADR 0021 §4: `{project_id: "live" | "due" | "overdue" | "idle"}` for
     every requested project. The one implementation every payload reuses.
+    `current_week` is the calendar week (ADR 0052 §4 (a)).
     """
 
-    due = await due_stages_for(db, project_ids, active_run=active_run)
-    return {pid: status_from_due_stages(stages) for pid, stages in due.items()}
+    due = await due_stages_for(db, project_ids, active_run=active_run, current_week=current_week)
+    return {pid: status_from_due_stages(stages, current_week) for pid, stages in due.items()}

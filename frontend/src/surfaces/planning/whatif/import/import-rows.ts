@@ -198,7 +198,9 @@ export function editsForRequest(
   edits: EditMap,
   rows: readonly ImportRow[],
   options: { mode: ImportMode; expandMulti: boolean },
+  excludedPlanIds: readonly string[] = [],
 ): ImportStepEdit[] {
+  const excluded = new Set(excludedPlanIds);
   const replaced = new Set(
     rows.filter((r) => r.include && r.matched_project_id !== null).map((r) => r.matched_project_id as string),
   );
@@ -210,6 +212,8 @@ export function editsForRequest(
       // A row key that no longer exists, or a copy of the other expansion setting.
       if (/^row-\d/.test(e.project_ref)) return false;
       if (options.mode === 'file_only') return false;
+      // P41: a plan project unticked in the picker is out of both runs.
+      if (excluded.has(e.project_ref)) return false;
       return !replaced.has(e.project_ref);
     })
     .sort((a, b) => a.project_ref.localeCompare(b.project_ref) || a.step_id.localeCompare(b.step_id));
@@ -221,11 +225,19 @@ export interface ImportOptions {
   expandMulti: boolean;
 }
 
+/**
+ * The `/simulate` body. P41 (ADR 0055 D2): `excludedPlanIds` are the plan projects unticked
+ * in the project picker. They are sent as `exclude_plan_project_ids` in merge mode only
+ * (a 422 in file_only) and only when there is at least one, so an unpicked request is
+ * byte-identical to the pre-P41 body.
+ */
 export function buildSimulateRequest(
   rows: readonly ImportRow[],
   options: ImportOptions,
   edits: EditMap,
+  excludedPlanIds: readonly string[] = [],
 ): ImportSimulateRequest {
+  const exclude = options.mode === 'merge' ? [...new Set(excludedPlanIds)].sort() : [];
   return {
     mode: options.mode,
     plan_year_end_week: options.planYearEndWeek,
@@ -234,6 +246,7 @@ export function buildSimulateRequest(
       ...r,
       leader: r.leader.kind === 'new' ? { kind: 'new', name: r.leader.name.trim() } : r.leader,
     })),
-    edits: editsForRequest(edits, rows, options),
+    edits: editsForRequest(edits, rows, options, exclude),
+    ...(exclude.length > 0 ? { exclude_plan_project_ids: exclude } : {}),
   };
 }

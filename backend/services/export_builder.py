@@ -70,6 +70,7 @@ from models.enums import (
     ProjectStatus,
     ProjectType,
 )
+from services import plan_clock
 from services.category_type_filter import UNMAPPED, as_list
 
 if TYPE_CHECKING:
@@ -151,6 +152,10 @@ def _neutralise_formula(text: str) -> str:
     if text.startswith(_FORMULA_TRIGGERS):
         return "'" + text
     return text
+
+
+#: Public name for other export writers (P41, ADR 0055 D5).
+neutralise_formula = _neutralise_formula
 
 
 def _stringify(value: Any) -> Any:
@@ -328,6 +333,7 @@ async def build_dashboard_sheets(
         sort="priority" if sort == "priority" else "name",
         db=db,
         current_user=principal,
+        clock=plan_clock.now(),
     )
     headers, rows = rows_from_models(result.rows)
     return {"Dashboard": (headers, rows)}
@@ -342,7 +348,7 @@ async def build_capacity_sheets(db: AsyncSession, principal: Principal) -> Expor
 
     from api.routers.capacity import hub_load_vs_capacity
 
-    result = await hub_load_vs_capacity(db=db, current_user=principal)
+    result = await hub_load_vs_capacity(db=db, current_user=principal, clock=plan_clock.now())
     headers, rows = rows_from_models(result.rows)
     # P29 (ADR 0042): one readable cell for the capacity hub's members
     # breakdown. ADR 0041 R12: demand (full year / remaining) and booked, e.g.
@@ -381,6 +387,7 @@ async def build_matrix_sheets(
         region=_regions(region),
         db=db,
         current_user=principal,
+        clock=plan_clock.now(),
     )
     headers, rows = rows_from_models(rows_models)
     # P26-T01 (ADR 0037): one column per ACTIVE rubric dimension, headed by its
@@ -428,6 +435,8 @@ async def _fetch_all_gantt_rows(
     page_size = 500
     offset = 0
     all_rows: list[GanttProjectRow] = []
+    # P37-T04: one clock reading for every page of the export (I40).
+    clock = plan_clock.now()
     while True:
         response = await get_gantt(
             hub_id=hub_id,
@@ -439,6 +448,7 @@ async def _fetch_all_gantt_rows(
             offset=offset,
             db=db,
             current_user=principal,
+            clock=clock,
         )
         all_rows.extend(response.rows)
         if len(all_rows) >= response.total_count or not response.rows:
@@ -655,8 +665,11 @@ async def build_capacity_planning_sheets(
     from schemas.chamber import ChamberRead
     from schemas.engineer import EngineerRead
 
-    engineers = await list_engineers(hub_id=_uuids(hub_id), db=db, current_user=principal)
-    chambers = await list_chambers(db=db, current_user=principal)
+    clock = plan_clock.now()
+    engineers = await list_engineers(
+        hub_id=_uuids(hub_id), db=db, current_user=principal, clock=clock
+    )
+    chambers = await list_chambers(db=db, current_user=principal, clock=clock)
 
     eng_headers, eng_rows = rows_from_models([EngineerRead.model_validate(e) for e in engineers])
     ch_headers, ch_rows = rows_from_models([ChamberRead.model_validate(c) for c in chambers])

@@ -14,7 +14,10 @@
   `PROJECT_FROZEN`, `STEP_DONE_IMMUTABLE`, `NOT_DUE`,
   `INCONSISTENT_PROGRESS`. The server fills `actual_start_week =
   CURRENT_WEEK` on the first move out of Not Started and, on Done,
-  `actual_end_week = CURRENT_WEEK` and `percent_complete = 100`. Effects:
+  `actual_end_week = CURRENT_WEEK` and `percent_complete = 100`
+  (`CURRENT_WEEK` = the request's calendar week, `services.plan_clock`).
+  While the planning year is closed it answers 409 `PLAN_YEAR_CLOSED`
+  (R37-10). Effects:
   the progress fields, one `stage_checkins` row per entry (also for a stage
   confirmed unchanged), `schedule_stale` on each changed project, a
   `stage_blocked` notification for a stage that moves into On Hold (as the
@@ -44,7 +47,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import domain_constants as dc
 from api.db import get_db
 from api.deps import get_current_principal, require_permission
 from api.errors import HTTP_422, CodedHTTPException
@@ -75,11 +77,13 @@ from services.active_run import get_active_run
 from services.checkin import CheckInAccess, candidate_filter, resolve_access, visible_stages
 from services.hub_scope import global_hub_filter
 from services.notifications import generate_stage_blocked_notifications
+from services.plan_clock import PlanClock, get_plan_clock
 from services.project_effort import TRIGGER_STAGE_STATUS, rederive_project_effort
 from services.rate_limit import TokenBucketLimiter
 from services.run_dispatch import dispatch_greedy, enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 from services.schedule_stale import mark_projects_stale
+from services.step_pin_clear import clear_pin_if_started
 from services.template_apply import lock_projects
 from services.tracking import DueStage, due_stages_for, status_from_due_stages
 from services.workspace import get_scoped_project_or_404, merge_stage_update
@@ -122,6 +126,7 @@ async def get_due_check_ins(
     region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> CheckInDueResponse:
     access = await resolve_access(db, current_user)
     if not access.has_any_route:
@@ -141,7 +146,9 @@ async def get_due_check_ins(
     if global_filter is not None:
         stmt = stmt.where(global_filter)
     projects = (await db.execute(stmt)).scalars().all()
-    due = await due_stages_for(db, [p.id for p in projects], active_run=active_run)
+    due = await due_stages_for(
+        db, [p.id for p in projects], active_run=active_run, current_week=clock.week
+    )
 
     rows: list[CheckInDueProject] = []
     for project in projects:
@@ -157,7 +164,7 @@ async def get_due_check_ins(
                 hub_id=project.hub_id,
                 # Project-level status over every due stage, not just the
                 # caller's: compliance is per project (ADR 0021 §7).
-                tracking_status=status_from_due_stages(project_stages),
+                tracking_status=status_from_due_stages(project_stages, clock.week),
                 schedule_stale=project.schedule_stale,
                 stages=[_due_stage(stage, can) for stage, can in shown],
             )
@@ -173,7 +180,7 @@ async def get_due_check_ins(
         projects_overdue=sum(1 for r in rows if r.tracking_status == "overdue"),
         stale_projects=sum(1 for r in rows if r.schedule_stale),
     )
-    return CheckInDueResponse(week=dc.CURRENT_WEEK, summary=summary, projects=rows)
+    return CheckInDueResponse(week=clock.week, summary=summary, projects=rows)
 
 
 def _due_stage(stage: DueStage, can_check_in: bool) -> CheckInDueStage:
@@ -216,9 +223,12 @@ def _stage_state(row: ProjectWorkflowStep) -> dict[str, Any]:
     }
 
 
-def _server_filled(entry: CheckInEntry, row: ProjectWorkflowStep) -> dict[str, Any]:
+def _server_filled(
+    entry: CheckInEntry, row: ProjectWorkflowStep, week: int
+) -> dict[str, Any]:
     """The explicit update for `merge_stage_update`, with the weeks and the
-    Done percent filled by the server (contract §5).
+    Done percent filled by the server (contract §5). `week` is the request's
+    calendar week (ADR 0052 §4 (a)).
     """
 
     explicit: dict[str, Any] = {
@@ -227,9 +237,9 @@ def _server_filled(entry: CheckInEntry, row: ProjectWorkflowStep) -> dict[str, A
         "blocked_reason": _blank_to_none(entry.blocked_reason),
     }
     if entry.status != WorkflowStepStatus.NOT_STARTED and row.actual_start_week is None:
-        explicit["actual_start_week"] = dc.CURRENT_WEEK
+        explicit["actual_start_week"] = week
     if entry.status == WorkflowStepStatus.DONE:
-        explicit["actual_end_week"] = dc.CURRENT_WEEK
+        explicit["actual_end_week"] = week
         explicit["percent_complete"] = 100
     return explicit
 
@@ -255,6 +265,7 @@ async def _validate(
     db: AsyncSession,
     access: CheckInAccess,
     entries: list[CheckInEntry],
+    week: int,
 ) -> tuple[list[_Planned], list[CheckInEntryError]]:
     project_ids = list({e.project_id for e in entries})
     projects = {
@@ -291,7 +302,7 @@ async def _validate(
             )
         ).all():
             run_assignees[(pid, step_id)] = eid
-    due = await due_stages_for(db, list(projects), active_run=active_run)
+    due = await due_stages_for(db, list(projects), active_run=active_run, current_week=week)
     due_keys = {(s.project_id, s.step_id) for stages in due.values() for s in stages}
 
     planned: list[_Planned] = []
@@ -331,7 +342,7 @@ async def _validate(
         if row is None or key not in due_keys:
             fail(index, "NOT_DUE", "This stage is not due this week.")
             continue
-        merged, problems = merge_stage_update(row, _server_filled(entry, row))
+        merged, problems = merge_stage_update(row, _server_filled(entry, row, week))
         if problems:
             fail(
                 index,
@@ -348,7 +359,19 @@ async def submit_check_ins(
     body: CheckInRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> CheckInResponse:
+    # R37-10 (ADR 0052 §7a, OQ #88 (a)): while the planning year is closed
+    # (the ISO week-year is past `plan_year`), a check-in would be stamped 52
+    # forever; refuse it. Reads (`/due`, `/history`) stay available. Checked
+    # before the rate limiter so a refused batch costs no token.
+    if clock.plan_year_closed:
+        raise CodedHTTPException(
+            status.HTTP_409_CONFLICT,
+            "PLAN_YEAR_CLOSED",
+            f"Planning year {clock.plan_year} is closed. Check-ins reopen when an Admin "
+            "opens the next planning year.",
+        )
     allowed, retry_after = CHECKIN_RATE_LIMIT.allow(f"checkin:{current_user.user_id}")
     if not allowed:
         raise CodedHTTPException(
@@ -363,7 +386,7 @@ async def submit_check_ins(
     # Not Started between an apply's evaluation and its write.
     await lock_projects(db, {e.project_id for e in body.entries})
     access = await resolve_access(db, current_user)
-    planned, errors = await _validate(db, access, body.entries)
+    planned, errors = await _validate(db, access, body.entries, clock.week)
     if errors:
         raise CodedHTTPException(
             HTTP_422,
@@ -375,7 +398,8 @@ async def submit_check_ins(
             },
         )
 
-    week = dc.CURRENT_WEEK
+    # P37-T04: one calendar week for every stamp of this batch (I40).
+    week = clock.week
     by_project: dict[uuid.UUID, list[_Planned]] = defaultdict(list)
     for item in planned:
         by_project[item.project.id].append(item)
@@ -387,8 +411,18 @@ async def submit_check_ins(
         before_states[item.project.id].append(_stage_state(item.row))
         was_blocked = item.row.status == WorkflowStepStatus.BLOCKED
         was_started = item.row.status != WorkflowStepStatus.NOT_STARTED
+        stage_before = item.row.status
         for name, value in item.merged.items():
             setattr(item.row, name, value)
+        # P40 (ADR 0054 R40-4): leaving Not Started clears the step's pin, in
+        # this transaction, under the project row lock taken above.
+        clear_pin_if_started(
+            db,
+            item.project,
+            item.row,
+            stage_before=stage_before,
+            actor_user_id=current_user.user_id,
+        )
         if was_started != (item.row.status != WorkflowStepStatus.NOT_STARTED):
             started_flip[item.project.id] = item.project
         if item.row.status == WorkflowStepStatus.BLOCKED and not was_blocked:

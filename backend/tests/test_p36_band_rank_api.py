@@ -67,6 +67,7 @@ from services.band_rank import BAND_RANK_LOCK_KEY, band_order
 from services.project_steps import sync_project_steps
 from services.schedule_apply import persist_solved_run
 from services.schedule_persistence import build_schedule_input_from_db
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
@@ -135,7 +136,7 @@ async def _act_as(db_session, *roles: RoleName, hub_ids=None):
 
 
 async def _activate_baseline(db_session) -> ScheduleRun:
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     run = await persist_solved_run(
         db_session,
         schedule_input,
@@ -200,7 +201,7 @@ async def _order(db_session, band: str) -> list[str]:
 
 
 async def _assert_i37b(db_session) -> None:
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     assert check_i37b_band_ranks_dense(schedule_input.projects) == ()
 
 
@@ -454,7 +455,7 @@ async def test_i37d_rerank_preview_token_equals_rebuilt_input(db_session):
         token = preview.json()["preview_token"]
         resp = await _confirm(client, moved.id, token, after=anchor.id)
     assert resp.status_code == 200, resp.text
-    rebuilt = await build_schedule_input_from_db(db_session)
+    rebuilt = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     assert (
         priority_preview.rank_snapshot_token(
             rebuilt,
@@ -485,7 +486,7 @@ async def test_i37d_priority_move_preview_token_equals_rebuilt_input(db_session)
         )
     assert resp.status_code == 200, resp.text
     assert resp.json()["recalc_status"] == "applied"
-    rebuilt = await build_schedule_input_from_db(db_session)
+    rebuilt = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     assert (
         priority_preview.snapshot_token(
             rebuilt,
@@ -993,3 +994,190 @@ async def test_band_lock_timeout_is_503_band_rank_busy_and_writes_nothing(
     assert ok.status_code == 200, ok.text
     timeout = (await db_session.execute(text("SHOW lock_timeout"))).scalar_one()
     assert timeout != "200ms"
+
+
+# --- to_rank: typed position / arrow buttons (owner ask 2026-11-17, contract §2 amendment) ---
+
+
+async def _rank_move(client, project_id, to_rank: int) -> tuple[Any, Any]:
+    """Preview then confirm with the bare `{to_rank}` body the board sends."""
+
+    preview = await client.post(
+        f"/projects/{project_id}/band-rank/preview", json={"to_rank": to_rank}
+    )
+    assert preview.status_code == 200, preview.text
+    confirm = await client.post(
+        f"/projects/{project_id}/band-rank",
+        json={"to_rank": to_rank, "preview_token": preview.json()["preview_token"] or "x" * 64},
+    )
+    return preview, confirm
+
+
+async def test_to_rank_up_down_first_last_and_typed_jump(db_session):
+    w = await _world(db_session, n_p2=6, baseline=False)
+    await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
+
+    async def check(project: Project, to_rank: int) -> None:
+        before = await _order(db_session, "P2")
+        async with _client(db_session) as client:
+            preview, confirm = await _rank_move(client, project.id, to_rank)
+        assert preview.json()["result"] == "preview"
+        assert "band_size" not in preview.json()  # P36-R02: never "of M"
+        assert confirm.status_code == 200, confirm.text
+        after = await _order(db_session, "P2")
+        assert after.index(str(project.id)) == to_rank - 1
+        # I37c: everyone else keeps their relative order.
+        assert br.remove(after, str(project.id)) == br.remove(before, str(project.id))
+        assert (await _fresh(db_session, project.id)).band_rank == to_rank
+        await _assert_i37b(db_session)
+
+    await check(w.p2[3], 3)  # up one (4 -> 3)
+    await check(w.p2[3], 4)  # down one (3 -> 4)
+    await check(w.p2[3], 1)  # to first
+    await check(w.p2[3], 6)  # to last
+    await check(w.p2[0], 5)  # typed jump down (2 -> 5)
+    await check(w.p2[5], 2)  # typed jump up
+
+    audit = (
+        await db_session.execute(
+            select(AuditLogEntry)
+            .where(
+                AuditLogEntry.action == "project.band_rank_move",
+                AuditLogEntry.entity_id == str(w.p2[5].id),
+            )
+        )
+    ).scalar_one()
+    assert audit.after_state["requested_rank"] == 2
+    assert audit.after_state["to_rank"] == 2
+    assert audit.after_state["before_project_id"] is None
+    assert audit.after_state["after_project_id"] is None
+
+
+async def test_to_rank_equal_to_current_is_unchanged(db_session):
+    w = await _world(db_session, baseline=False)
+    await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
+    order = await _order(db_session, "P2")
+    async with _client(db_session) as client:
+        preview, confirm = await _rank_move(client, w.p2[2].id, 3)
+        last, last_confirm = await _rank_move(client, w.p2[-1].id, len(w.p2))
+    for p, c in ((preview, confirm), (last, last_confirm)):
+        assert p.json()["result"] == "unchanged" and p.json()["preview_token"] is None
+        assert c.status_code == 200 and c.json()["recalc_status"] == "unchanged"
+    assert await _order(db_session, "P2") == order
+    assert (
+        await _count(db_session, AuditLogEntry, AuditLogEntry.action == "project.band_rank_move")
+        == 0
+    )
+
+
+async def test_to_rank_errors(db_session):
+    w = await _world(db_session, baseline=False)
+    held = await w.project("Held", ProjectPriority.P2, status=ProjectStatus.ON_HOLD)
+    await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
+    pid = w.p2[1].id
+    url = f"/projects/{pid}/band-rank/preview"
+    async with _client(db_session) as client:
+        zero = await client.post(url, json={"to_rank": 0})
+        negative = await client.post(url, json={"to_rank": -2})
+        too_big = await client.post(url, json={"to_rank": len(w.p2) + 1})
+        huge = await client.post(url, json={"to_rank": 10**9})
+        with_before = await client.post(
+            url, json={"to_rank": 1, "before_project_id": str(w.p2[0].id)}
+        )
+        with_after = await client.post(
+            url, json={"to_rank": 1, "after_project_id": str(w.p2[0].id)}
+        )
+        as_string = await client.post(url, json={"to_rank": "2"})
+        as_bool = await client.post(url, json={"to_rank": True})
+        projects_router.PRIORITY_PREVIEW_RATE_LIMIT.reset()
+        not_rankable = await client.post(
+            f"/projects/{held.id}/band-rank/preview", json={"to_rank": 1}
+        )
+        confirm_bad = await client.post(
+            f"/projects/{pid}/band-rank", json={"to_rank": 99, "preview_token": "x" * 64}
+        )
+        confirm_both = await client.post(
+            f"/projects/{pid}/band-rank",
+            json={"to_rank": 1, "after_project_id": str(w.p2[0].id), "preview_token": "x" * 64},
+        )
+    for resp in (zero, negative, too_big, huge, confirm_bad):
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "BAD_RANK"
+        # The band size is never stated (P36-R02).
+        assert str(len(w.p2)) not in resp.json()["detail"]
+    assert zero.json() == too_big.json()
+    for resp in (with_before, with_after, confirm_both):
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "ANCHOR_AND_RANK"
+    assert as_string.status_code == 422 and as_bool.status_code == 422
+    assert not_rankable.status_code == 409 and not_rankable.json()["code"] == "NOT_RANKABLE"
+
+
+async def test_to_rank_hub_scoped_user_uses_full_band_and_out_of_scope_anchor(db_session):
+    """A Hub Planner types a full-band position; the slot is resolved against
+    the whole band, including a project of another hub the user cannot see
+    (no NOT_SAME_BAND for the hidden neighbour). Out-of-hub project is 404."""
+
+    w = await _world(db_session, other_hub=True)
+    hidden = next(p for p in w.p2 if p.hub_id == w.hub_b.id)
+    target = hidden.band_rank
+    await _act_as(db_session, RoleName.HUB_PLANNER, hub_ids=[w.hub.id])
+    # Move an in-scope project into the hidden project's slot (from below it
+    # if the hidden one is not last, else from above): the move must pass the
+    # hidden neighbour, which the scoped user cannot name as an anchor.
+    moved = w.p2[-1] if target < len(w.p2) else w.p2[0]
+    before = await _order(db_session, "P2")
+    async with _client(db_session) as client:
+        preview, confirm = await _rank_move(client, moved.id, target)
+        projects_router.PRIORITY_PREVIEW_RATE_LIMIT.reset()
+        out = await client.post(
+            f"/projects/{hidden.id}/band-rank/preview", json={"to_rank": 1}
+        )
+    assert confirm.status_code == 200, confirm.text
+    assert confirm.json()["recalc_status"] == "applied"
+    after = await _order(db_session, "P2")
+    assert after.index(str(moved.id)) == target - 1
+    assert abs(after.index(str(hidden.id)) - after.index(str(moved.id))) == 1
+    assert br.remove(after, str(moved.id)) == br.remove(before, str(moved.id))
+    # The out-of-scope project is not named in what the scoped user sees.
+    assert str(hidden.id) not in preview.text and str(hidden.id) not in confirm.text
+    assert out.status_code == 404
+
+
+async def test_to_rank_token_binds_the_rank_and_goes_stale(db_session):
+    w = await _world(db_session)
+    await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
+    pid = w.p2[4].id
+    async with _client(db_session) as client:
+        preview = await client.post(f"/projects/{pid}/band-rank/preview", json={"to_rank": 1})
+        token = preview.json()["preview_token"]
+        # The equivalent anchor body is a different request: its token differs.
+        anchor = await _preview(client, pid, before=w.p2[0].id)
+        assert anchor.json()["preview_token"] != token
+        mixed = await _confirm(client, pid, token, before=w.p2[0].id)
+        # A concurrent re-rank of the band makes the to_rank token stale.
+        other = await _preview(client, w.p2[2].id, before=w.p2[1].id)
+        applied = await _confirm(
+            client, w.p2[2].id, other.json()["preview_token"], before=w.p2[1].id
+        )
+        assert applied.status_code == 200, applied.text
+        order = await _order(db_session, "P2")
+        stale = await client.post(
+            f"/projects/{pid}/band-rank", json={"to_rank": 1, "preview_token": token}
+        )
+        # Re-preview and confirm with the same body: applied.
+        projects_router.PRIORITY_PREVIEW_RATE_LIMIT.reset()
+        projects_router.PRIORITY_CONFIRM_RATE_LIMIT.reset()
+        fresh_preview = await client.post(
+            f"/projects/{pid}/band-rank/preview", json={"to_rank": 1}
+        )
+        ok = await client.post(
+            f"/projects/{pid}/band-rank",
+            json={"to_rank": 1, "preview_token": fresh_preview.json()["preview_token"]},
+        )
+    assert mixed.status_code == 409 and mixed.json()["code"] == "PREVIEW_STALE"
+    assert stale.status_code == 409 and stale.json()["code"] == "PREVIEW_STALE"
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["changes"] == fresh_preview.json()["changes"]
+    assert (await _order(db_session, "P2"))[0] == str(pid)
+    assert br.remove(await _order(db_session, "P2"), str(pid)) == br.remove(order, str(pid))

@@ -34,6 +34,8 @@ describe('useGantt', () => {
       total_count: 0,
       rows: [],
       weekly_active_counts: [],
+      current_step_counts: {},
+      current_week: 31,
     });
     const { client, Wrapper } = makeWrapper();
     const { result } = renderHook(() => useGantt({ category: ['C', 'A'], type: ['SER', 'AC'] }), { wrapper: Wrapper });
@@ -49,6 +51,8 @@ describe('useGantt', () => {
       total_count: 0,
       rows: [],
       weekly_active_counts: [],
+      current_step_counts: {},
+      current_week: 31,
     });
     const { Wrapper } = makeWrapper();
     const { rerender } = renderHook(

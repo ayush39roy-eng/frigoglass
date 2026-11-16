@@ -71,14 +71,15 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import domain_constants as dc
 from api.db import get_db
-from api.deps import principal_can, require_permission
+from api.deps import principal_can, require_permission, require_roles
+from api.errors import CodedHTTPException
 from api.query_params import (
     MAX_FILTER_VALUES,
     CategoryListQuery,
@@ -96,6 +97,7 @@ from models.chamber import Chamber
 from models.engineer import Engineer
 from models.enums import (
     ProjectPriority,
+    RoleName,
     WorkflowStepKind,
     WorkflowStepStatus,
 )
@@ -112,6 +114,7 @@ from schemas.gantt import (
     GanttWeeklyActiveCount,
 )
 from schemas.project import ProjectRead
+from schemas.step_pin import StepPinsRefusal, StepPinsRequest, StepPinsResponse
 from services.active_run import slip_weeks, step_kinds_for_run
 from services.audit_helpers import project_audit_state
 from services.category_type_filter import any_of, category_type_filter
@@ -122,6 +125,7 @@ from services.hub_scope import (
     needs_own_assignments,
     project_row_scope,
 )
+from services.plan_clock import PlanClock, get_plan_clock
 from services.project_cards import build_project_cards
 from services.project_effort import (
     TRIGGER_UNFREEZE,
@@ -135,15 +139,23 @@ from services.project_filters import (
     search_predicate,
 )
 from services.schedule_stale import mark_projects_stale
+from services.step_pins import (
+    can_write_pins,
+    current_length_weeks,
+    pin_block_reason,
+    save_step_pins,
+)
 from services.template_copy import share_lock_categories
 from services.tracking import tracking_status_for
-from services.workspace import row_own_effort_kinds
+from services.workspace import row_effective_weeks, row_is_skipped, row_own_effort_kinds
 
 router = APIRouter(prefix="/gantt", tags=["gantt"])
 
 
 _read = require_permission(Surface.GANTT, Action.READ)
 _write = require_permission(Surface.GANTT, Action.WRITE)
+#: P40 (ADR 0054 R40-2): pins are written by the Admin / Super Admin ROLES only.
+_pin_writer = require_roles(RoleName.ADMIN, RoleName.SUPER_ADMIN)
 
 GanttSort = Literal["name", "priority", "start", "end"]
 
@@ -206,21 +218,47 @@ def _weekly_active_counts(
     steps_by_project: dict[uuid.UUID, list[ScheduleRunProjectStep]],
 ) -> list[GanttWeeklyActiveCount]:
     """Active non-skipped run steps per display week (1..WITHIN_YEAR_WEEK)
-    over the whole filtered set, split by the project's workflow."""
+    over the whole filtered set, split by the project's workflow, and (P40-T01)
+    by step code (`by_step`, the step id such as `"PDD-A"`; same rows, so it
+    sums to `pdd + oem`)."""
 
     last = dc.WITHIN_YEAR_WEEK
     pdd = [0] * (last + 1)
     oem = [0] * (last + 1)
+    by_step: list[dict[str, int]] = [defaultdict(int) for _ in range(last + 1)]
     for project in projects:
         counts = oem if project.workflow_id == dc.WORKFLOW_ID_FOR_OEM_HUB else pdd
         for step in steps_by_project.get(project.id, []):
             if step.skipped:
                 continue
+            code = step.step_template_id
             for week in range(max(1, step.start_week), min(last, step.end_week) + 1):
                 counts[week] += 1
+                by_step[week][code] += 1
     return [
-        GanttWeeklyActiveCount(week=w, pdd=pdd[w], oem=oem[w]) for w in range(1, last + 1)
+        GanttWeeklyActiveCount(
+            week=w, pdd=pdd[w], oem=oem[w], by_step=dict(sorted(by_step[w].items()))
+        )
+        for w in range(1, last + 1)
     ]
+
+
+def _current_step_counts(
+    projects: Sequence[Project],
+    steps_by_project: dict[uuid.UUID, list[ScheduleRunProjectStep]],
+    week: int,
+) -> dict[str, int]:
+    """P40-T01: per step code, the projects of the filtered set with a
+    non-skipped run step covering `week` (the `weekly_active_counts`
+    definition at one week; a project counts once per step)."""
+
+    counts: dict[str, set[uuid.UUID]] = defaultdict(set)
+    for project in projects:
+        for step in steps_by_project.get(project.id, []):
+            if step.skipped or not (step.start_week <= week <= step.end_week):
+                continue
+            counts[step.step_template_id].add(project.id)
+    return {code: len(ids) for code, ids in sorted(counts.items())}
 
 
 @router.get("", response_model=GanttResponse)
@@ -250,8 +288,18 @@ async def get_gantt(
         ),
     ] = None,
     sort: GanttSort = "name",
+    include_unplaced: Annotated[
+        bool,
+        Query(
+            description=(
+                "P40: also list each project's live steps that have no row in the active "
+                "run (planned weeks null), so their pins can be edited."
+            )
+        ),
+    ] = False,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> GanttResponse:
     """P13-T13 (docs/API_CONTRACT_P13.md §7): every filter is ANDed with the
     scope and the hub/country filter, server-side. `current_step` is the
@@ -369,7 +417,7 @@ async def get_gantt(
 
     if current_step or sort == "priority":
         # The register's current-step and score source (one batch pass).
-        cards = await build_project_cards(db, filtered, active_run)
+        cards = await build_project_cards(db, filtered, active_run, current_week=clock.week)
         if current_step:
             steps = set(current_step)
             filtered = [
@@ -403,16 +451,17 @@ async def get_gantt(
         filtered.sort(key=_end_key)
 
     total_count = len(filtered)
+    templates = {
+        t.id: t for t in (await db.execute(select(WorkflowStepTemplate))).scalars().all()
+    }
     weekly_counts = _weekly_active_counts(filtered, planned_steps)
+    current_counts = _current_step_counts(filtered, planned_steps, clock.week)
     projects = filtered[offset : offset + limit]
     project_ids = [p.id for p in projects]
 
     # ADR 0028 / P15-R01 (O3): the assignee name is served to every reader (the owner
     # decided to use the personal data); the scope of the rows is unchanged.
 
-    templates = {
-        t.id: t for t in (await db.execute(select(WorkflowStepTemplate))).scalars().all()
-    }
     run_kinds = await step_kinds_for_run(db, active_run)
     engineer_names: dict[uuid.UUID, str] = {
         e.id: e.name for e in (await db.execute(select(Engineer))).scalars().all()
@@ -444,7 +493,9 @@ async def get_gantt(
     gantt_writer = principal_can(current_user, Surface.GANTT, Action.WRITE)
 
     # P12 (ADR 0021 §4): the one tracking-status implementation.
-    tracking = await tracking_status_for(db, project_ids, active_run=active_run)
+    tracking = await tracking_status_for(
+        db, project_ids, active_run=active_run, current_week=clock.week
+    )
 
     gantt_rows: list[GanttProjectRow] = []
     for project in projects:
@@ -453,6 +504,49 @@ async def get_gantt(
         project_own_kinds = own_kinds.get(project.id, frozenset())
         expected = outcome.expected_end_week if outcome else None
         projected = outcome.projected_end_week if outcome else None
+        leader_fte = (
+            float(project.leader_engineer.fte) if project.leader_engineer is not None else None
+        )
+
+        def _pin_fields(
+            step_id: str,
+            run_step: ScheduleRunProjectStep | None,
+            live: ProjectWorkflowStep | None,
+            *,
+            project: Project = project,
+            project_own_kinds: frozenset[str] = project_own_kinds,
+            leader_fte: float | None = leader_fte,
+        ) -> dict[str, object]:
+            """P40 (R40-2 / R40-13): the live pin, the run's pin flags, the
+            current length and the caller's editability of one step."""
+
+            kind = _kind_of(templates, step_id)
+            own = kind.value in project_own_kinds
+            cert = project.certification_testing_required
+            skipped = (
+                row_is_skipped(live, kind, cert, own_effort=own) if live is not None else True
+            )
+            eff = row_effective_weeks(live, kind, cert, own_effort=own) if live else 0
+            reason = pin_block_reason(current_user, project, live, skipped=skipped)
+            return {
+                "manual_start_week": live.manual_start_week if live else None,
+                "manual_end_week": live.manual_end_week if live else None,
+                "pinned": bool(run_step.pinned) if run_step is not None else False,
+                "manual_overlap": (
+                    bool(run_step.manual_overlap) if run_step is not None else False
+                ),
+                "current_length_weeks": current_length_weeks(
+                    row=live,
+                    run_step=run_step,
+                    eff=eff,
+                    kind=kind,
+                    frozen=project.frozen,
+                    leader_fte=leader_fte,
+                ),
+                "pin_editable": reason is None,
+                "pin_block_reason": reason,
+            }
+
         step_rows: list[GanttStepRow] = []
         for step in sorted(planned_steps.get(project.id, []), key=lambda s: s.sequence_order):
             template = templates.get(step.step_template_id)
@@ -501,8 +595,58 @@ async def get_gantt(
                         frozen=project.frozen,
                         live_status=actual.status if actual else None,
                     ),
+                    **_pin_fields(step.step_template_id, step, actual),
                 )
             )
+        if include_unplaced:
+            # P40: the project's live steps with no active-run row (a project
+            # the run left out, did not schedule, or that changed since), so
+            # their pins can be edited. Planned weeks and run fields are null.
+            placed = {s.step_template_id for s in planned_steps.get(project.id, [])}
+            for live in sorted(
+                live_by_project.get(project.id, []), key=lambda r: r.sequence_order
+            ):
+                if live.step_template_id in placed:
+                    continue
+                template = templates.get(live.step_template_id)
+                kind = _kind_of(templates, live.step_template_id)
+                pin = _pin_fields(live.step_template_id, None, live)
+                step_rows.append(
+                    GanttStepRow(
+                        step_id=live.step_template_id,
+                        step_name=template.name if template else live.step_template_id,
+                        kind=kind,
+                        sequence_order=live.sequence_order,
+                        skipped=row_is_skipped(
+                            live,
+                            kind,
+                            project.certification_testing_required,
+                            own_effort=kind.value in project_own_kinds,
+                        ),
+                        status=live.status,
+                        percent_complete=live.percent_complete,
+                        duration_weeks=None,
+                        planned_start_week=None,
+                        planned_end_week=None,
+                        actual_start_week=live.actual_start_week,
+                        actual_end_week=live.actual_end_week,
+                        assigned_engineer_name=None,
+                        assigned_chamber_code=None,
+                        eng_conflict=False,
+                        chamber_overlap=False,
+                        lead_time_weeks=live.plan_weeks,
+                        effort_weeks=live.effort_weeks,
+                        plan_weeks=live.plan_weeks,
+                        gap_weeks=live.plan_gap_weeks,
+                        own_effort=kind.value in project_own_kinds,
+                        predecessor_ids=(
+                            sorted(template.predecessor_ids or []) if template else []
+                        ),
+                        span_fte=None,
+                        **pin,
+                    )
+                )
+            step_rows.sort(key=lambda r: r.sequence_order)
 
         design_weeks, lab_weeks, total_weeks = _kind_weeks(
             planned_steps.get(project.id, []), run_kinds
@@ -536,6 +680,8 @@ async def get_gantt(
                 design_weeks=design_weeks,
                 lab_weeks=lab_weeks,
                 total_weeks=total_weeks,
+                pin_lapsed=bool(outcome.pin_lapsed) if outcome else False,
+                manual_overlap=bool(outcome.manual_overlap) if outcome else False,
                 steps=step_rows,
             )
         )
@@ -546,6 +692,8 @@ async def get_gantt(
         total_count=total_count,
         rows=gantt_rows,
         weekly_active_counts=weekly_counts,
+        current_step_counts=current_counts,
+        current_week=clock.week,
     )
 
 
@@ -583,6 +731,14 @@ async def toggle_freeze(
         )
 
     unfreezing = project.frozen and not body.frozen
+    if unfreezing and not can_write_pins(current_user):
+        # P40 (ADR 0054 R40-10): only the Admin and Super Admin roles may
+        # unfreeze. Freezing keeps GANTT/WRITE.
+        raise CodedHTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "UNFREEZE_REQUIRES_ADMIN",
+            "Only an Admin or Super Admin can unfreeze a project.",
+        )
     if unfreezing and (
         project.design_effort_weeks is not None or project.lab_effort_weeks is not None
     ):
@@ -642,3 +798,51 @@ async def toggle_freeze(
     await db.commit()
     await db.refresh(project)
     return project
+
+
+@router.put(
+    "/step-pins",
+    response_model=StepPinsResponse,
+    responses={
+        404: {"model": StepPinsRefusal, "description": "PROJECT_NOT_FOUND"},
+        409: {
+            "model": StepPinsRefusal,
+            "description": "PROJECT_FROZEN / PROJECT_CLOSED / STEP_STARTED / STEP_SKIPPED",
+        },
+    },
+)
+async def save_pins(
+    body: StepPinsRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_pin_writer),
+    clock: PlanClock = Depends(get_plan_clock),
+) -> StepPinsResponse:
+    """P40 (ADR 0054 R40-1 / R40-2 / R40-11; docs/API_CONTRACT_P40.md §1):
+    save manual step Start / End weeks, one all-or-nothing batch.
+
+    Admin and Super Admin roles only (403 otherwise, a project grant does not
+    count). Hub-scoped: a project out of scope reads as 404
+    `PROJECT_NOT_FOUND`. The week domain is checked against the request's
+    `plan_clock` week. Refusals: 422 `DUPLICATE_STEP` / `PIN_INVALID` /
+    `UNKNOWN_STEP` / `PIN_OUT_OF_RANGE`, 409 `PROJECT_FROZEN` /
+    `PROJECT_CLOSED` / `STEP_STARTED` / `STEP_SKIPPED`; nothing is written.
+    On success: one audit row per changed pair, `schedule_stale` on the
+    changed projects and ONE greedy run (`trigger_reason="step_pin"`, the
+    priority move's lifecycle and `X-Schedule-*` headers). Never solves
+    in-process.
+    """
+
+    result = await save_step_pins(db, body.items, current_user, current_week=clock.week)
+    response.headers.update(result.response_headers())
+    outcome = result.outcome
+    return StepPinsResponse(
+        changes=result.changes,
+        unchanged_count=result.unchanged_count,
+        projects_marked_stale=result.projects_marked_stale,
+        current_week=result.current_week,
+        recalc_status=outcome.recalc_status,
+        schedule_run_id=outcome.schedule_run_id,
+        baseline_run_id=outcome.baseline_run_id,
+        task_id=outcome.task_id,
+    )

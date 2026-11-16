@@ -21,6 +21,10 @@ its `duration_weeks` over the weeks the row occupies, so the weeks sum back to
   and the done effort (`duration − remaining`) over the weeks before it. When
   either part has no weeks, the whole row is spread evenly instead.
 
+- Pinned rows (P40, ADR 0054 R40-3, I48 (c)): `duration_weeks` spread evenly
+  over the row's window, whatever the live status; a pin is a placement, so
+  no tail split applies.
+
 Nothing here re-schedules anything: it only reads stored run rows and the
 live progress fields that the run was computed from.
 """
@@ -153,6 +157,7 @@ async def weekly_effort_for_rows(
         r
         for r in live_rows
         if r.project_id not in frozen
+        and not r.pinned
         and (p := progress.get((r.project_id, r.step_template_id))) is not None
         and p.status in _TAIL_STATUSES
     ]

@@ -12,8 +12,9 @@ import type { StageChip } from '../../lib/chip-options';
 import { formatAmount, formatPct, formatPlain, pick, pickUnit, unitShort, type CapacityUnit } from '../../lib/figures';
 import { CardPills } from './card-pills';
 import { InlineNumber } from './inline-number';
-import { saveErrorMessage } from './save-error';
 import { StaticChip, ToggleChip } from './toggle-chip';
+import { CardEditControls, UnsavedTag } from './card-edit-controls';
+import { useCardEditor, type CardEditor, type FieldSpec } from './use-card-editor';
 
 /**
  * One lab region's chambers (P19-T04, the client's "Greece Labs (15%)" card).
@@ -22,8 +23,10 @@ import { StaticChip, ToggleChip } from './toggle-chip';
  * "Wks/ch" its served `working_weeks`. Nothing is computed.
  *
  * Editing (`canEdit`: write AND the region holds a hub in the caller's scope):
- * platforms and efficiency inline, stage chips as toggle buttons, downtime and
- * the rest through the existing chamber form.
+ * downtime and the rest through the existing chamber form, as before. Owner
+ * ask 2026-11-17: platforms, efficiency and the stage chips are read-only
+ * until the header's "Edit"; in edit mode they change a draft, and "Save"
+ * sends one PATCH per changed chamber with only the changed fields.
  */
 export interface LabRegionCardProps {
   region: string;
@@ -50,6 +53,12 @@ function fromSchema(field: 'platforms' | 'efficiency') {
 const validatePlatforms = fromSchema('platforms');
 const validateEfficiency = fromSchema('efficiency');
 
+const CHAMBER_FIELDS: readonly FieldSpec<ChamberRead, ChamberUpdateRequest>[] = [
+  { kind: 'number', key: 'platforms', served: (c) => c.platforms, validate: validatePlatforms },
+  { kind: 'number', key: 'efficiency', served: (c) => c.efficiency, validate: validateEfficiency },
+  { kind: 'set', key: 'allowed_stages', served: (c) => c.allowed_stages },
+];
+
 export function LabRegionCard({
   region,
   summary,
@@ -65,6 +74,13 @@ export function LabRegionCard({
 }: LabRegionCardProps): React.JSX.Element {
   const headingId = React.useId();
   const isKnownRegion = (LAB_REGIONS as readonly string[]).includes(region);
+  const editor = useCardEditor<ChamberRead, ChamberUpdateRequest>({
+    cardKey: `lab:${region}`,
+    rows: chambers,
+    fields: CHAMBER_FIELDS,
+    canEdit,
+    onUpdate,
+  });
   return (
     <section
       aria-labelledby={headingId}
@@ -92,6 +108,18 @@ export function LabRegionCard({
               <Plus />
               Add
             </Button>
+          ) : null}
+          {canEdit && chambers.length > 0 ? (
+            <CardEditControls
+              subject={`${region} labs`}
+              editing={editor.editing}
+              saving={editor.saving}
+              changedRowCount={editor.changedRowCount}
+              hasInvalid={editor.hasInvalid}
+              onBegin={editor.begin}
+              onCancel={editor.cancel}
+              onSave={() => void editor.save()}
+            />
           ) : null}
         </div>
       </header>
@@ -139,7 +167,7 @@ export function LabRegionCard({
                 basis={basis}
                 unit={unit}
                 canEdit={canEdit}
-                onUpdate={onUpdate}
+                editor={editor}
                 onEdit={onEdit}
                 onDelete={onDelete}
               />
@@ -157,7 +185,7 @@ function ChamberRow({
   basis,
   unit,
   canEdit,
-  onUpdate,
+  editor,
   onEdit,
   onDelete,
 }: {
@@ -166,43 +194,42 @@ function ChamberRow({
   basis: CapacityBasis;
   unit: CapacityUnit;
   canEdit: boolean;
-  onUpdate: LabRegionCardProps['onUpdate'];
+  editor: CardEditor<ChamberRead>;
   onEdit: LabRegionCardProps['onEdit'];
   onDelete: LabRegionCardProps['onDelete'];
 }): React.JSX.Element {
-  const [chipError, setChipError] = React.useState<string | null>(null);
-  const [saving, setSaving] = React.useState(false);
-  const allowed = chamber.allowed_stages;
+  const editing = editor.editing;
+  const allowed = editor.selected(chamber, 'allowed_stages');
+  const served = chamber.allowed_stages;
+  const rowError = editor.rowError(chamber);
 
-  const toggle = async (stageId: string) => {
+  const toggle = (stageId: string) => {
     const next = allowed.includes(stageId)
       ? allowed.filter((s) => s !== stageId)
       : stages.map((s) => s.id).filter((id) => id === stageId || allowed.includes(id));
-    setChipError(null);
-    setSaving(true);
-    try {
-      await onUpdate(chamber.id, { allowed_stages: next });
-    } catch (err) {
-      setChipError(saveErrorMessage(err));
-    } finally {
-      setSaving(false);
-    }
+    editor.set(chamber, 'allowed_stages', next);
   };
 
   return (
     <TableRow data-testid={`chamber-row-${chamber.id}`}>
-      <TableCell className="whitespace-nowrap px-1.5 py-1.5 font-semibold text-text">{chamber.code}</TableCell>
+      <TableCell className="whitespace-nowrap px-1.5 py-1.5 font-semibold text-text">
+        {chamber.code}
+        {editing && editor.rowChanged(chamber) ? <UnsavedTag /> : null}
+      </TableCell>
       <TableCell className="px-1.5 py-1.5 text-right tnum" data-numeric="">
-        {canEdit ? (
+        {editing ? (
           <InlineNumber
             id={`plat-${chamber.id}`}
             label={`Platforms for ${chamber.code}`}
-            value={chamber.platforms}
+            text={editor.text(chamber, 'platforms')}
             step="1"
             min={1}
             inputMode="numeric"
-            validate={validatePlatforms}
-            onCommit={(platforms) => onUpdate(chamber.id, { platforms })}
+            changed={editor.isChanged(chamber, 'platforms')}
+            error={editor.invalid(chamber, 'platforms')}
+            disabled={editor.saving}
+            onChange={(t) => editor.set(chamber, 'platforms', t)}
+            onRevert={() => editor.revert(chamber, 'platforms')}
             className="[&_input]:w-10"
           />
         ) : (
@@ -210,16 +237,19 @@ function ChamberRow({
         )}
       </TableCell>
       <TableCell className="px-1.5 py-1.5 text-right tnum" data-numeric="">
-        {canEdit ? (
+        {editing ? (
           <InlineNumber
             id={`eff-${chamber.id}`}
             label={`Efficiency for ${chamber.code}`}
-            value={chamber.efficiency}
+            text={editor.text(chamber, 'efficiency')}
             step="0.01"
             min={0.01}
             inputMode="decimal"
-            validate={validateEfficiency}
-            onCommit={(efficiency) => onUpdate(chamber.id, { efficiency })}
+            changed={editor.isChanged(chamber, 'efficiency')}
+            error={editor.invalid(chamber, 'efficiency')}
+            disabled={editor.saving}
+            onChange={(t) => editor.set(chamber, 'efficiency', t)}
+            onRevert={() => editor.revert(chamber, 'efficiency')}
             className="[&_input]:w-12"
           />
         ) : (
@@ -233,17 +263,18 @@ function ChamberRow({
         {formatAmount(pickUnit(chamber, unit, basis), unit)}
       </TableCell>
       <TableCell className="px-1.5 py-1.5">
-        <div className="flex flex-wrap gap-1" role={canEdit ? 'group' : undefined} aria-label={canEdit ? `Stages for ${chamber.code}` : undefined}>
-          {canEdit ? (
+        <div className="flex flex-wrap gap-1" role={editing ? 'group' : undefined} aria-label={editing ? `Stages for ${chamber.code}` : undefined}>
+          {editing ? (
             stages.map((s) => (
               <ToggleChip
                 key={s.id}
                 tone="success"
                 pressed={allowed.includes(s.id)}
+                changed={allowed.includes(s.id) !== served.includes(s.id)}
                 label={`Allow stage ${s.label} for ${chamber.code}`}
                 title={s.label}
-                disabled={saving}
-                onToggle={() => void toggle(s.id)}
+                disabled={editor.saving}
+                onToggle={() => toggle(s.id)}
               >
                 <StageText stage={s} />
               </ToggleChip>
@@ -260,9 +291,9 @@ function ChamberRow({
               ))
           )}
         </div>
-        {chipError ? (
+        {rowError ? (
           <p role="alert" className="mt-1 text-2xs text-danger">
-            {chipError}
+            {rowError}
           </p>
         ) : null}
       </TableCell>

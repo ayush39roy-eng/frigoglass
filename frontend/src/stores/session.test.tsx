@@ -60,7 +60,7 @@ describe.each(ROLE_NAMES)('gating for role: %s', (role: RoleName) => {
       .map((i) => i.path)
       .sort();
     // `surface: null` (P13-T15 Downloads) = any authenticated user.
-    // P32-R04: `alsoReadableVia` surfaces also show the item (Workflow ← gantt read).
+    // `alsoReadableVia` surfaces also show the item (Workflow ← workflow_templates read).
     const expected = SURFACES.filter((s) =>
       s.surface === null ? true : permissions[s.surface].read || (s.alsoReadableVia ?? []).some((v) => permissions[v].read),
     )
@@ -116,14 +116,21 @@ describe('route guard', () => {
     expect(await screen.findByTestId('forbidden-page')).toBeInTheDocument();
   });
 
-  it('P32-R04: /settings/workflow opens for a Hub Planner (gantt read) and is 403 for the Auditor', async () => {
-    const { unmount } = renderApp('/settings/workflow', {
-      session: { roles: ['Hub Planner'], permissions: ROLE_MATRIX['Hub Planner'] },
+  it('/settings/workflow: the templates for an Admin (no tab switcher); 403 for a Hub Planner (gantt read only, owner 2026-11-16) and the Auditor', async () => {
+    const admin = renderApp('/settings/workflow?tab=projects', {
+      session: { roles: ['Admin'], permissions: ROLE_MATRIX.Admin },
     });
-    expect(await screen.findByRole('tab', { name: 'Project step timing' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Workflow Settings' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Project step timing' })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Workflow templates' })).not.toBeInTheDocument();
     expect(screen.queryByTestId('forbidden-page')).not.toBeInTheDocument();
-    unmount();
+    admin.unmount();
+
+    const planner = renderApp('/settings/workflow', {
+      session: { roles: ['Hub Planner'], permissions: ROLE_MATRIX['Hub Planner'] },
+    });
+    expect(await screen.findByTestId('forbidden-page')).toHaveTextContent(/does not have access to Workflow Settings/);
+    planner.unmount();
 
     renderApp('/settings/workflow', { session: { roles: ['Auditor'], permissions: ROLE_MATRIX.Auditor } });
     expect(await screen.findByTestId('forbidden-page')).toHaveTextContent(/does not have access to Workflow Settings/);

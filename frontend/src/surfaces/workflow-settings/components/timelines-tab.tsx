@@ -39,30 +39,44 @@ export function TimelinesTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-s3">
-        <Label htmlFor={toggleId} className="text-2xs text-text-muted">
-          Workflow
-        </Label>
-        <ToggleGroup
-          id={toggleId}
-          type="single"
-          size="sm"
-          value={workflow}
-          aria-label="Workflow"
-          onValueChange={(next) => {
-            if ((WORKFLOW_IDS as readonly string[]).includes(next)) setWorkflow(next as WorkflowId);
-          }}
-        >
-          <ToggleGroupItem value="PDD">Standard PDD</ToggleGroupItem>
-          <ToggleGroupItem value="OEM">OEM</ToggleGroupItem>
-        </ToggleGroup>
-        {canWrite && categories ? (
-          <Button type="button" variant="secondary" size="sm" className="ml-auto" onClick={() => setAdding(true)}>
-            <Plus />
-            Add category
-          </Button>
-        ) : null}
-        <p className="basis-full text-2xs text-text-subtle">
+      <div className="space-y-s2">
+        {/* Header row: the workflow switch on the left, the tab's primary
+            action ("+ Add category", owner 2026-11-16: standard-size primary,
+            not a small outline pill) on the right. */}
+        <div className="flex flex-wrap items-center justify-between gap-s3">
+          <div className="flex flex-wrap items-center gap-s3">
+            <Label htmlFor={toggleId} className="text-2xs text-text-muted">
+              Workflow
+            </Label>
+            <ToggleGroup
+              id={toggleId}
+              type="single"
+              size="sm"
+              value={workflow}
+              aria-label="Workflow"
+              onValueChange={(next) => {
+                if ((WORKFLOW_IDS as readonly string[]).includes(next)) setWorkflow(next as WorkflowId);
+              }}
+            >
+              <ToggleGroupItem value="PDD">Standard PDD</ToggleGroupItem>
+              <ToggleGroupItem value="OEM">OEM</ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+          {canWrite && categories ? (
+            <Button
+              type="button"
+              variant="primary"
+              size="md"
+              data-testid="add-category-button"
+              aria-haspopup="dialog"
+              onClick={() => setAdding(true)}
+            >
+              <Plus aria-hidden="true" />
+              Add category
+            </Button>
+          ) : null}
+        </div>
+        <p className="text-2xs text-text-subtle">
           Earliest start of every step over the precedence graph, from the category template only: capacity is not
           applied. Week 0 is the project start.{canWrite ? ` ${TEMPLATE_COPY.editorIntro}` : ''}
         </p>

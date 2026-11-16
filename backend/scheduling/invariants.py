@@ -106,6 +106,30 @@ What is assertable at the pure-function level (2026-09-27 revision):
     I37c (P36) a re-rank write: `check_i37c_placement` over the band's id
         order before / after the write. I37d (preview input == input rebuilt
         after confirm) is service-side
+    I38 (P37, ADR 0052) one week per solve: `check_i38_run_week` /
+        `validate_invariants(run_week=...)` — the stored run row's
+        `current_week` equals the input's `current_week`, and that week is in
+        the I41 domain. The solvers read the week only from the input (no
+        import-bound default exists since P37-T03), so the outcomes are at it.
+    I41 (P37) week domain: `check_i41_week_domain` — `1 <= week <= 52`. Run
+        on `run_week` when given and on the input week under `live_state`
+        (an engine-only input may solve from a week past 52, e.g. the horizon-
+        overflow golden scenarios, so it is not run on every input).
+    I45 (P40, ADR 0054) every pin the input applies (not skipped, not held,
+        Not Started unless frozen) sits on its effective window with
+        `pinned = true`, `duration_weeks = eff` and its resource; a window past
+        the horizon makes the project left_out with no row; `pin_lapsed` iff
+        some window differs from its pin; no other row is pinned
+    I47 (P40) (a) `manual_overlap` iff `a < release + 1 - o`, release from the
+        rows with `G = max(end, release)` for a pinned step, OR on the outcome;
+        (b) I3 / I15 / I21 / I22 / I27 / I28 hold for unpinned steps with that
+        `G`; (d) I1 / I2 accept a pinned placement only with ENG_CONFLICT /
+        OVERLAP, including two placements of one project (a lab pin also only
+        when no eligible chamber had room). (c) greedy = CP-SAT on pinned rows
+        is the solver-comparison's / test suite's
+    I48 (P40) (b) `check_pin_load_neutrality` (run with I8): pins change no
+        `duration_weeks` / `skipped` on a common row and no `progress_pct`;
+        (d) I10 for a frozen project with pins recomputes its frozen walk
     I13 (health badge), I14 (run immutability) and I17 (capacity supply) are
     API/DB-side invariants with nothing to assert on a `ScheduleOutput`; they
     are the workflow-auditor's to check against the live API (P9-T06).
@@ -143,13 +167,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import domain_constants as dc
 from scheduling import hubs
 from scheduling.greedy import _band_rank_key, category_maps_for, run_greedy_sgs
 from scheduling.types import (
     LAB_CONSUMPTION_PER_PROJECT_WEEK,
+    PLAN_WEEK_MAX,
+    PLAN_WEEK_MIN,
     ProjectInput,
     ProjectScheduleOutcome,
     ScheduleInput,
@@ -208,13 +234,17 @@ class _Ctx:
     lead_time_table: Mapping[tuple[str, str, str], int]
     # R33-8: the validated category list (None when invalid: I30 reports it).
     categories: CategoryMaps | None = None
+    # ADR 0054 (I45): per project, `step_id -> (ms, me)` of the pins the run
+    # must place (`_input_pinned_steps`). Empty without pins.
+    pins: Mapping[str, Mapping[str, tuple[int, int]]] = field(default_factory=dict)
 
     def plan(self, project_id: str) -> ProjectPlan | None:
         return self.plans.get(project_id)
 
     def is_fixed(self, project_id: str, step_id: str) -> bool:
         """A placement the scheduler may never move: any step of a frozen
-        project, or an anchored (Done / In Progress / Blocked) step."""
+        project, an anchored (Done / In Progress / Blocked) step, or (ADR
+        0054) a step placed on a manual pin."""
 
         project = self.projects.get(project_id)
         if project is None:
@@ -225,7 +255,18 @@ class _Ctx:
         if plan is None:
             return False
         sp = plan.steps.get(step_id)
-        return bool(sp is not None and sp.anchored)
+        return bool(sp is not None and sp.anchored) or self.is_pinned(project_id, step_id)
+
+    def pinned_ids(self, project_id: str) -> frozenset[str]:
+        """ADR 0054 (I45): the steps of `project_id` the run must place on a
+        pin, derived from the **input** (`_input_pinned_steps`), never from
+        the rows' `pinned` flag."""
+
+        return frozenset(self.pins.get(project_id, ()))
+
+    def is_pinned(self, project_id: str, step_id: str) -> bool:
+        found = self.pins.get(project_id)
+        return found is not None and step_id in found
 
     def books_nothing(self, project_id: str, step: StepSchedule) -> bool:
         """Rows that legitimately carry no resource: skipped, held (Blocked
@@ -327,12 +368,44 @@ def _build_ctx(
             project, wf, table, leader_fte=leader_fte_of(project, fte_by_engineer)
         )
 
-    return (
-        _Ctx(
-            schedule_input, schedule_output, projects, outcomes, plans, workflows, table, categories
-        ),
-        violations,
+    ctx = _Ctx(
+        schedule_input, schedule_output, projects, outcomes, plans, workflows, table, categories
     )
+    pins = {
+        pid: found
+        for pid in sorted(plans)
+        if (found := _input_pinned_steps(ctx, projects[pid], plans[pid]))
+    }
+    if pins:
+        ctx = replace(ctx, pins=pins)
+    return ctx, violations
+
+
+def _input_pinned_steps(
+    ctx: _Ctx, project: ProjectInput, plan: ProjectPlan
+) -> dict[str, tuple[int, int]]:
+    """ADR 0054 / I45, from the input rows (independently of
+    `analyse_project`'s pin filter): the first pin per step (sorted), on a
+    step that is not skipped by the inputs (`_input_says_skipped`), not in a
+    Blocked hold, and (for a non-frozen project) whose input stage is Not
+    Started (no progress row = Not Started). `(ms, me)` as given."""
+
+    if not project.step_pins:
+        return {}
+    stage: dict[str, str] = {}
+    for pr in project.step_progress:
+        stage.setdefault(pr.step_id, pr.status)
+    out: dict[str, tuple[int, int]] = {}
+    for pin in sorted(project.step_pins, key=lambda r: (r.step_id, repr(r.start_week))):
+        sid = pin.step_id
+        if sid in out or _input_says_skipped(ctx, project, sid) is not False:
+            continue
+        if sid in plan.held_step_ids:
+            continue
+        if not project.frozen and stage.get(sid, STATUS_NOT_STARTED) != STATUS_NOT_STARTED:
+            continue
+        out[sid] = (pin.start_week, pin.end_week)
+    return out
 
 
 # --- Public entry point -------------------------------------------------------
@@ -344,15 +417,25 @@ def validate_invariants(
     *,
     check_determinism: bool = True,
     live_state: bool = False,
+    run_week: int | None = None,
 ) -> tuple[InvariantViolation, ...]:
     """Run every assertable invariant check and return every violation found,
     in a fixed, deterministic order. `check_determinism=False` skips I8 (which
     re-runs `run_greedy_sgs` on `schedule_input` twice internally).
     `live_state=True` (ADR 0050, R36-9) also runs I37b, which holds only on an
     input built from the live DB (never on What-if / import inputs, whose
-    added or re-banded projects are legitimately unranked)."""
+    added or re-banded projects are legitimately unranked), and I41 on the
+    input week (P37). `run_week` (P37, I38) is the stored
+    `ScheduleRun.current_week` of the run this output was persisted as; when
+    given, I38 (it equals the input week) and I41 (it is in 1..52) run."""
 
+    violations_pre: list[InvariantViolation] = []
+    if run_week is not None:
+        violations_pre.extend(check_i38_run_week(schedule_input, run_week))
+    elif live_state:
+        violations_pre.extend(check_i41_week_domain(schedule_input.current_week))
     ctx, violations = _build_ctx(schedule_input, schedule_output)
+    violations[:0] = violations_pre
     violations.extend(_check_i1_engineer_conflicts(ctx))
     violations.extend(_check_i2_chamber_overlap(ctx))
     violations.extend(_check_i3_precedence(ctx, tag="I3"))
@@ -363,6 +446,7 @@ def validate_invariants(
     if check_determinism:
         violations.extend(check_scheduler_determinism(schedule_input))
         violations.extend(check_wait_invariance(schedule_input))
+        violations.extend(check_pin_load_neutrality(schedule_input))
     violations.extend(_check_i9_within_year_derivation(ctx))
     violations.extend(_check_i10_frozen_dates_immutable(ctx))
     violations.extend(_check_i11_done_stages_immutable(ctx))
@@ -380,7 +464,50 @@ def validate_invariants(
     if live_state:
         violations.extend(check_i37b_band_ranks_dense(schedule_input.projects))
     violations.extend(_check_i35_no_empty_project(ctx))
+    violations.extend(_check_i45_pins_placed(ctx))
+    violations.extend(_check_i47a_manual_overlap(ctx))
     return tuple(violations)
+
+
+# --- I38 / I41: the week a run is solved at (P37, ADR 0052) -------------------
+
+
+def check_i41_week_domain(week: object) -> list[InvariantViolation]:
+    """I41: `1 <= week <= 52` (`PLAN_WEEK_MIN..PLAN_WEEK_MAX`), an int and
+    not a bool. Returns the violation instead of raising (validator style);
+    `scheduling.types.require_plan_week` is the raising form."""
+
+    if isinstance(week, bool) or not isinstance(week, int):
+        return [InvariantViolation("I41", f"week {week!r} is not an int")]
+    if not PLAN_WEEK_MIN <= week <= PLAN_WEEK_MAX:
+        return [
+            InvariantViolation(
+                "I41", f"week {week} is outside {PLAN_WEEK_MIN}..{PLAN_WEEK_MAX}", week=week
+            )
+        ]
+    return []
+
+
+def check_i38_run_week(schedule_input: ScheduleInput, run_week: object) -> list[InvariantViolation]:
+    """I38: a `ScheduleRun` stores `current_week` equal to its input's
+    `current_week`, and that week is a plan week (I41). `run_week` is the
+    stored row's value; `schedule_input` the input the run was solved with
+    (as rebuilt from the row by the caller). Every outcome of the pure
+    solvers is computed at `schedule_input.current_week` (the only week they
+    read), so equality here is the whole of I38 the engine can assert; the
+    "read once at row creation" half is service-side (P37-T04)."""
+
+    violations = check_i41_week_domain(run_week)
+    if run_week != schedule_input.current_week:
+        violations.append(
+            InvariantViolation(
+                "I38",
+                f"run stores week {run_week!r} but its input was solved at week "
+                f"{schedule_input.current_week}",
+                week=run_week if isinstance(run_week, int) else None,
+            )
+        )
+    return violations
 
 
 # --- I1: engineer double-booking -------------------------------------------
@@ -411,9 +538,29 @@ def _check_i1_engineer_conflicts(ctx: _Ctx) -> list[InvariantViolation]:
             pid_a, sid_a, start_a, end_a = entries[i]
             for j in range(i + 1, len(entries)):
                 pid_b, sid_b, start_b, end_b = entries[j]
-                if pid_a == pid_b:
-                    continue
                 if not (start_a <= end_b and start_b <= end_a):
+                    continue
+                if pid_a == pid_b:
+                    # ADR 0054 (I1 amended, I47(d)): two fixed design placements
+                    # of one project sharing a week need ENG_CONFLICT when one
+                    # of them is a pin; otherwise one project's own steps are
+                    # not I1's concern (unchanged).
+                    if not (ctx.is_pinned(pid_a, sid_a) or ctx.is_pinned(pid_b, sid_b)):
+                        continue
+                    if not (ctx.outcomes.get(pid_a) and ctx.outcomes[pid_a].eng_conflict):
+                        violations.append(
+                            InvariantViolation(
+                                invariant="I1",
+                                description=(
+                                    f"engineer {engineer_id!r} is booked twice by project "
+                                    f"{pid_a!r} ({sid_a} [{start_a},{end_a}] and {sid_b} "
+                                    f"[{start_b},{end_b}]), a manual pin is involved, but the "
+                                    "outcome has eng_conflict=False (ADR 0054, F4)"
+                                ),
+                                project_id=pid_a,
+                                engineer_id=engineer_id,
+                            )
+                        )
                     continue
                 fixed = ctx.is_fixed(pid_a, sid_a) or ctx.is_fixed(pid_b, sid_b)
                 if not fixed:
@@ -515,7 +662,8 @@ def _check_i2_anchored_room(
     max_by_chamber: dict[str, int],
 ) -> list[InvariantViolation]:
     """I2 per DOMAIN_RULES "Gate remediation rulings" #1: an anchored (non-
-    frozen Done / In Progress) lab step that sits in an over-capacity chamber
+    frozen Done / In Progress) or (ADR 0054, I47(d)) pinned (any project)
+    lab step that sits in an over-capacity chamber
     week is a violation if another eligible chamber (lab region + allowed
     stage) had room for every week it consumes. Usage only grows during a run,
     so room in the final output proves room at booking time; the check never
@@ -524,13 +672,17 @@ def _check_i2_anchored_room(
     violations: list[InvariantViolation] = []
     for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
         project = ctx.projects.get(outcome.project_id)
-        if project is None or project.frozen or project.hub not in hubs.HUB_LAB_REGION:
+        if project is None or project.hub not in hubs.HUB_LAB_REGION:
+            continue
+        if project.frozen and not ctx.pinned_ids(outcome.project_id):
             continue
         region = hubs.HUB_LAB_REGION[project.hub]
         for step in outcome.steps:
             chamber_id = step.assigned_chamber_id
             if step.kind != "lab" or chamber_id is None:
                 continue
+            if project.frozen and not ctx.is_pinned(outcome.project_id, step.step_id):
+                continue  # ADR 0054 (I47(d)): of a frozen project, only pins
             if not ctx.is_fixed(outcome.project_id, step.step_id):
                 continue
             weeks = ctx.effective_weeks(outcome.project_id, step)
@@ -620,7 +772,13 @@ def _check_i3_precedence(ctx: _Ctx, *, tag: str) -> list[InvariantViolation]:
                     continue  # reported by I5
                 pred_sp = plan.steps.get(pred_id)
                 release_g = pred.end_week
-                if pred_sp is not None and pred_sp.overlap_weeks > 0 and not pred_sp.skipped:
+                if (
+                    pred_sp is not None
+                    and not pred_sp.skipped
+                    and (pred_sp.overlap_weeks > 0 or ctx.is_pinned(pid, pred_id))
+                ):
+                    # ADR 0054 (I47(b)): a pinned predecessor passes on
+                    # G = max(end, release) too.
                     # ADR 0043: an overlapping predecessor passes its own
                     # predecessors' end on (G); its own end alone is not enough.
                     if g is None:
@@ -634,6 +792,7 @@ def _check_i3_precedence(ctx: _Ctx, *, tag: str) -> list[InvariantViolation]:
 def _precedence_violation(
     tag: str, pid: str, cur: StepSchedule, prev: StepSchedule, release_g: int | None = None
 ) -> InvariantViolation:
+    # A pinned predecessor's G (ADR 0054) is reported with the overlap wording.
     if release_g is None or release_g == prev.end_week:
         description = (
             f"project {pid!r}: step {cur.step_id!r} (start_week={cur.start_week}) starts "
@@ -663,8 +822,10 @@ def _row_releases(
     a row's end with no overlap, and `max(end, release(q))` with one.
     `release(s)` is `max(G(q) for q in P(s))` (`frontier - 1` with none).
     A step whose predecessors' `G` is unknown (a row missing — I5's to report)
-    gets no entry. Returns `(g, release, rows_by_step_id)`."""
+    gets no entry. Returns `(g, release, rows_by_step_id)`. ADR 0054 (I47):
+    a step the input pins passes on `max(end, release)` as well."""
 
+    pinned = ctx.pinned_ids(outcome.project_id)
     by_id = {s.step_id: s for s in outcome.steps}
     frontier = first_step_frontier(plan.project, ctx.schedule_input.current_week)
     g: dict[str, int] = {}
@@ -677,7 +838,7 @@ def _row_releases(
         row = by_id.get(sid)
         if row is None:
             continue
-        if row.skipped or sp.skipped or sp.overlap_weeks == 0:
+        if row.skipped or sp.skipped or (sp.overlap_weeks == 0 and sid not in pinned):
             g[sid] = row.end_week
         elif sid in release:
             g[sid] = max(row.end_week, release[sid])
@@ -1308,6 +1469,9 @@ def _check_i10_frozen_dates_immutable(ctx: _Ctx) -> list[InvariantViolation]:
         real = [s for s in outcome.steps if not s.skipped]
         if not real:
             continue
+        if ctx.pinned_ids(project.project_id):
+            violations.extend(_check_i10_frozen_with_pins(ctx, project, outcome))
+            continue
         first_step = min(real, key=lambda s: (s.start_week, s.sequence_order))
         if first_step.start_week != project.actual_start_week:
             violations.append(
@@ -1323,6 +1487,57 @@ def _check_i10_frozen_dates_immutable(ctx: _Ctx) -> list[InvariantViolation]:
                 )
             )
     return violations
+
+
+def _check_i10_frozen_with_pins(
+    ctx: _Ctx, project: ProjectInput, outcome: ProjectScheduleOutcome
+) -> list[InvariantViolation]:
+    """I10 for a frozen project with manual pins (ADR 0054, R40-10, I48(d)):
+    its dates are a function of its frozen inputs only. Every row equals the
+    frozen rule recomputed here from `actual_start_week`, the effective
+    durations and the pins (exact, never lapsed): a pinned step sits on its
+    pin and passes on `max(end, release)`; any other step starts at
+    `release + 1` (no wait, no overlap, no stretch in a frozen project); a
+    skipped step sits at its release. With a pin the first step need not
+    start at `actual_start_week`, so this replaces the plain check."""
+
+    plan = ctx.plan(project.project_id)
+    if plan is None or project.actual_start_week is None:
+        return []
+    pins = ctx.pins.get(project.project_id, {})
+    frontier = project.actual_start_week
+    g: dict[str, int] = {}
+    expected: dict[str, tuple[int, int]] = {}
+    for sid in plan.workflow.walk_order:
+        sp = plan.steps[sid]
+        preds = sp.step.predecessor_ids
+        release = max((g[p] for p in preds), default=frontier - 1)
+        if sp.skipped:
+            expected[sid] = (release, release)
+            g[sid] = release
+        elif sid in pins:
+            expected[sid] = pins[sid]
+            g[sid] = max(pins[sid][1], release)
+        else:
+            expected[sid] = (release + 1, release + sp.duration)
+            g[sid] = release + sp.duration
+    out: list[InvariantViolation] = []
+    for step in sorted(outcome.steps, key=lambda s: (s.sequence_order, s.step_id)):
+        want = expected.get(step.step_id)
+        if want is not None and (step.start_week, step.end_week) != want:
+            out.append(
+                InvariantViolation(
+                    invariant="I10",
+                    description=(
+                        f"frozen project {project.project_id!r} step {step.step_id!r} is at "
+                        f"[{step.start_week},{step.end_week}] but its frozen inputs (actual "
+                        f"start {frontier}, durations, manual pins) give [{want[0]},{want[1]}]"
+                    ),
+                    project_id=project.project_id,
+                    step_id=step.step_id,
+                )
+            )
+    return out
 
 
 # --- I11: Done stages are immutable history ----------------------------------
@@ -1547,6 +1762,7 @@ def _check_i21_effective_duration_span(ctx: _Ctx) -> list[InvariantViolation]:
                 or step.skipped
                 or sp.status == STATUS_DONE
                 or step.step_id in plan.held_step_ids
+                or ctx.is_pinned(pid, step.step_id)  # ADR 0054: I45 governs a pinned row
             ):
                 continue
 
@@ -1581,7 +1797,7 @@ def _check_i21_effective_duration_span(ctx: _Ctx) -> list[InvariantViolation]:
             if any(r is None for r in preds):
                 continue  # I5 reports the missing row
             pred_end = max(r.end_week for r in preds if r is not None) if preds else frontier - 1
-            if plan.has_overlap:
+            if plan.has_overlap or ctx.pinned_ids(pid):
                 # ADR 0043: the tail starts at `gate(s)` where it used
                 # `pred_end + 1` (identical with no overlap anywhere).
                 _g, release, rows = _row_releases(ctx, plan, outcome)
@@ -1638,6 +1854,7 @@ def _check_i22_start_not_before(ctx: _Ctx) -> list[InvariantViolation]:
                 or sp.status != STATUS_NOT_STARTED
                 or sp.start_not_before_week is None
                 or step.step_id in plan.held_step_ids
+                or ctx.is_pinned(pid, step.step_id)  # ADR 0054: unpinned steps only
             ):
                 continue
             if step.start_week < sp.start_not_before_week:
@@ -1734,6 +1951,7 @@ def _not_started_steps(ctx: _Ctx) -> list[tuple[ProjectScheduleOutcome, ProjectP
                 or step.skipped
                 or sp.status != STATUS_NOT_STARTED
                 or step.step_id in plan.held_step_ids
+                or ctx.is_pinned(outcome.project_id, step.step_id)  # ADR 0054 / I47(b)
             ):
                 continue
             out.append((outcome, plan, step))
@@ -2221,3 +2439,222 @@ def check_i37c_placement(
     elif pos != len(after_order) - 1:
         fail(f"{project_id!r} is not last in its band")
     return tuple(violations)
+
+
+# --- I45 / I47 / I48: manual step pins (ADR 0054 as ruled at P40-T02) --------------------
+
+
+def _check_i45_pins_placed(ctx: _Ctx) -> list[InvariantViolation]:
+    """I45: for every project with rows in the run, every pin the input says
+    applies (`_Ctx.pins`: not skipped, not held, Not Started unless frozen)
+    sits on its effective window `(a, b)` — `(ms, me)` when frozen or `ms >=
+    current_week`, else `(cw, cw + L - 1)` — with `pinned = true`,
+    `duration_weeks = eff(p, s)` (from the input), the leader on a design row
+    and a chamber on a lab row; a window ending past `horizon_weeks` makes the
+    project `left_out` with no row for the step; `pin_lapsed` is true iff some
+    such window differs from its pin; and no other row has `pinned = true`.
+
+    A project that dead-ended on a lab step with no eligible chamber
+    (`no_chamber_step_id`, R40-6) is not required to carry its pinned rows,
+    exactly as `_required_anchored_rows` exempts its anchored ones; a row it
+    does carry must still be right."""
+
+    violations: list[InvariantViolation] = []
+    cw = ctx.schedule_input.current_week
+    horizon = ctx.schedule_input.horizon_weeks
+    for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
+        pid = outcome.project_id
+        project = ctx.projects.get(pid)
+        if project is None or outcome.excluded or outcome.data_error is not None:
+            continue
+        if not outcome.steps:
+            continue  # "every project with rows in it" (no_leader, empty LEFT_OUT)
+        pins = ctx.pins.get(pid, {})
+        rows = {s.step_id: s for s in outcome.steps}
+
+        def bad(msg: str, sid: str | None = None, pid: str = pid) -> None:
+            violations.append(
+                InvariantViolation(
+                    invariant="I45",
+                    description=f"project {pid!r}" + (f" step {sid!r}" if sid else "") + f": {msg}",
+                    project_id=pid,
+                    step_id=sid,
+                )
+            )
+
+        lapsed = False
+        placed: set[str] = set()
+        for sid in sorted(pins):
+            ms, me = pins[sid]
+            if project.frozen or ms >= cw:
+                a, b = ms, me
+            else:
+                a, b = cw, cw + (me - ms)
+            lapsed = lapsed or (a, b) != (ms, me)
+            row = rows.get(sid)
+            if b > horizon:
+                if not outcome.left_out:
+                    bad(
+                        f"its pin window {a}..{b} ends past horizon week {horizon} but the "
+                        "project is not left_out",
+                        sid,
+                    )
+                if row is not None:
+                    bad(f"its pin window {a}..{b} ends past the horizon but it has a row", sid)
+                continue
+            placed.add(sid)
+            if row is None:
+                if outcome.no_chamber_step_id is None:
+                    bad(f"pinned to {a}..{b} but has no row in the run", sid)
+                continue
+            if (row.start_week, row.end_week) != (a, b):
+                bad(
+                    f"is at [{row.start_week},{row.end_week}] but its pin ({ms}, {me}) at "
+                    f"week {cw} places it on [{a},{b}]",
+                    sid,
+                )
+            if not row.pinned:
+                bad("sits on a pin but its row has pinned=False", sid)
+            eff = _input_eff(ctx, project, sid)
+            if eff is not None and row.duration_weeks != eff:
+                bad(
+                    f"duration_weeks={row.duration_weeks} but a pin is a placement, not "
+                    f"effort: it must stay eff={eff} (R40-3)",
+                    sid,
+                )
+            if row.kind == "design" and row.assigned_engineer_id != project.leader_engineer_id:
+                bad(
+                    f"design pin books {row.assigned_engineer_id!r}, not the leader "
+                    f"{project.leader_engineer_id!r}",
+                    sid,
+                )
+            if row.kind == "lab" and row.assigned_chamber_id is None:
+                bad("lab pin books no chamber", sid)
+        if outcome.pin_lapsed != lapsed:
+            bad(f"pin_lapsed={outcome.pin_lapsed} but the input's pins give {lapsed}")
+        for row in sorted(outcome.steps, key=lambda r: (r.sequence_order, r.step_id)):
+            if row.pinned and row.step_id not in placed:
+                bad("has pinned=True but the input places no pin on it", row.step_id)
+    return violations
+
+
+def _check_i47a_manual_overlap(ctx: _Ctx) -> list[InvariantViolation]:
+    """I47(a): a pinned row `s` with start `a` has `manual_overlap = true` iff
+    `a < release(s) + 1 - o(s)`, `release` from the run's own rows with `G` of
+    a pinned predecessor = `max(end, release)` (`_row_releases`), `o(s)` the
+    template overlap (0 in a frozen project); a row whose release is unknown
+    (a predecessor row missing) is not flagged. Every other row has
+    `manual_overlap = false`, and the outcome's flag is the OR over its rows."""
+
+    violations: list[InvariantViolation] = []
+    for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
+        pid = outcome.project_id
+        plan = ctx.plan(pid)
+        any_flag = any(r.manual_overlap for r in outcome.steps)
+        if outcome.manual_overlap != any_flag:
+            violations.append(
+                InvariantViolation(
+                    "I47",
+                    f"project {pid!r}: manual_overlap={outcome.manual_overlap} but the OR over "
+                    f"its rows is {any_flag}",
+                    project_id=pid,
+                )
+            )
+        if not any_flag and not ctx.pinned_ids(pid):
+            continue
+        release: dict[str, int] = {}
+        if plan is not None:
+            release = _row_releases(ctx, plan, outcome)[1]
+        for row in sorted(outcome.steps, key=lambda r: (r.sequence_order, r.step_id)):
+            expected = False
+            if plan is not None and row.pinned and ctx.is_pinned(pid, row.step_id):
+                sp = plan.steps.get(row.step_id)
+                rel = release.get(row.step_id)
+                if sp is not None and rel is not None:
+                    o = 0 if plan.project.frozen else sp.overlap_weeks
+                    expected = row.start_week < rel + 1 - o
+            if row.manual_overlap != expected:
+                violations.append(
+                    InvariantViolation(
+                        "I47",
+                        f"project {pid!r} step {row.step_id!r}: manual_overlap="
+                        f"{row.manual_overlap} but start {row.start_week} against release "
+                        f"{release.get(row.step_id)!r} gives {expected}",
+                        project_id=pid,
+                        step_id=row.step_id,
+                    )
+                )
+    return violations
+
+
+def without_pins(schedule_input: ScheduleInput) -> ScheduleInput:
+    """`schedule_input` with every `step_pins` emptied (I48(b)'s comparison
+    input). Returned as is when it has no pin."""
+
+    if not any(p.step_pins for p in schedule_input.projects):
+        return schedule_input
+    return replace(
+        schedule_input,
+        projects=tuple(
+            replace(p, step_pins=()) if p.step_pins else p for p in schedule_input.projects
+        ),
+    )
+
+
+def check_pin_load_neutrality(schedule_input: ScheduleInput) -> tuple[InvariantViolation, ...]:
+    """I48(b): two inputs that differ only in pins give identical
+    `duration_weeks` / `skipped` on every row present in both runs and
+    identical `progress_pct` (the I12 weights). Runs greedy on the input and
+    on `without_pins(input)`. A no-op (no re-run) without pins; a
+    `ValueError` (malformed input) is not reported here. I25 demand and
+    `effort_weeks` are computed from live rows that carry no pin
+    (`scheduling.demand`, `scheduling.effort_split`), so they cannot differ."""
+
+    stripped = without_pins(schedule_input)
+    if stripped is schedule_input:
+        return ()
+    try:
+        with_p = run_greedy_sgs(schedule_input)
+        no_p = run_greedy_sgs(stripped)
+    except ValueError:
+        return ()
+    return tuple(_compare_pin_neutral(with_p, no_p))
+
+
+def _compare_pin_neutral(
+    with_pins: ScheduleOutput, without: ScheduleOutput
+) -> list[InvariantViolation]:
+    base = {o.project_id: o for o in without.project_outcomes}
+    violations: list[InvariantViolation] = []
+    for outcome in sorted(with_pins.project_outcomes, key=lambda o: o.project_id):
+        other = base.get(outcome.project_id)
+        if other is None:
+            continue
+        pid = outcome.project_id
+        if outcome.progress_pct != other.progress_pct:
+            violations.append(
+                InvariantViolation(
+                    "I48",
+                    f"project {pid!r}: progress_pct {outcome.progress_pct!r} with pins but "
+                    f"{other.progress_pct!r} without (a pin must not weigh progress)",
+                    project_id=pid,
+                )
+            )
+        rows = {s.step_id: s for s in other.steps}
+        for step in sorted(outcome.steps, key=lambda r: (r.sequence_order, r.step_id)):
+            row = rows.get(step.step_id)
+            if row is None:
+                continue
+            if (step.duration_weeks, step.skipped) != (row.duration_weeks, row.skipped):
+                violations.append(
+                    InvariantViolation(
+                        "I48",
+                        f"project {pid!r} step {step.step_id!r}: duration_weeks="
+                        f"{step.duration_weeks} (skipped={step.skipped}) with pins but "
+                        f"{row.duration_weeks} (skipped={row.skipped}) without (a pin is a "
+                        "placement, not effort)",
+                        project_id=pid,
+                        step_id=step.step_id,
+                    )
+                )
+    return violations

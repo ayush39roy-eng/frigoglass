@@ -14,18 +14,24 @@ import { ZOOM_MAX_PX, ZOOM_MIN_PX, ZOOM_STEP_PX, clampZoomPx } from '../lib/gant
 export function ZoomControl({
   value,
   onChange,
+  compact = false,
 }: {
   value: number;
   onChange: (next: number) => void;
+  /** P40-T01: no label line (screen-reader label only) and a 28 px row. */
+  compact?: boolean;
 }): React.JSX.Element {
   const id = React.useId();
   const px = clampZoomPx(value);
   return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={id} className="text-2xs text-text-muted">
+    <div className={compact ? 'flex items-center' : 'flex flex-col gap-1'}>
+      <label htmlFor={id} className={compact ? 'sr-only' : 'text-2xs text-text-muted'}>
         Zoom
       </label>
-      <div className="flex h-8 items-center gap-1 rounded-md border border-border bg-surface px-1">
+      <div
+        className={`flex items-center gap-1 rounded-md border border-border bg-surface px-1 ${compact ? 'h-7' : 'h-8'}`}
+        title="Zoom (px per week)"
+      >
         <Button
           type="button"
           variant="ghost"

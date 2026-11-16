@@ -62,6 +62,16 @@ in `⋃R(q), q in P(s)` (exclusive ends: `start >= end_excl(r) - o(s)`), plus
 The `frontier` floor of `gate(s)` is the start variables' lower bound. A
 skipped step is emitted at `release` = max over its `R` set.
 
+Manual step pins (ADR 0054, R40-12): a pin is a fixed placement, pre-booked
+by the shared `greedy.prebook_anchored_steps` (non-frozen) or the shared
+frozen walk, so greedy and CP-SAT emit identical pinned rows and identical
+`pin_lapsed` (I47(c)). The model adds no precedence constraint into a pinned
+step; a project with a pin uses the release sets, where a pinned step's set
+is `{q} ∪ ⋃R(p)`, so its successors start after `max(end, release)` (+ wait).
+A pin that could not be pre-booked (window past the horizon, lab pin with no
+eligible chamber) sends the project to the greedy walk (LEFT_OUT).
+`manual_overlap` is evaluated after the solve on this solve's own rows.
+
 Objective weighting: ADR 0005 (documented gap-fill, not DOMAIN_RULES.md text)
 -- `PRIORITY_OBJECTIVE_WEIGHT = {P1:4, P2:3, P3:2, P4:1, Q:0}` times
 `within_year`, plus a coarse presence tie-break scaled so it can never
@@ -83,7 +93,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ortools.sat.python import cp_model
 
@@ -117,6 +127,8 @@ from scheduling.workflow import (
     ProjectPlan,
     compute_progress_pct,
     first_step_frontier,
+    manual_overlap_by_row,
+    pins_lapsed,
     unconstrained_end_week,
 )
 
@@ -311,8 +323,12 @@ def run_cp_sat(
         assign: dict[tuple[str, str], cp_model.IntVar] = {}
 
         # ADR 0043: only a project with an overlap uses the release sets; every
-        # other project is modelled exactly as before P32.
-        sources = plan.release_sources() if plan.has_overlap else None
+        # other project is modelled exactly as before P32. ADR 0054 (R40-7 /
+        # R40-12): so does a project with a pin. A pin is pre-booked (fixed,
+        # `prebooked`), so no precedence constraint goes *into* it, and its
+        # release set `{q} ∪ ⋃R(p)` constrains its successors from
+        # `max(end, release) + 1 (+ w)`.
+        sources = plan.release_sources() if plan.has_overlap or plan.pinned_step_ids else None
 
         def release_terms(
             ids: Iterable[str],
@@ -652,10 +668,16 @@ def _needs_greedy(ctx: RunContext, plan: ProjectPlan, prebooked: dict[str, _Plac
         return True
     region = _lab_region_for_hub(plan.project.hub)
     searchable = 0
+    pinned = plan.pinned_step_ids
     for sid in plan.workflow.walk_order:
         sp = plan.steps[sid]
         if sp.skipped or sid in prebooked:
             continue
+        if sid in pinned:
+            # ADR 0054: a pin that could not be pre-booked (its window ends
+            # past the horizon, or a lab pin with no eligible chamber) makes
+            # the project LEFT_OUT; the greedy walk reports it.
+            return True
         if sp.anchored:
             return True  # anchored behind a not-started predecessor
         if sp.step.kind == "lab" and not _eligible_chambers(ctx.chambers_by_id, region, sid):
@@ -758,6 +780,11 @@ def _extract_outcome(
     unconstrained = unconstrained_end_week(plan, current_week)
     progress_pct = compute_progress_pct(plan)
     eng_conflict, overlap = pre_flags
+    # ADR 0054: pins are pre-booked fixed placements shared with greedy
+    # (identical rows, identical `pin_lapsed`, I47(c)); `manual_overlap` is
+    # evaluated on this solve's own rows (R40-12).
+    pinned = plan.pinned_step_ids
+    lapsed = pins_lapsed(plan, current_week) if pinned else False
 
     if not solver.Value(pv.present):
         # DOMAIN_RULES "Gate remediation rulings" #2: in-flight work is never
@@ -774,10 +801,12 @@ def _extract_outcome(
                 plan.steps[step.step_id].duration,
                 pv.prebooked[step.step_id].engineer_id,
                 pv.prebooked[step.step_id].chamber_id,
+                pinned=step.step_id in pinned,
             )
             for step in plan.workflow.steps
             if step.step_id in pv.prebooked
         )
+        kept, manual_overlap = _with_manual_overlap(plan, kept, current_week)
         return ProjectScheduleOutcome(
             project_id=pid,
             excluded=False,
@@ -797,6 +826,8 @@ def _extract_outcome(
             projected_end_week=None,
             blocked=plan.blocked,
             progress_pct=progress_pct,
+            manual_overlap=manual_overlap,
+            pin_lapsed=lapsed,
         )
 
     def value(e: cp_model.IntVar | int) -> int:
@@ -824,6 +855,7 @@ def _extract_outcome(
                     sp.duration,
                     pl.engineer_id,
                     pl.chamber_id,
+                    pinned=sid in pinned,
                 )
             )
             continue
@@ -848,7 +880,7 @@ def _extract_outcome(
             )
         )
 
-    steps_tuple = tuple(steps_out)
+    steps_tuple, manual_overlap = _with_manual_overlap(plan, tuple(steps_out), current_week)
     non_skipped = [s for s in steps_tuple if not s.skipped]
     start_week = min(s.start_week for s in non_skipped)
     end_week = max(s.end_week for s in non_skipped)
@@ -875,4 +907,21 @@ def _extract_outcome(
         projected_end_week=projected,
         blocked=plan.blocked,
         progress_pct=progress_pct,
+        manual_overlap=manual_overlap,
+        pin_lapsed=lapsed,
     )
+
+
+def _with_manual_overlap(
+    plan: ProjectPlan, rows: tuple[StepSchedule, ...], current_week: int
+) -> tuple[tuple[StepSchedule, ...], bool]:
+    """R40-7 / I47(a) on this solve's rows: set `manual_overlap` on every
+    flagged pinned row; return the rows (same order) and the OR. A no-op,
+    returning the rows unchanged, for a project without a pinned row."""
+
+    if not any(r.pinned for r in rows):
+        return rows, False
+    frontier = first_step_frontier(plan.project, current_week)
+    flags = manual_overlap_by_row(plan, {r.step_id: r for r in rows}, frontier)
+    out = tuple(replace(r, manual_overlap=True) if flags.get(r.step_id) else r for r in rows)
+    return out, any(flags.values())

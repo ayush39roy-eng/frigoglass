@@ -32,6 +32,7 @@ from scheduling import (
     run_greedy_sgs,
     validate_invariants,
 )
+from scheduling._selftest_common import SELFTEST_WEEK
 from scheduling.greedy import _cat_not_allowed, _sort_key, prepare_run
 from scheduling.plan_import import _new_engineer_categories
 from scheduling.types import default_lead_times
@@ -86,7 +87,10 @@ def test_default_categories_are_the_seeded_seven() -> None:
     assert tuple(c.code for c in cats) == CATEGORY_RANK
     assert tuple(c.rank for c in cats) == (1, 2, 3, 4, 5, 6, 7)
     assert tuple(c.workflow_id for c in cats) == ("PDD",) * 4 + ("OEM",) * 3
-    assert ScheduleInput(projects=(), engineers=(), chambers=()).categories == cats
+    assert (
+        ScheduleInput(current_week=SELFTEST_WEEK, projects=(), engineers=(), chambers=()).categories
+        == cats
+    )
 
 
 def test_is_default_and_canonical_categories() -> None:

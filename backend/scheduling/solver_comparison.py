@@ -129,6 +129,11 @@ _OUTCOME_FIELDS: tuple[str, ...] = (
     "blocked",
     "progress_pct",
     "data_error",
+    # P40 (ADR 0054, I47(c)): `pin_lapsed` is a function of the input and must
+    # agree; `manual_overlap` depends on each solver's own predecessor rows.
+    # Both are False on both sides without pins, so no report changes.
+    "manual_overlap",
+    "pin_lapsed",
 )
 
 _STEP_FIELDS: tuple[str, ...] = (
@@ -140,6 +145,8 @@ _STEP_FIELDS: tuple[str, ...] = (
     "assigned_engineer_id",
     "assigned_chamber_id",
     "skipped",
+    "pinned",  # P40: pinned rows are shared fixed placements (I47(c))
+    "manual_overlap",
 )
 
 
@@ -277,6 +284,17 @@ def _classify(
     if project.frozen:
         return BUCKET_UNEXPLAINED_FROZEN
 
+    # P40 (ADR 0054, I47(c)): a pinned row and `pin_lapsed` come from the
+    # shared pre-booking, so any divergence on them is a real signal;
+    # `manual_overlap` is evaluated on each solver's own rows (R40-12), so it
+    # follows the open week choices of the predecessors.
+    if field_name == "manual_overlap":
+        return BUCKET_OPEN_CHOICE_WEEK_CHAMBER
+    if field_name in ("pinned", "pin_lapsed"):
+        return BUCKET_UNEXPLAINED
+    if is_step and _pinned_on_either_side(greedy_o, cp_sat_o, location[len("step:") :]):
+        return BUCKET_UNEXPLAINED
+
     # Bucket 3: the two solvers disagree on whether this project is LEFT_OUT at
     # all -> every field divergence for it traces to ADR 0005's objective.
     if greedy_o.left_out != cp_sat_o.left_out:
@@ -306,6 +324,12 @@ def _classify(
     # identical-by-construction on both sides. A divergence here is a real
     # signal.
     return BUCKET_UNEXPLAINED
+
+
+def _pinned_on_either_side(
+    greedy_o: ProjectScheduleOutcome, cp_sat_o: ProjectScheduleOutcome, step_id: str
+) -> bool:
+    return any(s.step_id == step_id and s.pinned for s in (*greedy_o.steps, *cp_sat_o.steps))
 
 
 def _compare_project(

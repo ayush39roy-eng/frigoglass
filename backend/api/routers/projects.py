@@ -754,7 +754,11 @@ async def stage_project_update(
         try:
             template_copy.append(
                 await sync_project_steps(
-                    db, project, target_hub.is_oem, recopy_template=category_changes
+                    db,
+                    project,
+                    target_hub.is_oem,
+                    recopy_template=category_changes,
+                    actor_user_id=current_user.user_id,
                 )
             )
         except WorkflowChangeWithProgress as exc:
@@ -1160,6 +1164,8 @@ async def preview_project_band_rank(
     Permission is the priority move's (404 out of scope, 403 without
     Registration WRITE or an Admin-level grant); the anchor must be ranked in
     the same band and in the caller's hub scope (else 422 `NOT_SAME_BAND`).
+    `to_rank` (1..n in the full band) is the alternative to an anchor: 422
+    `ANCHOR_AND_RANK` with one, 422 `BAD_RANK` out of range.
     422 `BOTH_ANCHORS`, 409 `NOT_RANKABLE`, 429 `RATE_LIMITED` (the priority
     preview's bucket), 503 `PREVIEW_TIMEOUT`. `result = "unchanged"` when the
     placement keeps the order."""
@@ -1176,7 +1182,7 @@ async def preview_project_band_rank(
     )
     return await preview_band_rank_move(
         db, project, current_user,
-        before=body.before_project_id, after=body.after_project_id,
+        before=body.before_project_id, after=body.after_project_id, to_rank=body.to_rank,
     )
 
 
@@ -1212,7 +1218,7 @@ async def move_project_band_rank(
     result = await confirm_band_rank_move(
         db, project, current_user,
         before=body.before_project_id, after=body.after_project_id,
-        preview_token=body.preview_token,
+        preview_token=body.preview_token, to_rank=body.to_rank,
     )
     response.headers.update(
         AutoRecalcOutcome(

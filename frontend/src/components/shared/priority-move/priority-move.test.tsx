@@ -97,6 +97,10 @@ async function chooseP2(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /Priority P1 for Cooler One\. Change priority/ }));
   await user.click(await screen.findByRole('menuitemradio', { name: /Priority band P2/ }));
   const dialog = await screen.findByRole('dialog', { name: 'Move to P2?' });
+  // Owner request 2026-11-17: the move control (Gantt row, Workspace header, board card menu)
+  // previews in the right-hand side panel, not a centred modal.
+  expect(dialog).toHaveAttribute('data-variant', 'sheet');
+  expect(dialog).toHaveAttribute('data-side', 'right');
   expect(within(dialog).getByText(/Nothing is saved until you choose Yes/)).toBeInTheDocument();
   const yes = within(dialog).getByRole('button', { name: 'Yes, apply' });
   await waitFor(() => expect(yes).toBeEnabled());

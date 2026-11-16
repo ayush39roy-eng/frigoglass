@@ -7,7 +7,16 @@ import {
   WORKFLOW_STEP_STATUSES,
 } from '@/types/enums';
 
-import type { ImportParseResponse, ImportRow, ImportSimulateResponse } from './import-types';
+import type {
+  ImportFormat,
+  ImportKpis,
+  ImportParseResponse,
+  ImportRow,
+  ImportSimulateRequest,
+  ImportSimulateResponse,
+  SavedScenario,
+  SavedScenarioSummary,
+} from './import-types';
 
 /**
  * Runtime checks of the two plan-import responses (docs/API_CONTRACT_P32.md B2 / B3).
@@ -180,29 +189,43 @@ const breakdowns = z.object({
   by_year: z.record(z.string(), breakdown),
 });
 
+const kpisSchema: z.ZodType<ImportKpis> = z.object({
+  projects_total: int,
+  file_projects: int,
+  plan_projects: int,
+  within_plan_year: int,
+  spillover: int,
+  left_out: int,
+  blocked: int,
+  excluded: int,
+  data_error: int,
+  file_within_plan_year: int,
+  file_scheduled: int,
+  before_within_plan_year: nint,
+  after_within_plan_year_existing: nint,
+  newly_slipping: int,
+  recovered: int,
+  // P41 (contract B): optional so a pre-P41 stored response still validates.
+  plan_excluded: int.optional(),
+});
+
+/** P41 (contract B): a tickable plan project of the picker. */
+const planProjectSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  hub: z.string(),
+  category: z.string(),
+  priority: z.string(),
+  status: z.string(),
+});
+
 export const importSimulateResponseSchema: z.ZodType<ImportSimulateResponse> = z.object({
   base_year: int,
   current_week: int,
   plan_year_end_week: int,
   horizon_weeks: int,
   mode: z.enum(['merge', 'file_only']),
-  kpis: z.object({
-    projects_total: int,
-    file_projects: int,
-    plan_projects: int,
-    within_plan_year: int,
-    spillover: int,
-    left_out: int,
-    blocked: int,
-    excluded: int,
-    data_error: int,
-    file_within_plan_year: int,
-    file_scheduled: int,
-    before_within_plan_year: nint,
-    after_within_plan_year_existing: nint,
-    newly_slipping: int,
-    recovered: int,
-  }),
+  kpis: kpisSchema,
   steps_meta: z.array(stepMetaSchema),
   projects: z.array(
     z.object({
@@ -311,6 +334,75 @@ export const importSimulateResponseSchema: z.ZodType<ImportSimulateResponse> = z
   issues: z.array(z.object({ ref: nstr, severity, code: z.string(), message: z.string() })),
   workings: z.array(z.string()),
   breakdowns: breakdowns.optional(),
+  plan_projects: z.array(planProjectSchema).optional(),
+});
+
+// --- P41: import format and saved scenarios (docs/API_CONTRACT_P41.md A / C) ---------------
+
+export const importFormatSchema: z.ZodType<ImportFormat> = z.object({
+  version: int,
+  is_default: z.boolean(),
+  fields: z.array(
+    z.object({
+      key: z.string(),
+      label: z.string(),
+      required: z.boolean(),
+      aliases: z.array(z.string()),
+      default_aliases: z.array(z.string()),
+    }),
+  ),
+  updated_at: nstr,
+  updated_by_name: nstr,
+  can_edit: z.boolean(),
+});
+
+/**
+ * The stored request of a saved scenario. Validated loosely (rows by the row schema) so
+ * "Re-run on today's plan" sends back exactly the contract's fields.
+ */
+const simulateRequestSchema: z.ZodType<ImportSimulateRequest> = z.object({
+  mode: z.enum(['merge', 'file_only']),
+  plan_year_end_week: z.union([z.literal(52), z.literal(104)]),
+  expand_multi: z.boolean(),
+  rows: z.array(importRowSchema),
+  edits: z.array(
+    z.object({
+      project_ref: z.string(),
+      step_id: z.string(),
+      duration_weeks: nint,
+      start_not_before_week: nint,
+      overlap_weeks: nint,
+    }),
+  ),
+  exclude_plan_project_ids: z.array(z.string()).optional(),
+});
+
+const savedSummaryShape = {
+  id: z.string(),
+  name: z.string(),
+  note: nstr,
+  source_file_name: z.string(),
+  source_file_sha256: z.string(),
+  imported_at: z.string(),
+  created_at: z.string(),
+  created_by_name: nstr,
+  can_edit: z.boolean(),
+  mode: z.enum(['merge', 'file_only']),
+  plan_year_end_week: int,
+  simulated_week: int,
+  plan_version: nint,
+  hub_codes: z.array(z.string()),
+  kpis: kpisSchema,
+};
+
+export const savedScenarioSummarySchema: z.ZodType<SavedScenarioSummary> = z.object(savedSummaryShape);
+
+export const savedScenarioListSchema = z.object({ items: z.array(savedScenarioSummarySchema) });
+
+export const savedScenarioSchema: z.ZodType<SavedScenario> = z.object({
+  ...savedSummaryShape,
+  request: simulateRequestSchema,
+  result: importSimulateResponseSchema,
 });
 
 // --- client-side checks before a request is sent ------------------------------------------

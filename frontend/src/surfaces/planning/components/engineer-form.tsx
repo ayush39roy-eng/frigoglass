@@ -27,7 +27,8 @@ import { capacityHubsOnly, joinNames, memberHubsByCapacityHub } from '@/lib/hub-
 import { useCategoryCatalogSnapshot } from '@/lib/category-catalog';
 import type { EngineerAllowedCategory } from '@/types/enums';
 
-import type { EngineerCreateRequest, EngineerRead } from '../api/types';
+import type { EngineerCreateRequest, EngineerRead, EngineerUpdateRequest } from '../api/types';
+import { isInactive } from '../lib/deactivation';
 import {
   engineerFormSchema,
   type EngineerFormInput,
@@ -48,7 +49,9 @@ export interface EngineerFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   hubs: Hub[];
-  onSubmit: (body: EngineerCreateRequest) => Promise<unknown>;
+  /** Create sends the full body; editing an INACTIVE engineer sends `{ name }`
+   *  only (P38, ADR 0053 §7: any other field is 409 ENGINEER_INACTIVE). */
+  onSubmit: (body: EngineerCreateRequest | EngineerUpdateRequest) => Promise<unknown>;
   /** P19-T04: the hub pre-selected on create (a hub card's "Add" action). */
   defaultHubId?: string | undefined;
 }
@@ -97,6 +100,7 @@ function EngineerForm({
   onSubmit: EngineerFormDialogProps['onSubmit'];
 }): React.JSX.Element {
   const [submitError, setSubmitError] = React.useState<string | null>(null);
+  const nameOnly = mode === 'edit' && engineer !== null && isInactive(engineer);
   // P29 (API_CONTRACT_P29 §5.2): an engineer sits on a capacity hub only; a
   // member hub (OEM-HCK, OEM-Seitek) is a 422 HUB_NOT_CAPACITY_HUB, so it is
   // not offered. Their design work is done by their capacity hub's engineers.
@@ -137,6 +141,21 @@ function EngineerForm({
 
   const submit = handleSubmit(async (values) => {
     setSubmitError(null);
+    if (nameOnly) {
+      try {
+        await onSubmit({ name: values.name });
+        onOpenChange(false);
+      } catch (err) {
+        setSubmitError(
+          err instanceof ApiError && err.isForbidden
+            ? 'Your role cannot create or edit engineers.'
+            : err instanceof ApiError
+              ? (err.detail ?? 'The name could not be saved. Please try again.')
+              : 'The name could not be saved. Please try again.',
+        );
+      }
+      return;
+    }
     if (!hubId) {
       setSubmitError('Hub is required.');
       return;
@@ -166,8 +185,9 @@ function EngineerForm({
       <DialogHeader>
         <DialogTitle>{mode === 'create' ? 'Add an engineer' : `Edit ${engineer?.name}`}</DialogTitle>
         <DialogDescription>
-          A design-step scheduling resource — also the pool of eligible project leaders on Project
-          Registration.
+          {nameOnly
+            ? 'This engineer is inactive: only the name can be changed. Reactivate them to change anything else.'
+            : 'A design-step scheduling resource — also the pool of eligible project leaders on Project Registration.'}
         </DialogDescription>
       </DialogHeader>
 
@@ -177,7 +197,7 @@ function EngineerForm({
             <Input id="eng-name" aria-invalid={errors.name ? true : undefined} {...register('name')} />
           </Field>
           <Field label="Hub" htmlFor="eng-hub" required>
-            <Select value={hubId} onValueChange={setHubId}>
+            <Select value={hubId} onValueChange={setHubId} disabled={nameOnly}>
               <SelectTrigger id="eng-hub" className="h-8">
                 <SelectValue placeholder="Select a hub" />
               </SelectTrigger>
@@ -203,6 +223,7 @@ function EngineerForm({
               step="0.1"
               inputMode="decimal"
               className="tnum"
+              disabled={nameOnly}
               aria-invalid={errors.fte ? true : undefined}
               {...register('fte')}
             />
@@ -214,7 +235,7 @@ function EngineerForm({
           design capacity on RPD Capacity.
         </p>
 
-        <fieldset className="space-y-2">
+        <fieldset className="space-y-2" disabled={nameOnly}>
           <legend className="text-2xs font-semibold uppercase tracking-wide text-text-muted">
             Allowed categories
           </legend>
@@ -227,6 +248,7 @@ function EngineerForm({
             {categoryChoices.map((category) => (
               <label key={category} className="flex items-center gap-1.5 text-xs">
                 <Checkbox
+                  disabled={nameOnly}
                   checked={categories.includes(category)}
                   onCheckedChange={(next) => toggleCategory(category, next === true)}
                 />

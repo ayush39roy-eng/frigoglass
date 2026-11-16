@@ -23,6 +23,7 @@ from models.project import Project
 from services import run_dispatch
 from services.priority_move import apply_priority_change
 from services.tracking import tracking_status_for
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import make_principal
 from tests.p12_helpers import act_as, client_for
 from tests.test_p12_checkins import _codes, _entry, _world, dispatch  # noqa: F401 (fixture)
@@ -119,10 +120,10 @@ async def test_frozen_project_stage_is_never_offered_for_check_in(db_session, di
 
 async def test_frozen_project_is_idle_not_overdue(db_session):
     w = await _world(db_session)
-    before = await tracking_status_for(db_session, [w.far.id])
+    before = await tracking_status_for(db_session, [w.far.id], current_week=TEST_WEEK)
     assert before[w.far.id] == "overdue"  # control: unfrozen, due since W28, no check-in
     w.far.frozen = True
     w.far.actual_start_week = 20
     await db_session.flush()
-    after = await tracking_status_for(db_session, [w.far.id])
+    after = await tracking_status_for(db_session, [w.far.id], current_week=TEST_WEEK)
     assert after[w.far.id] == "idle"

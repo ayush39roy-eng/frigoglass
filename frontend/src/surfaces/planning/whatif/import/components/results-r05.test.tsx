@@ -176,24 +176,28 @@ describe('P32-R05 results', () => {
     expect(screen.getByRole('radio', { name: '2027' })).toBeInTheDocument();
   });
 
-  it('save, rename and delete a scenario (session only)', async () => {
+  it('rename and delete a session scenario (session only)', async () => {
+    // P41: "Save scenario" now saves on the server (p41-import-scenarios.test.tsx); a session
+    // entry still comes from the builder, seeded here directly.
     const user = userEvent.setup();
     startAtResults();
+    const st = useImportPlan.getState();
+    if (!st.result) throw new Error('fixture');
+    useImportScenarios.getState().save({
+      name: 'Base case',
+      origin: 'saved',
+      rules: null,
+      fileName: 'synthetic-plan.xlsx',
+      rows: st.rows,
+      options: st.options,
+      edits: st.edits,
+      response: st.result,
+    });
     const { container } = renderWithProviders(<ImportPlanView />);
     await screen.findByTestId('import-executive');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save as scenario' })).toBeEnabled());
-    await user.click(screen.getByRole('button', { name: 'Save as scenario' }));
-    const dialog = await screen.findByTestId('import-save-scenario');
-    const name = within(dialog).getByLabelText('Scenario name');
-    expect(name).toHaveValue('Scenario 1');
-    await user.clear(name);
-    await user.type(name, 'Base case');
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     const saved = useImportScenarios.getState().scenarios;
     expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({ name: 'Base case', origin: 'saved', fileName: 'synthetic-plan.xlsx' });
-    expect(saved[0]?.response).toBe(useImportPlan.getState().result);
-    expect(saved[0]?.rows).toEqual(useImportPlan.getState().rows);
 
     await user.click(screen.getByRole('tab', { name: 'Compare (1)' }));
     await screen.findByTestId('import-compare');

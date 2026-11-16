@@ -34,7 +34,7 @@ from models.schedule import ScheduleRun, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep
 from services.active_run import step_kinds_for_run
 from services.capacity_supply import round2
-from services.run_step_effort import effort_from, weekly_effort_for_rows
+from services.run_step_effort import effort_from, spread_effort, weekly_effort_for_rows
 
 PriorityBucket = Literal["P1", "P2", "P3", "P4", "Queue"]
 
@@ -109,7 +109,10 @@ async def remaining_run_load_by_project(
     `current_week` on are counted at the row's effort per week
     (`services.run_step_effort.weekly_effort_for_rows`), not one per elapsed
     week. At FTE 1.0 this is the elapsed count, unchanged. Lab rows are never
-    stretched and keep the elapsed count.
+    stretched and keep the elapsed count, except a pinned lab row (P40, ADR
+    0054 R40-3 / F6), whose window may differ from its effort: its
+    `duration_weeks` is spread evenly over the window and the part from
+    `current_week` on counts.
 
     Projects not in the run (no stored step) are absent from the result.
     """
@@ -159,6 +162,11 @@ async def remaining_run_load_by_project(
         kind = kinds.get(r.step_template_id)
         if kind == WorkflowStepKind.DESIGN:
             design[pid] += effort_from(effort.get(r.id, {}), run.current_week)
+        elif kind == WorkflowStepKind.LAB and r.pinned:
+            weekly = spread_effort(r.start_week, r.end_week, r.duration_weeks)
+            lab[pid] += effort_from(weekly, run.current_week) * (
+                dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
+            )
         elif kind == WorkflowStepKind.LAB:
             weeks = max(0, r.end_week - max(r.start_week, run.current_week) + 1)
             lab[pid] += weeks * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK

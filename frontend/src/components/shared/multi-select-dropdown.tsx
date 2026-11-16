@@ -56,6 +56,9 @@ export interface MultiSelectDropdownProps<T extends string> {
   pluralNoun?: string | undefined;
   /** Custom trigger summary for a non-empty selection. */
   summarize?: ((selected: readonly MultiSelectOption<T>[]) => string) | undefined;
+  /** Trigger text when nothing is selected (default `allLabel`). P40-T01: a
+   *  compact toolbar shows the field name ("Status") there instead. */
+  emptySummary?: string | undefined;
   /** Show the search box above this many options (default 8). */
   searchThreshold?: number | undefined;
   disabled?: boolean | undefined;
@@ -97,6 +100,7 @@ export function MultiSelectDropdown<T extends string>({
   allLabel,
   pluralNoun,
   summarize,
+  emptySummary,
   searchThreshold = 8,
   disabled = false,
   triggerClassName,
@@ -128,7 +132,9 @@ export function MultiSelectDropdown<T extends string>({
         )
       : selectedOptions.length > 0 && summarize
         ? summarize(selectedOptions)
-        : summarizeSelection(selectedOptions, allLabel, pluralNoun);
+        : selectedOptions.length === 0 && emptySummary !== undefined
+          ? emptySummary
+          : summarizeSelection(selectedOptions, allLabel, pluralNoun);
   const showSearch = options.length > searchThreshold;
   const needle = query.trim().toLowerCase();
   const visible = needle

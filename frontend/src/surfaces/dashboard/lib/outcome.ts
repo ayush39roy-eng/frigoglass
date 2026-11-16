@@ -131,9 +131,18 @@ export function outcomeLabel(bucket: OutcomeBucket): string {
   return style.qualifiedLabel ?? style.label;
 }
 
+/** The four mutually exclusive served outcome counts — satisfied by the whole
+ *  `CompletingWithinYear` payload AND by each served per-country
+ *  `DeliveryRegionRow` (owner ask 2026-11-16), so a country's delivery rate is
+ *  the SAME formula applied to that country's served counts. */
+export type OutcomeCounts = Pick<
+  CompletingWithinYear,
+  'within_year_count' | 'spillover_count' | 'left_out_count' | 'blocked_count'
+>;
+
 /** Every project the active run placed in one of its four mutually exclusive
  *  served buckets — the denominator of every within-year share on the page. */
-export function outcomeTotal(data: CompletingWithinYear): number {
+export function outcomeTotal(data: OutcomeCounts): number {
   return data.within_year_count + data.spillover_count + data.left_out_count + data.blocked_count;
 }
 
@@ -143,13 +152,13 @@ export function outcomeTotal(data: CompletingWithinYear): number {
  * gauge, donut), so they can never disagree: `within_year_count / outcomeTotal`,
  * both read straight off `GET /dashboard/completing-within-year` (I9).
  */
-export function withinYearSharePct(data: CompletingWithinYear): number {
+export function withinYearSharePct(data: OutcomeCounts): number {
   return sharePct(data.within_year_count, data);
 }
 
 /** A served bucket count as a whole-percent share of `outcomeTotal`. 0 when the
  *  run placed nothing (never NaN). */
-export function sharePct(count: number, data: CompletingWithinYear): number {
+export function sharePct(count: number, data: OutcomeCounts): number {
   const total = outcomeTotal(data);
   return total === 0 ? 0 : Math.round((count / total) * 100);
 }

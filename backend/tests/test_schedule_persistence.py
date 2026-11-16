@@ -21,6 +21,7 @@ from services.schedule_persistence import (
     create_queued_schedule_run,
     persist_schedule_output,
 )
+from tests._plan_week import TEST_WEEK
 from tests.factories import (
     make_chamber,
     make_engineer,
@@ -83,7 +84,7 @@ async def test_persist_schedule_output_new_row_unchanged_behaviour(db_session):
     """
 
     await _seed_minimal_schedulable_project(db_session)
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     schedule_output = run_greedy_sgs(schedule_input)
 
     run = await persist_schedule_output(
@@ -107,7 +108,7 @@ async def test_persist_schedule_output_reuses_existing_run_in_place(db_session):
     """
 
     await _seed_minimal_schedulable_project(db_session)
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     schedule_output = run_greedy_sgs(schedule_input)  # stand-in ScheduleOutput
 
     queued_run = await create_queued_schedule_run(
@@ -161,7 +162,7 @@ async def test_persist_schedule_output_not_activated_does_not_touch_live_workflo
     """
 
     project = await _seed_minimal_schedulable_project(db_session)
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     schedule_output = run_greedy_sgs(schedule_input)
 
     before = (
@@ -203,7 +204,7 @@ async def test_persist_schedule_output_not_activated_does_not_touch_live_workflo
 
 async def test_persist_schedule_output_rejects_sync_without_activate(db_session):
     await _seed_minimal_schedulable_project(db_session)
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     schedule_output = run_greedy_sgs(schedule_input)
 
     try:

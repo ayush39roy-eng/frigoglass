@@ -44,6 +44,7 @@ describe('dashboard hooks', () => {
       left_out_count: 2,
       blocked_count: 1,
       priority_delivery: [],
+      regions: [],
       rows: [],
     });
     const { result } = renderHook(() => useCompletingWithinYear(), { wrapper: wrapper() });

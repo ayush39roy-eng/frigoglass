@@ -313,12 +313,20 @@ class BandRankPreviewRequest(BaseModel):
     """Body for `POST /projects/{id}/band-rank/preview` (ADR 0050 §4,
     docs/API_CONTRACT_P36.md §2). At most one anchor: place the project
     directly before / after that project in the full band; both null = last
-    in the band. Both set is a 422 `BOTH_ANCHORS` (coded, from the route)."""
+    in the band. Both set is a 422 `BOTH_ANCHORS` (coded, from the route).
+
+    Alternative (owner ask 2026-11-17, contract §2 amendment): `to_rank`,
+    the target position 1..n in the FULL band, resolved server-side. With
+    an anchor it is a 422 `ANCHOR_AND_RANK`; outside 1..n a 422 `BAD_RANK`
+    (no clamping; the message never states n). Range-checked by the service,
+    not here, so every out-of-range value answers the same coded error."""
 
     model_config = ConfigDict(extra="forbid")
 
     before_project_id: uuid.UUID | None = None
     after_project_id: uuid.UUID | None = None
+    #: Strict: a JSON integer only (no bool, no "3").
+    to_rank: int | None = Field(default=None, strict=True)
 
 
 class BandRankMoveRequest(BandRankPreviewRequest):

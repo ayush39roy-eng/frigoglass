@@ -62,9 +62,11 @@ from scheduling.whatif import (
     WhatIfBaseline,
     _booking,
     _Budget,
+    _exact_fte,
     _pick_leader,
     _round2,
     _supply,
+    _supply_entries,
     classify_outcome,
 )
 from scheduling.workflow import (
@@ -1065,10 +1067,15 @@ def _capacity(
                     l_load[region][i] += per
 
     sup = _supply(si.engineers, si.chambers, baseline.calendars, baseline.chamber_supply, cw)
+    # P38-T03 (R38-1): engineers with an inactive period supply only in the
+    # weeks their periods leave uncovered; their hub is summed exactly.
+    entries = _supply_entries(si.engineers, baseline.engineer_active_weeks, frozenset())
+    entry_hubs = {_cap_hub(a.hub) for a in entries.values()}
     fte_by_cap: dict[str, Fraction] = defaultdict(Fraction)
     for e in si.engineers:
-        if e.counts_in_capacity:
-            fte_by_cap[_cap_hub(e.hub)] += Fraction(e.fte)
+        if e.counts_in_capacity and e.engineer_id not in entries:
+            h = _cap_hub(e.hub)
+            fte_by_cap[h] += _exact_fte(e.fte) if h in entry_hubs else Fraction(e.fte)
     wwpe = {h: Fraction(sup.wwpe_by_hub.get(h, float(_YEAR_WEEKS))) for h in dc.HUB_LAB_REGION}
 
     def win_idx(w: CapacityWindow) -> range:
@@ -1077,18 +1084,41 @@ def _capacity(
     hub_rows: list[HubCapacityRow] = []
     weekly_hubs: dict[str, WeeklySeries] = {}
     for h in cap_hubs:
-        per_week = fte_by_cap.get(h, Fraction(0)) * wwpe[h] / _WEEKS_PER_YEAR
+        if h not in entry_hubs:
+            per_week = fte_by_cap.get(h, Fraction(0)) * wwpe[h] / _WEEKS_PER_YEAR
+            figs = tuple(
+                _figure(
+                    w.key,
+                    sum((d_load[h][i] for i in win_idx(w)), Fraction(0)),
+                    per_week * len(win_idx(w)),
+                )
+                for w in windows
+            )
+            hub_rows.append(HubCapacityRow(h, _round2(float(fte_by_cap.get(h, 0))), figs))
+            weekly_hubs[h] = WeeklySeries(
+                tuple(_round2(float(x)) for x in d_load[h]), tuple([_round2(float(per_week))] * n)
+            )
+            continue
+        mine = [entries[k] for k in sorted(entries) if _cap_hub(entries[k].hub) == h]
+        base = fte_by_cap.get(h, Fraction(0))
+        weekly_fte = [
+            base + sum((_exact_fte(a.fte) for a in mine if a.is_active_in(wk)), Fraction(0))
+            for wk in weeks
+        ]
+        weekly_cap = [f * wwpe[h] / _WEEKS_PER_YEAR for f in weekly_fte]
         figs = tuple(
             _figure(
                 w.key,
                 sum((d_load[h][i] for i in win_idx(w)), Fraction(0)),
-                per_week * len(win_idx(w)),
+                sum((weekly_cap[i] for i in win_idx(w)), Fraction(0)),
             )
             for w in windows
         )
-        hub_rows.append(HubCapacityRow(h, _round2(float(fte_by_cap.get(h, 0))), figs))
+        now = base + sum((_exact_fte(a.fte) for a in mine if a.is_active_in(cw + 1)), Fraction(0))
+        hub_rows.append(HubCapacityRow(h, _round2(float(now)), figs))
         weekly_hubs[h] = WeeklySeries(
-            tuple(_round2(float(x)) for x in d_load[h]), tuple([_round2(float(per_week))] * n)
+            tuple(_round2(float(x)) for x in d_load[h]),
+            tuple(_round2(float(x)) for x in weekly_cap),
         )
 
     lab_rows: list[LabRegionCapacityRow] = []
@@ -1116,11 +1146,14 @@ def _capacity(
         per_avail = Fraction(e.fte) * wwpe.get(chub, Fraction(_YEAR_WEEKS)) / _WEEKS_PER_YEAR
         eff = e_effort.get(e.engineer_id, [Fraction(0)] * n)
         spn = e_span.get(e.engineer_id, [0] * n)
+        entry = entries.get(e.engineer_id)
         dfigs: list[DesignerWindowFigure] = []
         for w in windows:
             idx = win_idx(w)
             booked = sum((eff[i] for i in idx), Fraction(0))
-            avail = per_avail * len(idx)
+            # P38-T03: a week an inactive period covers supplies 0.
+            n_active = len(idx) if entry is None else entry.active_weeks(w.from_week, w.to_week)
+            avail = per_avail * n_active
             pct, status = _booking(float(booked), float(avail))
             dfigs.append(
                 DesignerWindowFigure(

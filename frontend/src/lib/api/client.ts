@@ -203,15 +203,24 @@ function filenameFromContentDisposition(header: string | null): string | undefin
  */
 export async function apiDownload(
   path: string,
-  options: ApiRequestOptions & { fallbackFilename: string },
+  options: ApiRequestOptions & {
+    fallbackFilename: string;
+    /** P41: a file built from a JSON body (`POST /whatif/import/export.xlsx`). Default GET. */
+    method?: 'GET' | 'POST';
+    body?: unknown;
+  },
 ): Promise<DownloadedFile> {
+  const method = options.method ?? 'GET';
+  const headers: Record<string, string> = { Accept: '*/*', ...devUserHeader() };
+  if (method === 'POST') headers['Content-Type'] = 'application/json';
   let response: Response;
   try {
     response = await fetch(buildUrl(path, options.query), {
-      method: 'GET',
-      headers: { Accept: '*/*', ...devUserHeader() },
+      method,
+      headers,
       credentials: 'include',
       signal: options.signal ?? null,
+      ...(method === 'POST' ? { body: JSON.stringify(options.body ?? {}) } : {}),
     });
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;

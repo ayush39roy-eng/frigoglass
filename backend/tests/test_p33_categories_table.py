@@ -48,6 +48,7 @@ from services.schedule_persistence import (
     build_schedule_input_from_db,
     build_workflow_snapshot_from_input,
 )
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
@@ -340,7 +341,7 @@ async def test_builder_passes_the_table_and_default_inputs_stay_byte_identical(
 ) -> None:
     hub = await make_hub(db_session)
     await make_project(db_session, hub, category="B")
-    si = await build_schedule_input_from_db(db_session)
+    si = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     assert si.categories == default_categories()
     snapshot = build_workflow_snapshot_from_input(si)
     assert "categories" not in snapshot
@@ -366,7 +367,7 @@ async def test_a_new_category_reaches_the_input_snapshot_and_token(
     hub = await make_hub(db_session)
     await _add_category(db_session, "B2", "PDD", after_rank=3, copy_from="B")
     await make_project(db_session, hub, category="B2")
-    si = await build_schedule_input_from_db(db_session)
+    si = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     assert CategoryInput(code="B2", workflow_id="PDD", rank=4) in si.categories
     expected = canonical_categories(si.categories)
     assert expected is not None and [c["code"] for c in expected][:5] == [
@@ -417,6 +418,7 @@ def test_snapshot_adds_wait_and_lead_only_when_non_default() -> None:
 
 def default_input_with_timing(*rows: StepTimingInput) -> ScheduleInput:
     return ScheduleInput(
+        current_week=TEST_WEEK,
         projects=(
             ProjectInput(
                 project_id="p",

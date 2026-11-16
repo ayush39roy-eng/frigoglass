@@ -38,6 +38,7 @@ from models.enums import (
 from models.project import Project
 from models.schedule import ScheduleRun
 from services.schedule_persistence import build_schedule_input_from_db
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import clear_current_principal_override
 from tests.factories import make_engineer, make_hub, make_project, make_schedule_run
 from tests.p12_helpers import act_as, client_for
@@ -128,7 +129,7 @@ async def test_pin_marks_stale_and_queues_one_greedy_activating_run(db_session, 
     await db_session.refresh(w.project)
     assert w.project.is_vip is True and w.project.schedule_stale is True
     # The worker's input carries the pin (ADR 0040 sort key 2).
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     pinned = next(p for p in schedule_input.projects if p.project_id == str(w.project.id))
     assert pinned.is_vip is True
 
@@ -159,7 +160,7 @@ async def test_unpin_also_recalculates(db_session, dispatch):
     assert len(dispatch.calls) == 1
     (audit,) = await _audits(db_session, "project.vip_unpin", w.project)
     assert audit.after_state["recalc_status"] == "queued"
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     row = next(p for p in schedule_input.projects if p.project_id == str(w.project.id))
     assert row.is_vip is False
 
