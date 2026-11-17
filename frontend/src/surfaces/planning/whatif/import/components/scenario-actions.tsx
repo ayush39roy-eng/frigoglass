@@ -161,7 +161,7 @@ export function ExportScenarioButton({ disabled }: { disabled: boolean }): React
     <span className="inline-flex items-center gap-s2">
       <Button type="button" size="sm" variant="secondary" disabled={disabled || download.pending !== null} onClick={onClick}>
         {download.pending ? <Spinner className="size-3.5" /> : <Download />}
-        Export
+        Export to Excel (with Gantt chart)
       </Button>
       {download.error ? (
         <span role="alert" className="text-2xs font-medium text-danger-subtle-fg">

@@ -172,6 +172,15 @@ class SimulateRequest(_Strict):
     scenario: ScenarioRequest = Field(default_factory=ScenarioRequest)
 
 
+class SimulateExportIn(_Strict):
+    """P43 (ADR 0057 D3, docs/API_CONTRACT_P43.md §3): `POST
+    /whatif/export.xlsx`. The scenario, as for `/whatif/simulate`, and an
+    optional name for the title. A result is never accepted."""
+
+    scenario: ScenarioRequest = Field(default_factory=ScenarioRequest)
+    name: Annotated[str, Field(min_length=1, max_length=120)] | None = None
+
+
 class SolveRequest(_Strict):
     scenario: ScenarioRequest = Field(default_factory=ScenarioRequest)
     target: TargetLiteral = "all_new_within_year"

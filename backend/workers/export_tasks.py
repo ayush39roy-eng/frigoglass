@@ -77,6 +77,7 @@ from core.principal import Principal
 from models.enums import ExportFormat, ExportJobStatus, RoleName
 from models.export import ExportJob
 from services.export_builder import ExportFilters, build_export_sheets, csv_bytes, xlsx_bytes
+from services.xlsx_writer import book_labels
 from workers.worker_app import worker_app
 
 logger = logging.getLogger(__name__)
@@ -204,7 +205,7 @@ async def _generate_export_async(
             if format == ExportFormat.CSV.value:
                 sheet_name = next(iter(sheets))
                 headers, rows = sheets[sheet_name]
-                content = csv_bytes(headers, rows)
+                content = csv_bytes(headers, rows, book_labels(sheets))
                 content_type = "text/csv"
                 extension = "csv"
                 row_count = len(rows)

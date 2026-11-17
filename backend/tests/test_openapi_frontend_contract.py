@@ -208,6 +208,9 @@ def _backend_nullable_fields(schema_name: str) -> set[str]:
 # are exempt from the nullability check altogether: a TS request type that is
 # narrower than the server accepts is stricter, not unsafe.
 _NULLABILITY_ALLOWLIST: dict[tuple[str, str], str] = {
+    # P43-T04: a request body named `*In`, so the `*Request` exemption misses it.
+    # The browser omits a blank name and never sends null (whatif-export.ts).
+    ("SimulateExportIn", "name"): "request body; TS narrower than the server accepts",
     # Deprecated P3-era aliases, typed `?: number` and never read by the
     # frontend. `api/routers/capacity.py` always fills them with numbers.
     ("HubCapacityRow", "design_capacity_weeks"): "deprecated alias, never read",
@@ -682,6 +685,8 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_WHATIF_TS, "ScenarioRequest", "ScenarioRequest", "exact"),
     (_WHATIF_TS, "EstimateRequest", "EstimateRequest", "exact"),
     (_WHATIF_TS, "SimulateRequest", "SimulateRequest", "exact"),
+    # P43-T04 (qa gate): `POST /whatif/export.xlsx` body (API_CONTRACT_P43 §3).
+    (_WHATIF_TS, "SimulateExportRequest", "SimulateExportIn", "exact"),
     (_WHATIF_TS, "SolveRequest", "SolveRequest", "exact"),
     (_WHATIF_TS, "AskRequest", "AskRequest", "exact"),
     (_WHATIF_TS, "ScopeInfo", "ScopeInfo", "exact"),

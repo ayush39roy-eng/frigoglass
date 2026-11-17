@@ -72,12 +72,13 @@ def _client(db_session) -> AsyncClient:
 
 
 async def _act_as(db_session, *roles: RoleName, hub_ids=None):
-    user = await make_user(
-        db_session, *roles, hub_ids=hub_ids or [], hub_scope_all=hub_ids is None
-    )
+    user = await make_user(db_session, *roles, hub_ids=hub_ids or [], hub_scope_all=hub_ids is None)
     override_current_principal(
         make_principal(
-            *roles, user_id=user.id, email=user.email, hub_scope_all=hub_ids is None,
+            *roles,
+            user_id=user.id,
+            email=user.email,
+            hub_scope_all=hub_ids is None,
             hub_ids=hub_ids or [],
         )
     )
@@ -95,8 +96,12 @@ async def _seeded(db_session, *, schedule: bool = True) -> SimpleNamespace:
     if schedule:
         schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
         run = await persist_schedule_output(
-            db_session, schedule_input, run_greedy_sgs(schedule_input),
-            solver_type=SolverType.GREEDY, trigger_reason="test", activate=True,
+            db_session,
+            schedule_input,
+            run_greedy_sgs(schedule_input),
+            solver_type=SolverType.GREEDY,
+            trigger_reason="test",
+            activate=True,
         )
     return SimpleNamespace(hubs=hubs, run=run)
 
@@ -141,8 +146,14 @@ async def test_analytics_shape_and_reconciliation(db_session):
         cwy = await _get(client, "/dashboard/completing-within-year")
 
     assert set(body) == {
-        "by_type", "by_category", "by_hub", "by_reg_year", "completing_hub_type",
-        "completing_by_type", "completing_by_hub", "has_active_schedule_run",
+        "by_type",
+        "by_category",
+        "by_hub",
+        "by_reg_year",
+        "completing_hub_type",
+        "completing_by_type",
+        "completing_by_hub",
+        "has_active_schedule_run",
     }
     assert body["has_active_schedule_run"] is True
     total = totals["total_count"]
@@ -157,10 +168,10 @@ async def test_analytics_shape_and_reconciliation(db_session):
     # Every type and category is listed (zeros included), "Unmapped" only if any.
     type_keys = [b["key"] for b in body["by_type"]]
     assert type_keys[: len(ProjectType)] == [t.value for t in ProjectType]
-    assert type_keys[len(ProjectType):] in ([], ["Unmapped"])
+    assert type_keys[len(ProjectType) :] in ([], ["Unmapped"])
     cat_keys = [b["key"] for b in body["by_category"]]
     assert cat_keys[: len(ProjectCategory)] == [c.value for c in ProjectCategory]
-    assert cat_keys[len(ProjectCategory):] in ([], ["Unmapped"])
+    assert cat_keys[len(ProjectCategory) :] in ([], ["Unmapped"])
     assert {b["key"] for b in body["by_hub"]} == {h.value for h in HubName}
 
     # by_type / by_hub reconcile with the hub × type cross-tab.
@@ -175,9 +186,7 @@ async def test_analytics_shape_and_reconciliation(db_session):
     assert {b["key"]: b["count"] for b in body["by_hub"] if b["count"]} == dict(by_hub)
 
     # by_reg_year against the live table (pipeline basis), "Unknown" last.
-    years = Counter(
-        y for (y,) in (await db_session.execute(select(Project.reg_year))).all()
-    )
+    years = Counter(y for (y,) in (await db_session.execute(select(Project.reg_year))).all())
     expected_years = {str(y): c for y, c in years.items() if y is not None}
     if years.get(None):
         expected_years["Unknown"] = years[None]
@@ -193,8 +202,7 @@ async def test_analytics_shape_and_reconciliation(db_session):
     )
     statuses = dict((await db_session.execute(select(Project.id, Project.status))).all())
     within = Counter(
-        (r["hub"], r["type"]) for r in cwy["rows"]
-        if r["within_year"] and not r["blocked"]
+        (r["hub"], r["type"]) for r in cwy["rows"] if r["within_year"] and not r["blocked"]
     )
     # P42 (I53): a cell's non-counting projects (QUEUED / NOT_SCHEDULED_PRIORITY).
     non_counting = Counter(
@@ -215,8 +223,10 @@ async def test_analytics_shape_and_reconciliation(db_session):
     # marks `within_year` ("trivially done"), so the cross-tab total equals the
     # card exactly.
     commercialized_within = sum(
-        1 for r in cwy["rows"]
-        if r["within_year"] and not r["blocked"]
+        1
+        for r in cwy["rows"]
+        if r["within_year"]
+        and not r["blocked"]
         and statuses[uuid.UUID(r["project_id"])] == ProjectStatus.COMMERCIALIZED
     )
     assert commercialized_within > 0  # the demo seed exercises the difference
@@ -275,9 +285,11 @@ async def test_analytics_includes_commercialized(db_session):
         after = await _get(client, "/dashboard/analytics")
         totals = await _get(client, "/dashboard/pipeline-totals")
     # ADR 0030: the status change moves nothing out of the basis.
-    assert sum(b["count"] for b in after["by_hub"]) == (
-        sum(b["count"] for b in before["by_hub"])
-    ) == totals["total_count"]
+    assert (
+        sum(b["count"] for b in after["by_hub"])
+        == (sum(b["count"] for b in before["by_hub"]))
+        == totals["total_count"]
+    )
     for r in after["completing_hub_type"]:
         assert r["completing_count"] <= r["pipeline_count"]
 
@@ -327,8 +339,10 @@ async def test_analytics_region_and_hub_narrowing(db_session):
         assert {b["key"] for b in union["by_hub"]} == {"PD-India"} | {
             h for h, r in region_of.items() if r == "Greece"
         }
-        assert all(r["hub"] == "PD-India" or region_of[r["hub"]] == "Greece"
-                   for r in union["completing_hub_type"])
+        assert all(
+            r["hub"] == "PD-India" or region_of[r["hub"]] == "Greece"
+            for r in union["completing_hub_type"]
+        )
         assert await _get(client, "/dashboard/analytics", hub_id=pd_india, region="India") == (
             await _get(client, "/dashboard/analytics", region="India")
         )
@@ -380,19 +394,32 @@ async def test_category_timelines_follow_the_lead_time_table(db_session):
         for c in body:
             # P33-T09 (contract C2): label, workflow, rank, version and the note.
             assert set(c) == {
-                "category", "label", "workflow_id", "rank", "template_version", "note",
-                "total_weeks", "design_weeks", "lab_weeks", "steps",
+                "category",
+                "label",
+                "workflow_id",
+                "rank",
+                "template_version",
+                "note",
+                "total_weeks",
+                "design_weeks",
+                "lab_weeks",
+                "steps",
             }
-            assert (c["design_weeks"], c["lab_weeks"], c["total_weeks"]) == expected[
-                c["category"]
-            ]
+            assert (c["design_weeks"], c["lab_weeks"], c["total_weeks"]) == expected[c["category"]]
             assert len(c["steps"]) == 14
             # Strict chain: each step starts where the previous one ends.
             cursor = 0
             for s in c["steps"]:
                 assert set(s) == {
-                    "code", "name", "resource_kind", "start_week", "duration_weeks",
-                    "gap_weeks", "effective_gap_weeks", "flags", "predecessor_ids",
+                    "code",
+                    "name",
+                    "resource_kind",
+                    "start_week",
+                    "duration_weeks",
+                    "gap_weeks",
+                    "effective_gap_weeks",
+                    "flags",
+                    "predecessor_ids",
                 }
                 assert (s["gap_weeks"], s["effective_gap_weeks"], s["flags"]) == (0, 0, [])
                 assert s["start_week"] == cursor
@@ -400,9 +427,15 @@ async def test_category_timelines_follow_the_lead_time_table(db_session):
             assert cursor == c["total_weeks"]
     b = next(c for c in pdd if c["category"] == "B")
     assert b["steps"][4] == {
-        "code": "PDD-E", "name": "Design Detailing", "resource_kind": "design",
-        "start_week": 2, "duration_weeks": 4, "gap_weeks": 0, "effective_gap_weeks": 0,
-        "flags": [], "predecessor_ids": ["PDD-D"],
+        "code": "PDD-E",
+        "name": "Design Detailing",
+        "resource_kind": "design",
+        "start_week": 2,
+        "duration_weeks": 4,
+        "gap_weeks": 0,
+        "effective_gap_weeks": 0,
+        "flags": [],
+        "predecessor_ids": ["PDD-D"],
     }
     # PDD-B and PDD-C are 0 for B: skipped, transparent (start = end = pred end).
     assert [(s["start_week"], s["duration_weeks"]) for s in b["steps"][1:3]] == [(1, 0), (1, 0)]
@@ -437,22 +470,57 @@ async def test_b_equivalent_ratios(db_session):
         oem = await _get(client, "/workflow-settings/b-equivalent", workflow="OEM")
         timelines = await _get(client, "/workflow-settings/category-timelines", workflow="PDD")
     assert pdd == [
-        {"category": "A+", "design_weeks": 22, "lab_weeks": 12, "design_ratio": 2.2,
-         "lab_ratio": 2.0},
-        {"category": "A", "design_weeks": 18, "lab_weeks": 10, "design_ratio": 1.8,
-         "lab_ratio": 1.67},
-        {"category": "B", "design_weeks": 10, "lab_weeks": 6, "design_ratio": 1.0,
-         "lab_ratio": 1.0},
-        {"category": "C", "design_weeks": 6, "lab_weeks": 1, "design_ratio": 0.6,
-         "lab_ratio": 0.17},
+        {
+            "category": "A+",
+            "design_weeks": 22,
+            "lab_weeks": 12,
+            "design_ratio": 2.2,
+            "lab_ratio": 2.0,
+        },
+        {
+            "category": "A",
+            "design_weeks": 18,
+            "lab_weeks": 10,
+            "design_ratio": 1.8,
+            "lab_ratio": 1.67,
+        },
+        {
+            "category": "B",
+            "design_weeks": 10,
+            "lab_weeks": 6,
+            "design_ratio": 1.0,
+            "lab_ratio": 1.0,
+        },
+        {
+            "category": "C",
+            "design_weeks": 6,
+            "lab_weeks": 1,
+            "design_ratio": 0.6,
+            "lab_ratio": 0.17,
+        },
     ]
     assert oem == [
-        {"category": "A-OEM", "design_weeks": 9, "lab_weeks": 8, "design_ratio": 1.8,
-         "lab_ratio": 1.33},
-        {"category": "B-OEM", "design_weeks": 5, "lab_weeks": 6, "design_ratio": 1.0,
-         "lab_ratio": 1.0},
-        {"category": "C-OEM", "design_weeks": 2, "lab_weeks": 2, "design_ratio": 0.4,
-         "lab_ratio": 0.33},
+        {
+            "category": "A-OEM",
+            "design_weeks": 9,
+            "lab_weeks": 8,
+            "design_ratio": 1.8,
+            "lab_ratio": 1.33,
+        },
+        {
+            "category": "B-OEM",
+            "design_weeks": 5,
+            "lab_weeks": 6,
+            "design_ratio": 1.0,
+            "lab_ratio": 1.0,
+        },
+        {
+            "category": "C-OEM",
+            "design_weeks": 2,
+            "lab_weeks": 2,
+            "design_ratio": 0.4,
+            "lab_ratio": 0.33,
+        },
     ]
     # Same figures as the timelines.
     assert [(r["design_weeks"], r["lab_weeks"]) for r in pdd] == [
@@ -465,9 +533,16 @@ async def test_b_equivalent_follows_a_lead_time_edit_and_zero_reference_is_null(
     # P33-T10: the template is edited through the apply (no project of B
     # exists, so nothing else changes and no run is needed).
     change = {
-        "changes": [{"workflow_id": "PDD", "category": "B", "base_version": 1, "steps": [
-            {"step_id": "PDD-H", "weeks": 0},  # PDD-F is already 0 for B
-        ]}],
+        "changes": [
+            {
+                "workflow_id": "PDD",
+                "category": "B",
+                "base_version": 1,
+                "steps": [
+                    {"step_id": "PDD-H", "weeks": 0},  # PDD-F is already 0 for B
+                ],
+            }
+        ],
         "selection": {"mode": "none"},
     }
     async with _client(db_session) as client:
@@ -481,8 +556,14 @@ async def test_b_equivalent_follows_a_lead_time_edit_and_zero_reference_is_null(
 
 
 @pytest.mark.parametrize(
-    "role,code", [(RoleName.ADMIN, 200), (RoleName.SUPER_ADMIN, 200), (RoleName.HUB_PLANNER, 403),
-                  (RoleName.PORTFOLIO_MANAGER, 403), (RoleName.ENGINEER, 403)],
+    "role,code",
+    [
+        (RoleName.ADMIN, 200),
+        (RoleName.SUPER_ADMIN, 200),
+        (RoleName.HUB_PLANNER, 403),
+        (RoleName.PORTFOLIO_MANAGER, 403),
+        (RoleName.ENGINEER, 403),
+    ],
 )
 async def test_previews_rbac(db_session, role, code):
     await _act_as(db_session, role, hub_ids=[] if role == RoleName.HUB_PLANNER else None)
@@ -510,7 +591,10 @@ def test_category_preview_is_pure_and_walks_parallel_branches():
     workflow = build_workflows(templates)["W"]
     preview = category_preview(workflow, ProjectCategory.A, {"W-A": 2, "W-B": 5, "W-C": 3})
     assert [(s.step_id, s.start_week, s.duration_weeks) for s in preview.steps] == [
-        ("W-A", 0, 2), ("W-B", 2, 5), ("W-C", 2, 3), ("W-D", 7, 0),
+        ("W-A", 0, 2),
+        ("W-B", 2, 5),
+        ("W-C", 2, 3),
+        ("W-D", 7, 0),
     ]
     assert (preview.total_weeks, preview.design_weeks, preview.lab_weeks) == (7, 2, 5)
     assert ratio(5, 3) == 1.67 and ratio(1, 0) is None
@@ -521,13 +605,9 @@ def test_category_preview_is_pure_and_walks_parallel_branches():
 
 async def test_projects_list_q_matches_name_or_code_literally_and_stays_scoped(db_session):
     greece = await make_hub(db_session)
-    romania = await make_hub(
-        db_session, name=HubName.PD_ROMANIA, lab_region=LabRegion.ROMANIA
-    )
+    romania = await make_hub(db_session, name=HubName.PD_ROMANIA, lab_region=LabRegion.ROMANIA)
     match_name = await make_project(db_session, greece, name="Cooler Alpha")
-    match_code = await make_project(
-        db_session, greece, name="Fridge", external_code="24-ALP_1%"
-    )
+    match_code = await make_project(db_session, greece, name="Fridge", external_code="24-ALP_1%")
     await make_project(db_session, greece, name="Other", external_code="24-00001")
     hidden = await make_project(db_session, romania, name="Alpha Romania")
     await _act_as(db_session, RoleName.HUB_PLANNER, hub_ids=[greece.id])
@@ -535,9 +615,7 @@ async def test_projects_list_q_matches_name_or_code_literally_and_stays_scoped(d
         got = await _get(client, "/projects", q="  alp ")
         assert [r["id"] for r in got] == [str(match_name.id), str(match_code.id)]
         assert str(hidden.id) not in {r["id"] for r in got}
-        assert [r["id"] for r in await _get(client, "/projects", q="_1%")] == [
-            str(match_code.id)
-        ]
+        assert [r["id"] for r in await _get(client, "/projects", q="_1%")] == [str(match_code.id)]
         assert await _get(client, "/projects", q="%") == [
             r for r in await _get(client, "/projects") if r["id"] == str(match_code.id)
         ]
@@ -548,11 +626,10 @@ async def test_projects_list_q_matches_name_or_code_literally_and_stays_scoped(d
 
 
 async def test_registration_export_follows_q_sync_and_job_path(db_session):
-    import csv
-    import io
 
     from models.enums import ExportSurface
     from services.export_builder import build_export_sheets
+    from tests.export_read import csv_rows
 
     hub = await make_hub(db_session)
     alpha = await make_project(db_session, hub, name="Cooler Alpha")
@@ -564,12 +641,12 @@ async def test_registration_export_follows_q_sync_and_job_path(db_session):
             "/exports/project-registration", params={"format": "csv", "q": " alp "}
         )
         assert resp.status_code == 200, resp.text
-        rows = list(csv.DictReader(io.StringIO(resp.content.decode("utf-8-sig"))))
+        rows = csv_rows(resp.content)
         assert [r["id"] for r in rows] == [str(alpha.id), str(coded.id)]
         resp = await client.get(
             "/exports/project-registration", params={"format": "csv", "q": "_1%"}
         )
-        rows = list(csv.DictReader(io.StringIO(resp.content.decode("utf-8-sig"))))
+        rows = csv_rows(resp.content)
         assert [r["id"] for r in rows] == [str(coded.id)]
         resp = await client.get(
             "/exports/project-registration", params={"format": "csv", "q": "x" * 101}
@@ -578,9 +655,17 @@ async def test_registration_export_follows_q_sync_and_job_path(db_session):
     # The async job path calls the same builder with the stored filter dict.
     principal = make_principal(RoleName.PORTFOLIO_MANAGER, hub_scope_all=True)
     sheets = await build_export_sheets(
-        db_session, principal, surface=ExportSurface.PROJECT_REGISTRATION.value,
-        filters={"hub_id": None, "category": None, "status_": None, "priority": None,
-                 "type_": None, "q": "alpha"},
+        db_session,
+        principal,
+        surface=ExportSurface.PROJECT_REGISTRATION.value,
+        filters={
+            "hub_id": None,
+            "category": None,
+            "status_": None,
+            "priority": None,
+            "type_": None,
+            "q": "alpha",
+        },
     )
     _, data = sheets["Projects"]
     assert [row["id"] for row in data] == [str(alpha.id)]

@@ -42431,3 +42431,453 @@ Follow-ups, none blocking:
 
 Rollout on dev: `alembic upgrade head`, then `python -m scripts.p42_band_rules_run`. This is not
 done on the live dev DB, because the upgrade also applies the other sessions' p38a/p40a/p41b.
+
+## [2026-11-17] P43-T01 — owner request: presentable Excel exports with a drawn Gantt (orchestrator)
+
+The owner wants:
+- Gantt exports drawn as a chart, not numbers;
+- the same in What-if scenarios;
+- every export presentable.
+
+Every xlsx is built server-side by `export_builder.xlsx_bytes`, which `whatif_import_scenarios`
+also uses. Wrote:
+- ADR 0057 (D1 styled writer, D2 drawn Gantt sheet plus a "Gantt data" sheet, D3 What-if planner
+  export if missing);
+- OQ #112 (header names);
+- plan P43.
+
+## [2026-11-17] P43-T02 — styled xlsx writer, drawn Gantt sheets, What-if planner export (ADR 0057) — backend-builder: DONE
+
+**Built:**
+- `backend/services/xlsx_writer.py` (new) is the one writer for every `.xlsx`. `export_builder.xlsx_bytes` delegates to it.
+  - Table sheets:
+    - rows 1-3 are a title block (title, context with scope and filters, generated line);
+    - the header is on row 5 (`TABLE_HEADER_ROW`), with human names, a navy fill and white bold text;
+    - frozen at B6, auto-filter, column widths from the content;
+    - Yes/No booleans, `#,##0.00` decimals;
+    - banding is one conditional format (no per-cell fills);
+    - print setup: landscape, A4, fit to width, header row repeated.
+  - `SheetBook` (a dict subclass) carries the title, context, labels, charts, report sheets and order. A plain dict still works.
+  - Report sheets (`Summary`) are key / value with `SECTION` headings.
+  - The formula guard and text-typed strings are kept on every cell, including chart and legend text.
+  - Write-only throughout (no merged cells).
+  - A per-workbook style-array cache avoids openpyxl's style hashing. A synthetic 236 × 14 portfolio Gantt (chart plus data) writes in about 1.1 s with about 2 MB peak Python memory. On the dev copy, the real Gantt export took 2.6 s end to end, including the DB reads.
+- Drawn Gantt (`GanttChart` / `GanttProjectBar` / `GanttStepBar`):
+  - a project row with its overall slate bar, then indented step rows;
+  - fixed columns A-G; week columns W1..horizon, widened to the last served week;
+  - step bars fill exactly the served start..end weeks, in the app's 14-slot step palette (`STEP_PALETTE_HEX` = frontend `step-colors.ts`). Colour is **by step, as on screen since P40, not by kind**; the kind is a column and is in the legend;
+  - frozen projects are hatched (`lightUp`), pinned steps outlined;
+  - current-week header amber with a pale column; a red right border at W52 (and W104); next-year headers grey;
+  - the legend is below the chart (row number given in A3);
+  - outcome is coloured text: the served `outcome_label`, else the outcome name ("Spillover · unplaced" for left out, as on screen).
+- Where the drawn Gantt appears:
+  - surface Gantt export: sheets `Gantt` (drawn) and `Gantt data` (the old table, renamed; CSV is that table);
+  - import current result and saved scenario: `Summary, Gantt, Breakdown, Projects, Steps, Capacity` (Summary is now a sectioned report);
+  - compare: `KPIs, Outcome changes, Gantt S1..S4` (KPI names are human);
+  - import template: header styling only, with no title block and raw headers, so the parser reads it unchanged.
+- **New route `POST /whatif/export.xlsx`** (`SimulateExportIn {scenario, name?}`, strict, `services/whatif_export.py`):
+  - RBAC, hub scope, rate limit and 403/422/503 handling are the What-if read's;
+  - one coalesced `whatif.export` audit row (shape, project count, `named`; never the name);
+  - sheets: Summary, Gantt, Gantt data;
+  - weeks come from `apply_scenario` and `run_greedy_sgs` (algorithm-engineer's pure functions, run in the capped What-if pool; nothing reimplemented). A test checks every finish week against `/whatif/simulate`;
+  - project-row leader is blank (Gantt OQ #8 self rule); step rows name the engineer or chamber (ADR 0028).
+- CSV: header row only, human names; values unchanged.
+- Matrix dimension columns are headed by their rubric label.
+
+**Fixed a pre-existing defect:**
+- `rows_from_models` decided whether to flatten a nested field from row 0 only.
+- On dev data, the Matrix `last_score_version` was null on row 0 and a dict later, so the **Matrix xlsx export raised `ValueError`**.
+- It now uses the first row holding a dict, and `stringify` also renders a dict defensively. A regression test covers it.
+
+**Tests:**
+- `tests/test_p43_exports.py` (18):
+  - styled table and CSV headers;
+  - the report sheet;
+  - drawn Gantt round-trip: fills on exactly the planned weeks, letter, pinned border, frozen hatch, current week, W52, legend, outcome colour, freeze, filter;
+  - horizon widening;
+  - surface reconciliation: drawn bars = `/gantt` served weeks;
+  - no financial labels or values for Engineer and Executive Viewer, plus 403s;
+  - the template is styled and parses;
+  - planner export roles, sheets, weeks, scope, strict body, rate limit and audit;
+  - the nested-field regression.
+- `tests/export_read.py` is a helper that reads styled tables and CSV back by machine key.
+- Updated the header and row readers in: `test_export_api`, `test_export_worker_task`, `test_p13_r02_hardening`, `test_p25_t03_fill_surfaces`, `test_p26_scoring_rubric`, `test_p31_multi_select_filters`, `test_p13_slice_a`, `test_p41_qa_gate`, `test_p41_import_scenarios`.
+
+**Results:**
+- Full suite: 3548 passed, 5 failed.
+  - Four are known non-P43: the `test_migrations` table count, `test_p27_render_csp`, the P37 PlanWeek contract and `test_p20 gantt_step_row_contract`.
+  - `test_super_admin_race[deactivate]` is flaky and passes on rerun.
+- ruff: clean on touched files; one pre-existing E501 in `test_openapi_frontend_contract.py`.
+- mypy: nothing new; only the pre-existing celery-stub errors in `workers/export_tasks.py`.
+
+**Samples:** `/private/tmp/claude-501/-Users-ayushroy-frigoglass/ff8faba8-f666-4b78-8bfb-6b8015cb81a9/scratchpad/exports/` (11 workbooks).
+- The dev DB is at `p41a`, behind the code. It was dumped read-only (`pg_dump`) into a throwaway `postgres:17` container. That copy was upgraded to head, then `scripts.p42_band_rules_run` ran on the copy (inline run on the copy only), and the samples were built through the app code in a READ ONLY transaction.
+- The container is stopped and the dump is deleted. **The dev DB is untouched.**
+- No saved import scenarios exist on dev, so the import samples use transient (unsaved) rows built from the plan simulated through the import path.
+
+**Contract:** `docs/API_CONTRACT_P43.md`.
+
+**Frontend (P43-T03):**
+- an "Export to Excel" button on the What-if Simulate view calling `POST /whatif/export.xlsx`;
+- copy tweaks on the Gantt and import exports.
+
+## [2026-11-17] P43-T03 — What-if planner "Export to Excel", Gantt / import export copy (ADR 0057, API_CONTRACT_P43 §3/§6) — frontend-builder: DONE
+
+**Built:**
+- `surfaces/planning/api/whatif-export.ts` (new): `downloadSimulateExport` posts `POST /whatif/export.xlsx` through the shared `apiDownload` (POST + JSON body; the `Content-Disposition` filename wins, with `whatif-scenario.xlsx` as the fallback).
+  - `simulateExportBody(scenario, name?)` builds the strict body `{scenario, name?}`. The name is trimmed and cut to 120 characters, and a blank name is left out. No `result` key is ever sent.
+  - The helper is in its own module, not in `whatif-api.ts`, so the existing `vi.mock('../../api/whatif-api')` factories keep working without changes.
+  - `SimulateExportRequest` was added to `whatif-types.ts`.
+- `whatif/components/simulate-export-button.tsx` (new): the `SimulateExportButton` component.
+  - While the request runs it shows a pending label ("Exporting…", `aria-busy`, a spinner that respects reduced motion) and is disabled.
+  - It is disabled when there is no computed scenario. A muted reason is linked to it through `aria-describedby`.
+  - Errors go through `classifyWhatIfError(…, 'scenario')` and `WhatIfErrorNotice`, so 403, 403 `SCENARIO_OUT_OF_SCOPE`, 422 `INVALID_SCENARIO`, 429 with the `Retry-After` countdown (retry disabled until it reaches zero) and 503 `WHATIF_TIMEOUT` read exactly like they do for Simulate. The notice's retry button reads "Export again".
+- Where the button appears:
+  - **What-if planner, Simulate tab:** it is always visible above the result. It sends `simulate.variables.scenario`, which is the scenario of the result **on screen**, not the form's current edits. So when the "scenario has changed" notice shows, the workbook still matches what is displayed. The planner has no scenario name, so no name is sent.
+  - **"Ask the planner" chat:** a `simulate_scenario` tool result that carries its own `scenario` gets the same button (contract §3 accepts any ScenarioRequest; ChatScenario is a subset). A tool result without a scenario gets no button.
+- Copy changes:
+  - `DownloadButton` gains `csvLabel` and `xlsxLabel` props. The default XLSX item now reads "Download as Excel" (it was "Download as XLSX").
+  - Gantt: "Download as Excel (with Gantt chart)" and "Download as CSV (data only)".
+  - Import current result: "Export to Excel (with Gantt chart)".
+  - Saved-scenario row: "Export to Excel", with the aria-label "Export to Excel: {name} (with Gantt chart)".
+  - Compare: "Export comparison to Excel (with Gantt charts)".
+  - Projects export menu: "{source} as Excel" (it was "as XLSX").
+
+**Not given an export (the contract offers none), recorded for the gate:**
+- the What-if **Fewest additions** view's `achieved` simulation. `SolveResponse` carries no achieved ScenarioRequest, and rebuilding one from `additions` in the browser would be derived logic;
+- the What-if **Estimate** view (no schedule);
+- the Project Workspace's per-project timeline;
+- the Priority board (Kanban);
+- the priority-move preview popup;
+- the Executive view;
+- the History page.
+
+Surfaces that already had one: Gantt, Dashboard, Capacity, Matrix, Capacity planning, Projects, and the What-if import result, saved scenario and compare exports.
+
+**Tests:**
+- `simulate-export-button.test.tsx` (new, 11 tests):
+  - disabled with its reason until Simulate has a result;
+  - the exact request (path, POST, body = the simulated scenario, no name);
+  - the file is saved under the `Content-Disposition` name;
+  - the pending state;
+  - the name is trimmed and capped, and a blank name is left out;
+  - 403, 403 out-of-scope, 422 and 503 mapping;
+  - the 429 countdown, then a retry that exports;
+  - axe in the idle, ready and failed states.
+- `chat-panel.test.tsx`: one new P43 test (the button appears only when the tool result has a scenario; axe).
+- Label assertions updated in `download-button.test`, `ProjectsPage.test` and `p41-import-scenarios.test`.
+
+**Results:**
+- tsc clean.
+- eslint: 0 errors. The 9 warnings are pre-existing (TanStack Virtual incompatible-library and the like).
+- Full vitest: 2252 passed, 1 failed (273 files). The failure is the known pre-existing `app.test.tsx` "navigates to the Project Execution Timeline" (the Gantt Zoom slider), which was not touched.
+- There is no `dangerouslySetInnerHTML` and no new dependency.
+
+## [2026-11-17] P43-T02 rework — Gantt ordering, sections and outline; surface Summary sheets; wide-sheet layout (coordinator review) — backend-builder: DONE
+
+The coordinator rendered `gantt.xlsx` and `dashboard.xlsx` and asked for polish before the gate. Contract: `docs/API_CONTRACT_P43.md` §7 (supersedes the matching parts of §1, §2 and §5).
+
+**Drawn Gantt** (`xlsx_writer.chart_layout`), for every drawn Gantt (surface, planner, import current, saved and comparison):
+- **Sections:** "In the plan", "Queued (P3) …", "Not scheduled (P4)", then "Not in the plan (status …)". Each has a blue heading row. The headings are omitted when everything is in the plan.
+- **Order within a section:** priority P1→P4/Q, then band rank, then name. Band rank comes from `projects.band_rank` on the surface (a parameterised lookup over the hub-scoped `/gantt` ids) and from `ProjectInput.band_rank` on the planner. The import serves no rank, so it orders by priority, then name.
+- **Markers:** "(VIP)" and "(frozen)" in the name.
+- **One line, no step rows** for not-scheduled (P4) and not-in-the-plan projects. On the surface, a project with no bucket and no steps goes in the last section.
+- **Outline:** step rows are at outline level 1 with summary above, expanded by default.
+
+**Data sheets:**
+- identifying columns (project/name, code, hub, priority/set_priority, status, step_name) come first and are frozen;
+- id columns (`id`, `*_id`, `ref`, the hash) move to the far right;
+- headers wrap with a matching row height, and columns are capped at 36;
+- the Projects and Engineers sheets gain a `hub` name column;
+- Capacity `chambers` is one readable cell.
+
+CSV is unchanged: served column order, human headers.
+
+**Summary sheets** (`SummaryBlock`, never in CSV) open every surface xlsx:
+- **Dashboard:** the served `completing_within_year` P42 figures (headline incl. share %, by priority, by hub from the served buckets, by country);
+- **Gantt:** outcomes, priority, steps;
+- **Matrix:** scoring and bands;
+- **Register:** status, priority, hub;
+- **Capacity:** served booked % and status;
+- **Capacity planning:** engineers per hub, chambers per region.
+
+**Tests:**
+- New: chart order, sections and outline; column order, freeze and wrap; the Dashboard Summary equals `/dashboard/completing-within-year`.
+- Updated sheet-name expectations in `test_export_api`, `test_export_worker_task` and `test_p43_exports`, and the comparison `Ref` column in `test_p41_import_scenarios`.
+- Full suite: 3552 passed, 4 failed. All four are the known non-P43 failures (migration table count, render CSP, P37 PlanWeek contract, P20 step-row contract).
+- ruff and mypy: nothing new.
+
+**Samples:** re-rendered into `/private/tmp/claude-501/-Users-ayushroy-frigoglass/ff8faba8-f666-4b78-8bfb-6b8015cb81a9/scratchpad/exports/` from a fresh throwaway upgraded copy of dev, as before. The dev DB is untouched, the container is stopped, and the dump and env copy are deleted. Dev has no queued P3 projects, so the samples show no Queued section.
+
+## [2026-11-18] P43-T04 — security-auditor gate
+
+**Verdict: PASS** (no High or Critical). One Medium needs a fix before P43 is committed. It is cheap (one line) and is a regression of a control that was closed before (P13-F10).
+
+**Scope:** ADR 0057 / `docs/API_CONTRACT_P43.md`. Files: `services/xlsx_writer.py`, `services/whatif_export.py`, `POST /whatif/export.xlsx` (`api/routers/whatif.py`, `schemas/whatif.py` `SimulateExportIn`), the P43 diff of `services/export_builder.py`, `services/whatif_import_scenarios.py`, `services/import_format.py`, `api/routers/exports.py`, `workers/export_tasks.py`, and the frontend `whatif-export.ts`, `simulate-export-button.tsx` and `download-button.tsx`. Other sessions' files were not reviewed.
+
+**Verified, including with negative tests** (a temporary file, run and then deleted; 24/25 pass, and the one failure is M-1):
+- unauthenticated → 401;
+- Executive Viewer, Engineer and Auditor → 403. Portfolio Manager, Hub Planner and Admin → 200;
+- a `result` key → 422. `name` "" or longer than 120 → 422;
+- a Hub Planner naming another hub → 403 `SCENARIO_OUT_OF_SCOPE`;
+- another hub's project id in `priority_overrides` → 422 `INVALID_SCENARIO`, the same answer as an unknown id (no existence oracle; identical to `/whatif/simulate`);
+- an empty scenario from a Hub Planner leaks no other-hub project, engineer or hub;
+- the rate limit → 429 with `Retry-After`;
+- the audit row carries the shape, the count and `named`, never the name;
+- the hostile name `../../etc"\r\nX-Evil: 1` becomes `filename="etc_X-Evil_ 1.xlsx"` (no CRLF, quote or path).
+
+**xlsx:** every string cell goes through `_text`, which applies `neutralise_formula` and forces `data_type="s"`. That covers title, context, section, project/step names, leader/resource, outcome, legend, report items and headers. Conditional-format formulas are constants.
+
+**Summary sheets:**
+- The Dashboard summary calls the served `completing_within_year` with the caller's principal. It is the same `Surface.DASHBOARD/READ` as the export, scoped by `_dashboard_filter`. By-hub counts are tallied from the served scoped rows; by-country uses the served `regions`.
+- The Gantt `_band_ranks` is an ORM `IN` over the ids `/gantt` returned. It is used only as a sort key and never written.
+
+**Financial:** the planner export and every Summary hold no financial field. `test_no_financial_columns_without_the_right` passes. No logging in the new modules.
+
+**GDPR (OQ #8):**
+- the planner project-row leader is `None`;
+- the surface chart uses the served (self-only) `leader_name`;
+- step-row resource names follow ADR 0028, as `/gantt`;
+- there is no per-engineer utilization.
+
+**Other checks:**
+- Frontend: the `Content-Disposition` name is set only via `anchor.download`. No `dangerouslySetInnerHTML` in P43 files.
+- CSRF: not applicable (bearer-only).
+- No dependency change, so pip-audit / npm audit are unchanged. No secrets.
+
+| ID | Severity | Where | Finding | Fix |
+|---|---|---|---|---|
+| P43-S-M1 | Medium | `backend/services/export_builder.py` `csv_bytes` (`writer.writerow(header_labels(headers, labels))`) | **CSV header formula injection (CWE-1236), new in P43.** The Matrix CSV header now carries Admin-editable rubric labels (`ScoringRubric` label: strip + length only). It is written without `neutralise_formula`. Reproduced: label `=HYPERLINK("http://x")` is emitted raw as the header cell. Before P43 the header was the dimension key (`^[a-z][a-z0-9_]*$`), so this was safe. The xlsx header is guarded. | `writer.writerow([neutralise_formula(h) for h in header_labels(headers, labels)])`, plus a regression test with a `=`-prefixed rubric label on the Matrix CSV. |
+| P43-S-L1 | Low | `services/whatif_export.py`, `api/routers/whatif.py` export route | **Cost per request ≈ two engine runs plus a ~1-2 s workbook build, on the cheap simulate bucket** (30 burst, 0.5/s). The second engine call (`run_greedy_sgs`) has no cooperative deadline. The xlsx build runs in Starlette's default threadpool outside the per-user What-if slot. It is bounded: per-user slot, 200 added projects cap, 30 lines, a 120-char name. | Optional: a separate smaller bucket for `whatif.export` (like solve), or build the workbook inside `run_capped`. |
+| P43-S-I1 | Info | `docs/API_CONTRACT_P43.md` §3 | It says an out-of-scope **id** → 403. The code returns 422 `INVALID_SCENARIO`, which is deliberate (as `/simulate`, no existence oracle). | Fix the contract wording. |
+| P43-S-I2 | Info | `export_builder` filters context line | Hub-id filter values are echoed as hub names. Hub names are not secret (P18). | None. |
+| P43-S-I3 | Info | TLS / headers / CSP | Unchanged at the proxy by P43. | None. |
+
+## [2026-11-18] P43-T04 — workflow-auditor gate
+
+**Verdict: PASS** (0 reconciliation failures, 0 invariant failures). Advisories A1–A4 do not block. No feature code
+written, git not touched, live `rpd` DB never written (still p41a, max run v14 after the audit).
+
+**Method.** Own checker (scratchpad `p43wf/`): an openpyxl reader of the drawn chart and the Summary sheets written
+from the contract (§5, §7) only, not `tests/export_read.py`; expectations from raw SQL on the stored run rows plus my
+own R42-4 / R42-6 code. Disposable copy `rpd_p43audit` (pg_dump | pg_restore in rpd-pg-dev). On the copy only, I
+NULLed the four encrypted project columns and used a throwaway Fernet key. Then `alembic upgrade head` (p41a → p35b)
+and `scripts.p42_band_rules_run` with `RPD_CURRENT_WEEK=42`, which gave active run v15 (greedy, band_rules). Workbooks
+were built through the app builders in a READ ONLY transaction. The copy was dropped afterwards.
+
+**Surface Gantt** (`build_export_sheets("gantt")`; Super Admin, plus a Hub Planner scoped to OEM-HCK):
+- **Bars.** 330 projects and 1955 step rows. Every step's filled week cells equal stored `start_week..end_week`
+  inclusive, and equal served `GET /gantt` `planned_start_week..planned_end_week`.
+  - Skipped steps draw no bar.
+  - Colour is the palette slot of the step letter, and the letter is in the first cell.
+  - The pinned outline matches `pinned`.
+  - The project bar is slate, min start..max end of the placed steps, and equals the Start / End cells.
+  - Horizon 78. Gantt data row count = Σ max(1, steps).
+- **Sections.** These match the stored P42 flags: In the plan 200, Not scheduled (P4) 72 (one line each, no step
+  rows, "Not scheduled (P4)" text), Not in the plan 58 (On Hold / Cancelled, no bucket, no steps). Dev has no queued
+  P3 projects. Scoped: 8 / 3 / 3. I49 and I50 re-checked on all 330 rows.
+- **Order.** Priority, then `projects.band_rank` (none last), then name (casefold): exact in every section, all-hubs
+  and scoped. "(VIP)" / "(frozen)" markers are right.
+- **Gantt Summary.** Outcome tally, priority tally and step counts (placed, skipped, pinned) equal the stored rows.
+
+**Dashboard Summary** (all hubs; OEM-HCK scoped; a hub filter, R&D-India; a region filter, Greece):
+- **Headline.** Every figure equals `completing_within_year` and my stored-row buckets: 134 / 53 / 13 / 0, counting
+  200, 67.0 %, queued 0, P4 72, not in plan 58 (I53). The title carries run v15.
+- **By hub and by country.** Each bucket column sums to the headline. Per-hub cells equal my per-hub stored
+  buckets. The per-hub share is WY / (WY+SP+LO+BL), the headline basis.
+- **By priority.** Projects (Σ330), Within year (Σ134), Queued and Not scheduled (P4) reconcile to the headline.
+  "Counting" does not (see A1).
+
+**Other surface Summaries vs their own data sheets:** all consistent.
+- Matrix: 330 scored, 21 promoted; suggested-band and set-priority tallies.
+- Register: by status, priority and hub, each summing to 330.
+- Capacity: booked % and status per capacity hub equal the data columns.
+- Capacity planning: engineers per hub (all / active / active FTE) and chambers per region (count / platforms).
+
+**What-if planner export** (`planner_export`), vs the served `do_simulate` (as `/whatif/simulate`) and my own
+`apply_scenario` + `run_greedy_sgs` run. Three scenarios:
+- added P1 projects + a designer + overrides of two In-Queue P1/P2 → P3 and one In-Development → P4;
+- the empty scenario;
+- a Hub Planner scoped to R&D-Greece.
+Results:
+- **Bars.** Every drawn bar equals the engine step weeks. The project bar equals the outcome start..end.
+- **Simulate.** Finish weeks equal `SimulateResponse` (new projects matched by name). Outcome classes equal simulate.
+  Summary within-year before / after / change equal `diff`.
+- **Sections.** Queued 2 and P4 73 appear exactly for the overridden projects.
+- **Order.** Priority, then `ProjectInput.band_rank`, then name.
+- **Scope.** The scoped export draws only in-scope projects (7).
+
+**Import exports** (current result `plan_year_end_week=104`; saved scenario: 52 with 15 plan projects excluded; the
+comparison of both):
+- Drawn bars equal the served `ImportStepOut` start..end, and the project bar equals the served span.
+- Order is priority, then name.
+- Steps sheet rows equal served steps, and Summary numeric KPIs equal `result.kpis`.
+- `Gantt S1` / `Gantt S2` equal their own results.
+- Every plan project's `not_scheduled_priority` equals I49 from the DB.
+- Horizon widens to 130 where served weeks pass 78.
+
+**Samples** (`scratchpad/exports/`, built by the backend-builder at the calendar week, hence 114 / 57 % rather than
+134 / 67 %):
+- planner: drawn steps = Gantt data, 1969 / 1969;
+- gantt: 1941 / 1941 once skipped steps are taken into account (see A3).
+
+**No scheduler change:** nothing under `backend/scheduling`, `alembic` or `models` is modified, so a greedy vs CP-SAT
+diff is not applicable. None of the three prototype defects is touched.
+
+**Advisories (non-blocking):**
+- **A1 — Dashboard Summary "By priority" › "Counting"** sums to 258, while the headline "Counting projects (the
+  share's denominator)" is 200. The difference is exactly the 58 "Not in the plan" rows (scoped 11 vs 8 with 3;
+  Greece 29 vs 24 with 5).
+  - Cause: the served `priority_delivery.counting_total` = total − queued − P4. It includes status-excluded On Hold /
+    Cancelled rows, so the per-priority share has a different basis from the headline share (P42 advisory A3, OQ
+    #109).
+  - The export mirrors the served field (I9 holds).
+  - Fix (copy only, before owner acceptance): rename the column (e.g. "In band, less queued / P4") or add a block
+    note stating the identity.
+- **A2 — Planner vs surface section for Commercialized (51 projects).**
+  - Planner: What-if `classify_outcome` puts `excluded` before `within_year`. The planner Gantt therefore draws them
+    under "Not in the plan" as "Not scheduled (status)", while its own Summary "Projects within the year" (served
+    `diff`) counts them: 134 = 83 within_year class + 51.
+  - Surface: the stored bucket draws the same projects "In the plan · Within year".
+  - Both mirror their served source, and this predates P43 (OQ #109).
+  - Fix: a Summary note, or an alignment once #109 is answered.
+- **A3 — Surface "Gantt data" has no Skipped column** (the `/gantt` step `skipped` field). Skipped steps show planned
+  weeks in the data sheet but no bar; only the chart label says "(skipped)". Fix: add `skipped` to the data sheet.
+- **A4 — A frozen P4/Q project** (counts false, not P4-excluded) lands in bucket QUEUED. It would be drawn under
+  "Queued (P3) — …", which mislabels the band. Dev has 0 frozen projects, so this was not exercised. Fix: neutral
+  heading wording, or a frozen-P4 branch.
+
+**Gate: workflow leg PASS for P43.**
+
+## [2026-11-18] P43-R01 — P43-T04 gate remediation: security M-1, L-1, I-1 and workflow advisories A1, A3, A4 — backend-builder: DONE
+
+**Security:**
+- **M-1, CSV header formula injection.** `xlsx_writer.header_labels` now passes every label through `neutralise_formula`. That covers the CSV header row (`csv_bytes`) and every xlsx table and report header.
+  - Matrix dimension headers are Admin-editable rubric labels.
+  - Other header paths checked: Summary block headers, chart and legend text and titles all go through `_text` (already guarded); the compare `S{n}: name` columns were already neutralised; the template headers are written through `_text`.
+  - Regression tests: an Admin PUTs a rubric label `=HYPERLINK("http://x")` and the Matrix CSV and xlsx headers come out as `'=HYPERLINK(...)` with no formula cells; plus a unit test on `header_labels` / `csv_bytes`.
+- **L-1, rate limit.** Both remedies applied.
+  - `POST /whatif/export.xlsx` has its own `WHATIF_EXPORT_RATE_LIMIT` (6 requests, refilling one per 10 s). It no longer draws on the shared bucket.
+  - The workbook write now runs in `run_capped` (the per-user in-flight slot and the 20 s cap) instead of `run_in_threadpool`.
+  - Tests: the export bucket is limited separately (simulate still 200 after the export is 429), and a spy proves the write holds the slot.
+- **I-1.** Contract §3 corrected: an out-of-scope hub or region is 403 `SCENARIO_OUT_OF_SCOPE`; an out-of-scope project, engineer or chamber id is 422 `INVALID_SCENARIO`, so existence is not leaked.
+
+**Cosmetic:** the Dashboard Summary headline share is now a `0.0"%"` cell (`SummaryBlock.percent_cells`), like every other share. The label is "Within-year share".
+
+**Workflow advisories:**
+- **A1.** The "By priority" `counting_total` column is headed "Counted (incl. on hold / cancelled)". A note states the served identity: Σ counted = the headline denominator + not in the plan. Copy only; tested against `/dashboard/completing-within-year`.
+- **A3.** The surface Gantt data sheet gains a `skipped` column after `kind` (it also appears in CSV). The planner's Gantt data and the import Steps sheet already had one. Tested.
+- **A4.** A frozen P4 / Q project with the QUEUED bucket is drawn in its own section, "Locked P4 / Q — booked, not counted", after "Queued (P3)", with steps and hatched bars. This applies on the surface and the planner; the import serves no frozen flag. Tested with a frozen P4 and a frozen Q next to a waiting P3.
+
+**Contract:** `docs/API_CONTRACT_P43.md` §3 is corrected and §8 is added.
+
+**Results:**
+- Affected suites: 413 passed (after the security fixes), then 253 passed (after A1/A3/A4: the P43, export, P42, hardening, multi-select, worker and P41 suites).
+- ruff and mypy report nothing new on the touched files.
+
+**Samples:** not re-rendered for R01. The changes are a header guard, a column, a number format, a heading and a note; the existing samples remain representative.
+
+## [2026-11-18] P43-T04 — qa-inspector gate
+
+**Verdict: PASS.** Every acceptance item holds. Gaps G1–G4 are cosmetic and do not block; G5 needs a ruling and
+predates P43. G1–G3 are pinned by strict xfails, so the pin fails once the fix lands and must be removed with it.
+No feature code was written and git was not touched.
+
+**Suites:**
+- **Backend full** (`pytest`): 3552 passed, 4 failed, in 18 min. Coverage 96.29% (gate 70%). All four failures are
+  the known non-P43 ones: `test_migrations` up/down cycle (table count), `test_p27_render_csp`,
+  `test_openapi_frontend_contract::test_every_p4_surface_types_file_is_covered` (P37 `PlanWeek`), and
+  `test_p20 test_gantt_step_row_contract`. `test_super_admin_race` passed this time.
+- **Scheduling** (`pytest -c pytest-scheduling.ini`): 810 passed, coverage 95.79% (gate 85%). Nothing under
+  `backend/scheduling` changed in P43.
+- **P43 targeted run** (`test_p43_exports`, `test_p43_qa_gate`, the contract test, `test_p41_qa_gate`,
+  `test_p41_import_scenarios`, `test_export_api`, `test_export_worker_task`): 373 passed, 3 xfailed (G1–G3), and 1
+  known failure (PlanWeek).
+  - Coverage: `xlsx_writer` 99%, `whatif_export` 99%, `export_builder` 93%, `import_format` 100%,
+    `whatif_import_scenarios` 98%.
+  - The full run reported `xlsx_writer` at 75%. That figure is skewed because the scheduling coverage session wrote
+    `backend/.coverage` at the same time.
+- **Frontend:**
+  - tsc: clean.
+  - eslint: 0 errors, 9 warnings, all pre-existing (TanStack Virtual incompatible-library, react-refresh).
+  - vitest: 2252 passed, 1 failed, 273 files. The failure is the known `app.test.tsx` "navigates to the Project
+    Execution Timeline" (Gantt Zoom).
+  - A first vitest run, made alongside the backend suite, showed 7 failures (for example
+    `results-r05.test.tsx:160`) and took 710 s. These were load timeouts and did not reproduce on a solo rerun
+    (264 s).
+- **axe** (vitest-axe, 0 violations): `simulate-export-button.test.tsx` (idle, ready and failed states), `chat-panel`,
+  `GanttPage` / `GanttPage.pins`, the `ProjectsPage*` tests and `p41-import-scenarios`. Playwright e2e was not run;
+  it needs the live stack.
+
+**Acceptance checks:**
+- **Opens, with the §7 sheets in order:**
+  - API-level tests now cover all six surfaces: gantt, dashboard, capacity, matrix, project-registration and
+    capacity-planning. Before P43-T04, only gantt, dashboard, matrix and capacity-planning had their sheet names
+    asserted.
+  - The import current, saved and compare exports, the template and the planner export were already covered.
+  - Each workbook was also opened in openpyxl read-only mode.
+- **Styled headers and frozen panes:**
+  - Every data sheet has a navy, bold, white header on row 5, a freeze on row 6 below it, and an auto-filter from A5.
+  - Drawn sheets freeze at H6, filter A5:G, and set `summaryBelow=False`.
+  - Surface Summary sheets have the title block, then a blue heading bar, then a navy header.
+- **Drawn fills equal served weeks:**
+  - Existing test: the surface Gantt against `/gantt`, and the planner against the engine.
+  - New test: the import current result against `POST /whatif/import/simulate`, and each compare `Gantt S1` / `S2`
+    against its stored result, for every step and every week. Bar colours are always a palette slot, slate, or the
+    pale current-week colour.
+- **Sections, order and outline (§7), new API-level test:**
+  - Ordering is "In the plan", then P1 by band rank (rank 1 before rank 2, against name order), then P2, then
+    "Not in the plan (status: …)" with the On Hold project as one line.
+  - The "(VIP)" and "(pinned)" markers appear.
+  - Step rows are at outline level 1 and project rows at level 0. Nothing is hidden.
+- **Formula guard:** a hostile project name `=HYPERLINK(…)` and a hostile engineer name `+cmd|…` were sent through
+  all six surface exports. No cell anywhere is a formula, and the hostile text survives as `'`-prefixed text in the
+  Summary, the chart, the legend and the data sheets.
+- **Template:** `test_template_is_styled_and_still_parses`, plus the P41 round-trip tests: green.
+- **Contract:** added a `SimulateExportRequest` ↔ `SimulateExportIn` row to `test_openapi_frontend_contract.py`; it
+  is green.
+  - The row needed a `_NULLABILITY_ALLOWLIST` entry for `name`. This is a request body named `*In`, so the
+    `*Request` exemption misses it. The browser omits a blank name and never sends null.
+
+**Samples** (`scratchpad/exports/`, 11 workbooks): all open and have the contract sheets.
+- Reconciliation with my own script: every drawn step bar equals its data sheet's start..end.
+  - gantt: 1941 / 1941 step rows, once skipped steps are taken into account;
+  - import current: 2086 / 2086;
+  - import saved: 1876 / 1876;
+  - planner: 1941 / 1941.
+- 0 priority-order violations and 0 outline errors.
+- Sections: gantt shows plan / P4 / not in plan; planner shows all four; import shows none (all in the plan).
+
+**Gaps:**
+- **G1 (cosmetic, the coordinator's item, confirmed):** Dashboard Summary B12, "Within-year share (%)", is
+  `57` with `#,##0.00`, so it shows "57.00". Every other share cell (by priority, hub, country) uses `0.0"%"` and
+  shows "45.7%". §7 says "Shares are formatted 0.0%". Pinned: `test_dashboard_summary_shares_use_one_format`
+  (strict xfail).
+- **G2 (cosmetic, §1 deviation):** 10 Capacity headers stay snake_case: `design_load_by_priority_P1..P4/_Queue` and
+  `lab_load_by_priority_*`. `xlsx_writer._KEY_RE` (`^[a-z][a-z0-9_]*$`) rejects the capital letter, so `humanize`
+  is skipped. Pinned: `test_capacity_headers_are_human`.
+- **G3 (cosmetic, §1 deviation):** the compare "Outcome changes" sheet heads its week columns `S1: <name> finish_week`
+  (a raw key). Pinned: `test_comparison_outcome_change_headers_are_human`.
+- **G4 (cosmetic, §7 column order):** the import `Steps` sheet leads with "Status" (the step status), then
+  "Project", and freezes at B6. Its key is `project`, which is not in the identifying list (`project_name` /
+  `name`), so `status` is promoted ahead of it. Fix: add `project` to the identifying keys.
+- **G5 (needs a ruling; same as workflow A2; predates P43):** what-if `classify_outcome` ranks `excluded` above
+  `within_year`. As a result:
+  - The planner export draws 50–51 Commercialized projects under "Not in the plan" as "Not scheduled (status)".
+  - The surface Gantt draws the same projects under "In the plan · Within year".
+  - The planner Summary shows "Projects within the year after" = 114, while its "Outcomes after › Within year" = 63
+    (plus 51 Commercialized in "Not scheduled (status)" = 109, against the Dashboard's 58).
+  - The export mirrors simulate faithfully. Fix: a Summary note, or alignment once OQ #109 is answered.
+- **Minor:**
+  - The surface chart's status-excluded outcome text is "Not in the plan"; the §5 table says "Not scheduled
+    (status)".
+  - "Gantt data" has no Skipped column (same as workflow A3).
+  - A table with zero rows, such as Chambers with no chambers, gets no header row, because headers come from the
+    rows.
+
+**Files:**
+- `backend/tests/test_p43_qa_gate.py` (new): 8 tests and 3 strict xfails;
+- `backend/tests/test_openapi_frontend_contract.py`: one contract row and one allowlist entry.
+
+**Gate: qa leg PASS for P43.** Suggested P43-R01, non-blocking: G1–G4 and the minor copy item, removing the three
+xfail pins with the fix. G5 goes to the orchestrator for a ruling.

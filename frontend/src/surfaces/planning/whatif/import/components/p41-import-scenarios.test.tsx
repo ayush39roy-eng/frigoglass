@@ -90,7 +90,7 @@ afterEach(() => vi.unstubAllGlobals());
 /** The results re-simulate once on mount; the bar's actions are off until it settles. */
 async function idleBar() {
   const bar = await screen.findByTestId('import-scenario-bar');
-  await waitFor(() => expect(within(bar).getByRole('button', { name: 'Export' })).toBeEnabled());
+  await waitFor(() => expect(within(bar).getByRole('button', { name: 'Export to Excel (with Gantt chart)' })).toBeEnabled());
   return bar;
 }
 
@@ -256,7 +256,7 @@ describe('P41 Executive scenario bar', () => {
     startAtResults();
     renderWithProviders(<ImportPlanView />);
     const bar = await idleBar();
-    await user.click(within(bar).getByRole('button', { name: 'Export' }));
+    await user.click(within(bar).getByRole('button', { name: 'Export to Excel (with Gantt chart)' }));
     await waitFor(() => expect(saveBlob).toHaveBeenCalledWith(expect.anything(), 'current.xlsx'));
     const exp = bodiesOf('/whatif/import/export.xlsx')[0] as Record<string, unknown>;
     expect(Object.keys(exp).sort()).toEqual(['name', 'request']);
@@ -274,7 +274,7 @@ describe('P41 Executive scenario bar', () => {
       'Saved scenario — simulated W40 against plan v14',
     );
     expect(within(bar).getByRole('button', { name: 'Save scenario' })).toBeDisabled();
-    await user.click(within(bar).getByRole('button', { name: 'Export' }));
+    await user.click(within(bar).getByRole('button', { name: 'Export to Excel (with Gantt chart)' }));
     await waitFor(() => expect(saveBlob).toHaveBeenCalledWith(expect.anything(), 'saved-1.xlsx'));
     expect(calls.some((c) => c.url.pathname === '/whatif/import/scenarios/saved-1/export.xlsx')).toBe(true);
 
@@ -336,14 +336,14 @@ describe('P41 library and compare', () => {
       'october-plan.xlsx',
     ]);
     expect(screen.queryByTestId('compare-clock-banner')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Export comparison' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Export comparison to Excel (with Gantt charts)' })).toBeDisabled();
     expect(await seriousAxeViolations(container)).toEqual([]);
 
     // Add the W40 saved scenario: a clock banner; drop the session one: export is on.
     await user.click(within(library).getByRole('button', { name: 'Add Saved base to compare' }));
     expect(await screen.findByTestId('compare-clock-banner')).toHaveTextContent('W40');
     await user.click(screen.getByRole('checkbox', { name: 'Compare Session variant' }));
-    const exportBtn = screen.getByRole('button', { name: 'Export comparison' });
+    const exportBtn = screen.getByRole('button', { name: 'Export comparison to Excel (with Gantt charts)' });
     expect(exportBtn).toBeEnabled();
     await user.click(exportBtn);
     await waitFor(() => expect(saveBlob).toHaveBeenCalledWith(expect.anything(), 'compare.xlsx'));

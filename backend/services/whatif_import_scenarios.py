@@ -58,9 +58,19 @@ from schemas.whatif_import import (
     ImportSimulateResponse,
 )
 from services.active_run import get_active_run
-from services.export_builder import ExportSheets, neutralise_formula, xlsx_bytes
+from services.export_builder import ExportSheets, xlsx_bytes
+from services.outcome_buckets import priority_label
 from services.whatif_baseline import Scope, WhatIfContext, principal_audit_hub_id, resolve_scope
 from services.whatif_import import do_import_simulate, safe_file_name
+from services.xlsx_writer import (
+    SECTION,
+    GanttChart,
+    GanttProjectBar,
+    GanttStepBar,
+    SheetBook,
+    label_for,
+    neutralise_formula,
+)
 
 #: ADR 0055 D3.
 MAX_SCENARIOS_PER_USER = 200
@@ -481,6 +491,69 @@ def _kpi_rows(k: ImportKpisOut) -> list[tuple[str, Any]]:
     return [(name, getattr(k, name)) for name in ImportKpisOut.model_fields]
 
 
+#: P43: step id -> the seeded step name (a snapshot carries step ids only).
+SEED_STEP_NAMES: dict[str, str] = {row[1]: row[3] for row in dc.WORKFLOW_STEP_TEMPLATE_SEED}
+
+
+def import_gantt_chart(
+    result: ImportSimulateResponse, *, title: str, context: Sequence[str] = ()
+) -> GanttChart:
+    """P43 (ADR 0057 D2): the drawn chart of an import result. Bars are the
+    served step `start_week..end_week`; the project row is the served
+    `start_week..end_week`; the outcome is the served class."""
+
+    projects = [
+        GanttProjectBar(
+            name=p.name,
+            hub=p.hub,
+            priority=p.priority,
+            priority_label=priority_label(p.priority),
+            leader=p.leader_name,
+            outcome=p.outcome,
+            outcome_text=label_for(p.outcome, _OUTCOME_TEXT),
+            steps=[
+                GanttStepBar(
+                    step_id=st.step_id,
+                    name=SEED_STEP_NAMES.get(st.step_id, st.step_id),
+                    kind=st.kind,
+                    sequence_order=st.sequence_order,
+                    start=st.start_week,
+                    end=st.end_week,
+                    resource=st.engineer_name or st.chamber_code,
+                    skipped=st.skipped,
+                )
+                for st in p.steps
+            ],
+            start=p.start_week,
+            end=p.end_week,
+            status=p.status,
+        )
+        for p in result.projects
+    ]
+    return GanttChart(
+        title=title,
+        projects=projects,
+        current_week=result.current_week,
+        base_year=result.base_year,
+        horizon_weeks=result.horizon_weeks,
+        context=list(context),
+    )
+
+
+#: The import outcome classes as chart text (`xlsx_writer.OUTCOME_STYLES`
+#: wording; "within_year" is within the scenario's plan year).
+_OUTCOME_TEXT: dict[str, str] = {
+    "within_year": "Within plan year",
+    "spillover": "Spillover",
+    "left_out": "Spillover · unplaced",
+    "blocked": "Blocked",
+    "queued": "Queued",
+    "not_scheduled_priority": "Not scheduled (P4)",
+    "excluded": "Not in the plan (status)",
+    "data_error": "Data error",
+}
+
+
 def _bucket_rows(
     year: str, dimension: str, buckets: list[BreakdownBucketOut]
 ) -> list[dict[str, Any]]:
@@ -507,16 +580,18 @@ def scenario_sheets(
 ) -> ExportSheets:
     """Summary, Breakdown, Projects, Steps, Capacity: served fields only."""
 
-    summary: list[tuple[str, Any]] = [("name", name or "Current result")]
+    summary: list[tuple[str, Any]] = [("Scenario", SECTION), ("name", name or "Current result")]
     if source is not None:
         summary.extend(source.items())
     summary.extend(
         [
+            ("Plan", SECTION),
             ("mode", result.mode),
             ("plan_year_end_week", result.plan_year_end_week),
             ("simulated_week", result.current_week),
             ("horizon_weeks", result.horizon_weeks),
             ("base_year", result.base_year),
+            ("Results", SECTION),
         ]
     )
     summary.extend(_kpi_rows(result.kpis))
@@ -583,13 +658,29 @@ def scenario_sheets(
                  "booked_span_weeks": dw.booked_span_weeks}
             )  # fmt: skip
 
-    return {
-        "Summary": _kv(summary),
-        "Breakdown": (breakdown_headers, breakdown),
-        "Projects": (project_headers, projects),
-        "Steps": (step_headers, steps),
-        "Capacity": (cap_headers, capacity),
-    }
+    shown_name = name or "Current result"
+    context = [
+        f"Scenario: {shown_name}",
+        f"Simulated at W{result.current_week} of {result.base_year}",
+        f"{len(result.projects)} project(s)",
+    ]
+    chart = import_gantt_chart(
+        result, title=f"What-if import — {shown_name} — Gantt", context=context
+    )
+    return SheetBook(
+        {
+            "Summary": _kv(summary),
+            "Breakdown": (breakdown_headers, breakdown),
+            "Projects": (project_headers, projects),
+            "Steps": (step_headers, steps),
+            "Capacity": (cap_headers, capacity),
+        },
+        title=f"What-if import — {shown_name}",
+        context=context,
+        charts={"Gantt": chart},
+        reports={"Summary"},
+        order=["Summary", "Gantt", "Breakdown", "Projects", "Steps", "Capacity"],
+    )
 
 
 def _source_of(row: WhatifImportScenario) -> dict[str, Any]:
@@ -635,7 +726,9 @@ def compare_sheets(rows: Sequence[WhatifImportScenario]) -> ExportSheets:
         for r in rows
     ]
     for label in metas[0]:
-        meta_rows.append({"KPI": label, **{c: m[label] for c, m in zip(cols, metas, strict=True)}})
+        meta_rows.append(
+            {"KPI": label_for(label), **{c: m[label] for c, m in zip(cols, metas, strict=True)}}
+        )
 
     def served_total(res: ImportSimulateResponse, year: str) -> int | None:
         block = res.breakdowns.by_year.get(year)
@@ -666,7 +759,7 @@ def compare_sheets(rows: Sequence[WhatifImportScenario]) -> ExportSheets:
         meta_rows.append(line0)
     for name in ImportKpisOut.model_fields:
         values = [getattr(res.kpis, name) for res in results]
-        line: dict[str, Any] = {"KPI": name, **dict(zip(cols, values, strict=True))}
+        line: dict[str, Any] = {"KPI": label_for(name), **dict(zip(cols, values, strict=True))}
         first = values[0]
         for d, v in zip(deltas, values[1:], strict=True):
             line[d] = v - first if isinstance(v, int) and isinstance(first, int) else None
@@ -682,7 +775,8 @@ def compare_sheets(rows: Sequence[WhatifImportScenario]) -> ExportSheets:
                 refs.append(ref)
     change_headers = ["ref", "name", "hub"]
     for c in cols:
-        change_headers.extend([f"{c} outcome", f"{c} finish_week"])
+        # P43-R02 (QA G3): human week header; the `S{n}: name` prefix stays.
+        change_headers.extend([f"{c} outcome", f"{c} finish (week)"])
     changes: list[dict[str, Any]] = []
     for ref in refs:
         present = [m.get(ref) for m in by_ref]
@@ -693,9 +787,27 @@ def compare_sheets(rows: Sequence[WhatifImportScenario]) -> ExportSheets:
         line = {"ref": ref, "name": first_p.name, "hub": first_p.hub}
         for c, p in zip(cols, present, strict=True):
             line[f"{c} outcome"] = "not in scenario" if p is None else p.outcome
-            line[f"{c} finish_week"] = None if p is None else p.finish_week
+            line[f"{c} finish (week)"] = None if p is None else p.finish_week
         changes.append(line)
-    return {"KPIs": (kpi_headers, meta_rows), "Outcome changes": (change_headers, changes)}
+    # P43 (ADR 0057 D2): one drawn Gantt per scenario.
+    charts: dict[str, GanttChart] = {}
+    for i, (r, res) in enumerate(zip(rows, results, strict=True)):
+        charts[f"Gantt S{i + 1}"] = import_gantt_chart(
+            res,
+            title=f"S{i + 1}: {r.name} — Gantt",
+            context=[
+                f"Saved {r.created_at:%Y-%m-%d}",
+                f"Simulated at W{r.simulated_week}",
+                f"{len(res.projects)} project(s)",
+            ],
+        )
+    return SheetBook(
+        {"KPIs": (kpi_headers, meta_rows), "Outcome changes": (change_headers, changes)},
+        title="What-if scenario comparison",
+        context=[" vs ".join(cols)],
+        charts=charts,
+        order=["KPIs", "Outcome changes", *charts],
+    )
 
 
 def compare_xlsx(rows: Sequence[WhatifImportScenario]) -> bytes:

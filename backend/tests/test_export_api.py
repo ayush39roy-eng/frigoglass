@@ -23,7 +23,6 @@ its own dedicated (real, committed) Postgres + MinIO containers.
 
 from __future__ import annotations
 
-import csv
 import io
 import uuid
 
@@ -50,6 +49,7 @@ from tests.auth_helpers import (
     make_principal,
     override_current_principal,
 )
+from tests.export_read import csv_rows, xlsx_table
 from tests.factories import (
     make_engineer,
     make_hub,
@@ -84,15 +84,13 @@ async def _as(db_session, *roles: RoleName, hub_scope_all: bool = True, hub_ids=
 
 
 def _parse_csv(content: bytes) -> list[dict]:
-    text = content.decode("utf-8-sig")
-    return list(csv.DictReader(io.StringIO(text)))
+    # P43: human headers; rows are keyed by label and by machine key.
+    return csv_rows(content)
 
 
-def _parse_xlsx_sheet(content: bytes, sheet_name: str) -> tuple[list[str], list[list]]:
-    workbook = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
-    ws = workbook[sheet_name]
-    all_rows = list(ws.iter_rows(values_only=True))
-    return list(all_rows[0]), [list(r) for r in all_rows[1:]]
+def _parse_xlsx_sheet(content: bytes, sheet_name: str) -> tuple[list[str], list[dict]]:
+    # P43: title block above a styled header row (`TABLE_HEADER_ROW`).
+    return xlsx_table(content, sheet_name)
 
 
 # --------------------------------------------------------------------------
@@ -164,10 +162,10 @@ async def test_matrix_export_xlsx_includes_financial_columns(db_session):
             "application/vnd.openxmlformats-officedocument"
         )
         headers, rows = _parse_xlsx_sheet(resp.content, "Matrix")
-        assert "tcogs_eur" in headers
-        assert "selling_price_eur" in headers
-        assert "gross_margin_pct" in headers
-        row = dict(zip(headers, rows[0], strict=True))
+        assert "TCOGS (EUR)" in headers
+        assert "Selling price (EUR)" in headers
+        assert "Gross margin %" in headers
+        row = rows[0]
         assert row["project_name"] == "Matrix Project"
         assert float(row["tcogs_eur"]) == pytest.approx(1234.5)
         assert float(row["gross_margin_pct"]) == pytest.approx(35.5)
@@ -291,7 +289,7 @@ async def test_capacity_planning_export_xlsx_has_both_sheets(db_session):
         resp = await client.get("/exports/capacity-planning", params={"format": "xlsx"})
         assert resp.status_code == 200
         workbook = openpyxl.load_workbook(io.BytesIO(resp.content), read_only=True)
-        assert set(workbook.sheetnames) == {"Engineers", "Chambers"}
+        assert workbook.sheetnames == ["Summary", "Engineers", "Chambers"]  # P43 rework
     finally:
         _teardown()
 
@@ -391,9 +389,7 @@ async def test_export_job_status_owner_can_read_own_job(db_session):
 
     try:
         client = _client(db_session)
-        override_current_principal(
-            make_principal(RoleName.PORTFOLIO_MANAGER, user_id=user.id)
-        )
+        override_current_principal(make_principal(RoleName.PORTFOLIO_MANAGER, user_id=user.id))
         resp = await client.get(f"/exports/jobs/{job.id}")
         assert resp.status_code == 200
         body = resp.json()
@@ -418,9 +414,7 @@ async def test_export_job_status_404_for_non_owner_non_admin(db_session):
 
     try:
         client = _client(db_session)
-        override_current_principal(
-            make_principal(RoleName.PORTFOLIO_MANAGER, user_id=other.id)
-        )
+        override_current_principal(make_principal(RoleName.PORTFOLIO_MANAGER, user_id=other.id))
         resp = await client.get(f"/exports/jobs/{job.id}")
         assert resp.status_code == 404
     finally:

@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import csv
 import io
 
 import openpyxl
@@ -22,11 +21,13 @@ from api.main import app
 from models.enums import HubName, LabRegion, RoleName
 from models.schedule import ScheduleRunProjectStep
 from services.export_builder import csv_bytes, xlsx_bytes
+from services.xlsx_writer import TABLE_HEADER_ROW
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
     override_current_principal,
 )
+from tests.export_read import csv_rows
 from tests.factories import (
     make_engineer,
     make_hub,
@@ -71,7 +72,7 @@ def _client(db_session) -> AsyncClient:
 
 def test_csv_prefixes_formula_strings_and_leaves_numbers_alone():
     content = csv_bytes(HEADERS, [_row(t) for t in DANGEROUS] + [_row("Plain name")])
-    rows = list(csv.DictReader(io.StringIO(content.decode("utf-8-sig"), newline="")))
+    rows = csv_rows(content)
     for raw, row in zip(DANGEROUS, rows, strict=False):
         assert row["text"] == "'" + raw
         assert row["negative"] == "-5" and row["float"] == "-1.25" and row["number"] == "7"
@@ -82,7 +83,7 @@ def test_csv_prefixes_formula_strings_and_leaves_numbers_alone():
 def test_xlsx_writes_strings_as_text_never_formulas():
     content = xlsx_bytes({"S": (HEADERS, [_row(t) for t in DANGEROUS] + [_row("Plain")])})
     ws = openpyxl.load_workbook(io.BytesIO(content))["S"]
-    data = list(ws.iter_rows(min_row=2))
+    data = list(ws.iter_rows(min_row=TABLE_HEADER_ROW + 1))
     for raw, cells in zip(DANGEROUS, data, strict=False):
         text, number, negative, flt, _flag, items = cells
         # XML normalises a bare CR to LF on load; the leading `'` is what matters.
@@ -103,11 +104,13 @@ async def test_dashboard_export_neutralises_a_formula_project_name(db_session):
         csv_resp = await client.get("/exports/dashboard", params={"format": "csv"})
         xlsx_resp = await client.get("/exports/dashboard", params={"format": "xlsx"})
     assert csv_resp.status_code == xlsx_resp.status_code == 200
-    rows = list(csv.DictReader(io.StringIO(csv_resp.content.decode("utf-8-sig"))))
+    rows = csv_rows(csv_resp.content)
     assert rows[0]["project_name"].startswith("'=HYPERLINK")
     ws = openpyxl.load_workbook(io.BytesIO(xlsx_resp.content))["Dashboard"]
-    headers = [c.value for c in next(ws.iter_rows(max_row=1))]
-    cell = list(ws.iter_rows(min_row=2))[0][headers.index("project_name")]
+    headers = [
+        c.value for c in next(ws.iter_rows(min_row=TABLE_HEADER_ROW, max_row=TABLE_HEADER_ROW))
+    ]
+    cell = list(ws.iter_rows(min_row=TABLE_HEADER_ROW + 1))[0][headers.index("Project")]
     assert cell.data_type == "s" and cell.value.startswith("'=HYPERLINK")
 
 
@@ -131,7 +134,7 @@ async def test_exports_include_leader_name_and_neutralise_formulas(db_session):
     assert live.status_code == 200
     assert live.json()["rows"][0]["leader_name"] == "Leader Self Name"
     # ADR 0028: exports carry the leader name again.
-    rows = list(csv.DictReader(io.StringIO(csv_resp.content.decode("utf-8-sig"))))
+    rows = csv_rows(csv_resp.content)
     assert rows and all(r["leader_name"] == "Leader Self Name" for r in rows)
     assert rows[0]["leader_engineer_id"] == str(leader.id)
     ws = openpyxl.load_workbook(io.BytesIO(xlsx_resp.content))["Dashboard"]
@@ -143,7 +146,7 @@ async def test_exports_include_leader_name_and_neutralise_formulas(db_session):
     await db_session.flush()
     async with _client(db_session) as client:
         again = await client.get("/exports/dashboard", params={"format": "csv"})
-    rows = list(csv.DictReader(io.StringIO(again.content.decode("utf-8-sig"))))
+    rows = csv_rows(again.content)
     assert rows[0]["leader_name"].startswith("'=SUM")
 
 
@@ -162,7 +165,7 @@ async def test_gantt_and_registration_exports_carry_leader_name(db_session):
         reg = await client.get("/exports/project-registration", params={"format": "csv"})
     for resp in (gantt, reg):
         assert resp.status_code == 200, resp.text
-        rows = list(csv.DictReader(io.StringIO(resp.content.decode("utf-8-sig"))))
+        rows = csv_rows(resp.content)
         assert rows and rows[0]["leader_name"].startswith("'=SUM")
 
 

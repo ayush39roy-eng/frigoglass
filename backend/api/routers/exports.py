@@ -106,6 +106,7 @@ from schemas.export import ExportJobAccepted, ExportJobListItem, ExportJobStatus
 from services.category_type_filter import stored_filter
 from services.currency import rate_to_eur as currency_rate_to_eur
 from services.export_builder import ExportFilters, build_export_sheets, csv_bytes, xlsx_bytes
+from services.xlsx_writer import book_labels
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 
@@ -219,7 +220,7 @@ async def _respond(
     if export_format == ExportFormat.CSV:
         sheet_name = csv_sheet if csv_sheet in sheets else next(iter(sheets))
         headers, rows = sheets[sheet_name]
-        content = csv_bytes(headers, rows)
+        content = csv_bytes(headers, rows, book_labels(sheets))
         media_type = "text/csv"
         filename = f"{filename_stem}.csv"
     else:

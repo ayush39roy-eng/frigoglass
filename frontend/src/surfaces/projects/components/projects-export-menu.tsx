@@ -92,7 +92,7 @@ export function ProjectsExportMenu({ sources }: { sources: ExportSource[] }): Re
                   {source.label} as CSV
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => void download(source, 'xlsx')} disabled={pending !== null}>
-                  {source.label} as XLSX
+                  {source.label} as Excel
                 </DropdownMenuItem>
               </DropdownMenuGroup>
             </React.Fragment>

@@ -104,6 +104,14 @@ export interface SimulateRequest {
   scenario?: ScenarioRequest;
 }
 
+/** P43 (ADR 0057 D3, API_CONTRACT_P43 §3): body of `POST /whatif/export.xlsx`. Strict on the
+ *  server; a `result` key is rejected, the server always simulates again. */
+export interface SimulateExportRequest {
+  scenario: ScenarioRequest;
+  /** Optional, 1..120 chars; names the Summary sheet and the file. Never audited. */
+  name?: string;
+}
+
 export interface SolveRequest {
   scenario?: ScenarioRequest;
   target?: WhatIfTarget;

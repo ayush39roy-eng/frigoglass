@@ -61,6 +61,9 @@ export interface DownloadButtonProps {
   hidden?: boolean;
   disabled?: boolean;
   label?: string;
+  /** P43 (ADR 0057): menu copy. The Gantt says its workbook carries a drawn chart. */
+  csvLabel?: string;
+  xlsxLabel?: string;
   className?: string;
 }
 
@@ -71,6 +74,8 @@ export function DownloadButton({
   hidden = false,
   disabled = false,
   label = 'Download',
+  csvLabel = 'Download as CSV',
+  xlsxLabel = 'Download as Excel',
   className,
 }: DownloadButtonProps): React.JSX.Element | null {
   const [pending, setPending] = React.useState<DownloadExportFormat | null>(null);
@@ -117,10 +122,10 @@ export function DownloadButton({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => void handleDownload('csv')} disabled={pending !== null}>
-            Download as CSV
+            {csvLabel}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void handleDownload('xlsx')} disabled={pending !== null}>
-            Download as XLSX
+            {xlsxLabel}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

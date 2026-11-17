@@ -355,6 +355,9 @@ export default function GanttPage(): React.JSX.Element {
                   type: selectionParam(filters.type),
                 }}
                 fallbackFilename="gantt-export"
+                // P43 (ADR 0057 D2): the workbook carries a drawn Gantt sheet; CSV is the table.
+                xlsxLabel="Download as Excel (with Gantt chart)"
+                csvLabel="Download as CSV (data only)"
                 className="ml-auto [&_button]:h-7"
               />
             </CardContent>

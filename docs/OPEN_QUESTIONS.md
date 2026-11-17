@@ -1317,3 +1317,9 @@ means it is queued and never counts toward the year. A score below 40 maps to P4
 scheduled. Should an added project default to P2 instead?
 **Assuming until answered:** unchanged (P3, In Queue). The What-if shows it as "Queued". **Who must
 answer:** owner.
+
+### 112. Does anyone parse our exported spreadsheets by column name? *(2026-11-17, P43, ADR 0057, non-blocking)*
+
+The exports now use readable column names ("Project", "Planned start week") instead of
+`project_name` / `planned_start_week`.
+**Assuming until answered:** nobody parses them automatically. **Who must answer:** client.

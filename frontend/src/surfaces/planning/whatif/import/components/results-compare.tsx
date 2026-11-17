@@ -483,7 +483,7 @@ export function ResultsCompare(): React.JSX.Element {
                   }}
                 >
                   {download.pending ? <Spinner className="size-3.5" /> : <Download />}
-                  Export comparison
+                  Export comparison to Excel (with Gantt charts)
                 </Button>
               </span>
             }

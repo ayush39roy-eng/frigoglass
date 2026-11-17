@@ -2612,3 +2612,14 @@ Opened 2026-11-17 (owner request).
 | P42-T03 | Backend: band labels served, KPI / dashboard / executive / capacity demand per ruling, persistence of new result fields (migration if needed), contract `docs/API_CONTRACT_P42.md`; tests | backend-builder | T01, T02 types | pytest green, ruff/mypy clean; MEMORY entry | DONE (MEMORY 2026-11-17 P42-T03) |
 | P42-T04 | Frontend: band labels, "Queued" / "Not scheduled (P4)" display, KPI copy, priority-move preview copy; tests | frontend-builder | T03 contract | tsc, eslint, vitest green; MEMORY entry | DONE (MEMORY 2026-11-17 P42-T04) |
 | P42-T05 | Gate: qa, workflow, security | three gatekeepers | T02–T04 | three PASSes | DONE (MEMORY 2026-11-17 P42-T05: qa, workflow, security PASS) |
+
+## P43 — Presentable Excel exports with a drawn Gantt chart (ADR 0057)
+
+Opened 2026-11-17 (owner request). Presentation only.
+
+| ID | Task | Owner | Depends on | Acceptance | Status |
+|---|---|---|---|---|---|
+| P43-T01 | ADR 0057, OQ #112 | orchestrator | — | docs written | DONE (MEMORY 2026-11-17 P43-T01) |
+| P43-T02 | Backend: styled workbook writer for every xlsx export; drawn Gantt sheet in the Gantt, What-if import result, saved scenario and comparison exports; What-if planner export if missing; contract note `docs/API_CONTRACT_P43.md`; tests | backend-builder | T01 | pytest green; openpyxl round-trip tests (styles, fills per week, legend, frozen panes, formula guard); MEMORY entry | DONE (MEMORY 2026-11-17 P43-T02) |
+| P43-T03 | Frontend: export buttons wherever a Gantt / scenario result is shown and none exists; tests | frontend-builder | T02 contract | tsc, eslint, vitest; MEMORY entry | DONE (MEMORY 2026-11-17 P43-T03) |
+| P43-T04 | Gate: qa, workflow (reconciliation: drawn bars = served weeks), security | three gatekeepers | T02, T03 | three PASSes | TODO |

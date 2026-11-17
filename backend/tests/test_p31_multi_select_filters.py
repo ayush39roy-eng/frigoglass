@@ -19,8 +19,6 @@ projects' category nulled so `Unmapped` has members.
 
 from __future__ import annotations
 
-import csv
-import io
 from enum import Enum
 from types import SimpleNamespace
 from typing import Any
@@ -41,6 +39,7 @@ from services.category_type_filter import (
 )
 from services.export_builder import build_export_sheets
 from tests.auth_helpers import make_principal
+from tests.export_read import csv_rows
 from tests.test_p13_region_filter import (
     _act_as,
     _cleanup,  # noqa: F401  (autouse fixture)
@@ -64,7 +63,7 @@ async def _get(client: AsyncClient, path: str, **params: Any) -> Any:
 def _csv_rows(resp: Any) -> list[dict[str, str]]:
     """A CSV export's rows (the file is UTF-8 with a BOM)."""
 
-    return list(csv.DictReader(io.StringIO(resp.content.decode("utf-8-sig"))))
+    return csv_rows(resp.content)  # P43: human headers
 
 
 def _params(params: dict[str, Any]) -> list[tuple[str, str]]:

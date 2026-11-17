@@ -64,7 +64,7 @@ describe('DownloadButton', () => {
     render(<DownloadButton path="/exports/capacity" fallbackFilename="capacity-export" />);
 
     await user.click(screen.getByRole('button', { name: /download/i }));
-    const xlsxItem = await screen.findByRole('menuitem', { name: 'Download as XLSX' });
+    const xlsxItem = await screen.findByRole('menuitem', { name: 'Download as Excel' });
     await user.click(xlsxItem);
 
     await waitFor(() => expect(saveBlob).toHaveBeenCalledTimes(1));

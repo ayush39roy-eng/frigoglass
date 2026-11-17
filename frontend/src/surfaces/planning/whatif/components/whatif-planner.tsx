@@ -28,6 +28,7 @@ import { ChatPanel } from './chat-panel';
 import { EstimateView } from './estimate-view';
 import { NativeSelect } from './form-controls';
 import { ScenarioBuilder } from './scenario-builder';
+import { SimulateExportButton } from './simulate-export-button';
 import { SimulateView } from './simulate-view';
 import { SolveView } from './solve-view';
 import { WhatIfErrorNotice } from './whatif-error';
@@ -245,7 +246,13 @@ export function WhatIfPlanner({ chambers }: WhatIfPlannerProps): React.JSX.Eleme
                   render={(d) => <EstimateView data={d} />}
                 />
               </TabsContent>
-              <TabsContent value="simulate">
+              <TabsContent value="simulate" className="space-y-s3">
+                {/* P43 (ADR 0057 D3): the workbook is built from the scenario of the result on
+                    screen, which the server simulates again. */}
+                <SimulateExportButton
+                  scenario={simulate.isSuccess ? (simulate.variables.scenario ?? null) : null}
+                  disabled={simulate.isPending}
+                />
                 <ResultPane<SimulateResponse, SimulateRequest>
                   mutation={simulate}
                   current={simulateBody}

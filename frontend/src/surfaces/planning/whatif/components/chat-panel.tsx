@@ -22,6 +22,7 @@ import type {
 import { describeScenario } from '../describe-scenario';
 import { classifyWhatIfError, useAsk, type WhatIfErrorInfo } from '../use-whatif';
 import { EstimateView } from './estimate-view';
+import { SimulateExportButton } from './simulate-export-button';
 import { SimulateView } from './simulate-view';
 import { SolveView } from './solve-view';
 import { EXAMPLE_PROMPTS } from './chat-prompts';
@@ -107,7 +108,13 @@ function ToolResult({ run }: { run: ToolRunOut }): React.JSX.Element {
           </p>
         ) : null}
         {run.result?.kind === 'estimate' ? <EstimateView data={run.result} /> : null}
-        {run.result?.kind === 'simulation' ? <SimulateView data={run.result} /> : null}
+        {run.result?.kind === 'simulation' ? (
+          <div className="space-y-s3">
+            {/* P43 (ADR 0057 D3): the tool run's own scenario, simulated again by the server. */}
+            {run.scenario ? <SimulateExportButton scenario={run.scenario} /> : null}
+            <SimulateView data={run.result} />
+          </div>
+        ) : null}
         {run.result?.kind === 'solution' ? <SolveView data={run.result} /> : null}
         {run.result?.kind === 'capacity_snapshot' ? <SnapshotView data={run.result} /> : null}
       </div>

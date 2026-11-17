@@ -33,7 +33,9 @@ from services.plan_import_xlsx import (
     default_field_aliases,
     parse_plan_workbook,
 )
+from services.xlsx_writer import TABLE_HEADER_ROW
 from tests.auth_helpers import clear_current_principal_override
+from tests.export_read import keys_of, report
 from tests.plan_import_helpers import SECRET_CUSTOMER, SECRET_NOTE, build_workbook, row
 from tests.test_p32_plan_import_xlsx import _ctx
 from tests.test_p32_whatif_import_api import (
@@ -575,7 +577,15 @@ async def test_scope_visibility_is_404_and_edit_rights(db_session):
 
 
 def _cells(ws: Any) -> list[list[Any]]:
-    return [[c.value for c in r] for r in ws.iter_rows()]
+    """P43: a table from its header row down (the title block is above)."""
+
+    return [[c.value for c in r] for r in ws.iter_rows(min_row=TABLE_HEADER_ROW)]
+
+
+def _summary(ws: Any) -> dict[str, Any]:
+    """P43: the Summary report, keyed by label and by machine key."""
+
+    return {k: v for label, v in report(ws).items() for k in keys_of(label)}
 
 
 async def test_scenario_export_sheets_and_formula_injection(db_session):
@@ -596,14 +606,14 @@ async def test_scenario_export_sheets_and_formula_injection(db_session):
     assert resp.headers["content-type"] == XLSX
     assert resp.headers["content-disposition"] == 'attachment; filename="evil.xlsx"'
     wb = workbook(resp.content)
-    assert wb.sheetnames == ["Summary", "Breakdown", "Projects", "Steps", "Capacity"]
-    summary = dict((r[0], r[1]) for r in _cells(wb["Summary"])[1:])
+    assert wb.sheetnames == ["Summary", "Gantt", "Breakdown", "Projects", "Steps", "Capacity"]
+    summary = _summary(wb["Summary"])
     assert summary["name"] == "'@evil"
     assert summary["note"] == "'+cmd|' /C calc'!A0"
     assert summary["within_plan_year"] == saved["kpis"]["within_plan_year"]
     assert summary["plan_excluded"] == 0
     projects = _cells(wb["Projects"])
-    names = [r[projects[0].index("name")] for r in projects[1:]]
+    names = [r[projects[0].index("Name")] for r in projects[1:]]
     assert '\'=HYPERLINK("http://x")' in names
     for ws in wb.worksheets:
         for r in ws.iter_rows():
@@ -632,7 +642,7 @@ async def test_current_result_export_recomputes(db_session):
         resp = await c.post("/whatif/import/export.xlsx", json={"name": "My pick", "request": req})
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-disposition"] == 'attachment; filename="My pick.xlsx"'
-    summary = dict((r[0], r[1]) for r in _cells(workbook(resp.content)["Summary"])[1:])
+    summary = _summary(workbook(resp.content)["Summary"])
     assert summary["name"] == "My pick"
     for k, v in fresh["kpis"].items():
         assert summary[k] == v, k
@@ -662,7 +672,7 @@ async def test_compare_export(db_session):
         resp = await c.get(f"/whatif/import/scenarios/compare.xlsx?ids={ida},{idb}")
     assert resp.status_code == 200, resp.text
     wb = workbook(resp.content)
-    assert wb.sheetnames == ["KPIs", "Outcome changes"]
+    assert wb.sheetnames == ["KPIs", "Outcome changes", "Gantt S1", "Gantt S2"]
     kpis = _cells(wb["KPIs"])
     assert kpis[0] == ["KPI", "S1: A", "S2: =B", "S2 - S1"]
     # Workflow A4: the Compare tab's two derived rows, row for row.
@@ -675,12 +685,13 @@ async def test_compare_export(db_session):
     a_np = a_res["breakdowns"]["by_year"]["not_placed"]["total"]
     b_np = b_res["breakdowns"]["by_year"]["not_placed"]["total"]
     assert not_placed[1:] == [a_np, b_np, b_np - a_np]
-    line = next(r for r in kpis if r[0] == "plan_excluded")
+    line = next(r for r in kpis if r[0] == "Plan excluded")
     assert line[1:] == [0, 1, 1]
-    src = next(r for r in kpis if r[0] == "source_file_name")
+    src = next(r for r in kpis if r[0] == "Source file")
     assert src[1:3] == ["plan.xlsx", "plan.xlsx"]
     changes = _cells(wb["Outcome changes"])
-    gamma = [r for r in changes[1:] if r[0] == str(world.gamma.id)]
+    ref_col = changes[0].index("Ref")  # P43 rework: id columns sit at the far right
+    gamma = [r for r in changes[1:] if r[ref_col] == str(world.gamma.id)]
     assert gamma and gamma[0][changes[0].index("S2: =B outcome")] == "not in scenario"
     (audit,) = await audit_rows(db_session, "whatif_scenario.exported")
     assert audit.after_state["kind"] == "compare" and audit.after_state["ids"] == [ida, idb]

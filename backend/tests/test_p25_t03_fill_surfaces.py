@@ -10,9 +10,6 @@ stopped at 11.00, Low 30 / 1 wk not reached).
 
 from __future__ import annotations
 
-import csv
-import io
-
 import pytest
 from sqlalchemy import event
 
@@ -21,6 +18,7 @@ from api.main import app
 from models.enums import HubName, LabRegion, RoleName
 from services.export_builder import MATRIX_PROMOTED_BAND_HEADER
 from tests.auth_helpers import clear_current_principal_override
+from tests.export_read import csv_header, csv_rows, key_for, xlsx_table
 from tests.factories import make_schedule_run
 from tests.test_p25_capacity_fill import (
     _act_as,
@@ -45,9 +43,9 @@ def _board_cards(board: dict) -> dict[str, dict]:
 
 
 def _export_rows(content: bytes) -> tuple[list[str], dict[str, dict[str, str]]]:
-    reader = csv.DictReader(io.StringIO(content.decode("utf-8-sig")))
-    rows = list(reader)
-    return list(reader.fieldnames or []), {r["project_name"]: r for r in rows}
+    # P43: human headers; compared here by machine key.
+    headers = [key_for(h) for h in csv_header(content)]
+    return headers, {r["project_name"]: r for r in csv_rows(content)}
 
 
 def _csv_fill(row: dict[str, str]) -> tuple[str | None, str | None, bool, str | None]:
@@ -117,24 +115,18 @@ async def test_export_xlsx_carries_the_fill_and_neutralises_formulas(db_session)
     """The new text column goes through the same formula guard; a formula-like
     project name is still neutralised in the Matrix export."""
 
-    import openpyxl
-
     hub, run, p = await _hand_worked_world(db_session)
     await _project(db_session, hub, run, "=HYPERLINK(1)", 20, 1)
     await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
     async with _client(db_session) as client:
         resp = await client.get("/exports/matrix", params={"format": "xlsx"})
-    ws = openpyxl.load_workbook(io.BytesIO(resp.content))["Matrix"]
-    rows = list(ws.iter_rows(values_only=True))
-    headers = list(rows[0])
-    by_name = {
-        r[headers.index("project_name")]: dict(zip(headers, r, strict=True)) for r in rows[1:]
-    }
+    _, rows = xlsx_table(resp.content, "Matrix")
+    by_name = {r["project_name"]: r for r in rows}
     first = by_name["First"]
     assert (first[MATRIX_PROMOTED_BAND_HEADER], first["score_band"], first["capacity_fill"]) == (
         "P1",
         "P2",
-        True,
+        "Yes",
     )
     assert first["capacity_fill_reason"].startswith("P1 (capacity fill)")
     assert "'=HYPERLINK(1)" in by_name

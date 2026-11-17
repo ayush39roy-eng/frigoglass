@@ -13,8 +13,6 @@ test (own container, the client_2026 seed's scores) is at the bottom.
 from __future__ import annotations
 
 import asyncio
-import csv
-import io
 import json
 import uuid
 from pathlib import Path
@@ -43,6 +41,7 @@ from tests.auth_helpers import (
     override_current_principal,
 )
 from tests.conftest import run_alembic
+from tests.export_read import csv_header, csv_rows
 from tests.factories import make_hub, make_priority_score, make_project, make_user
 from tests.rubric_helpers import INITIAL_KEYS, INITIAL_WEIGHTS, score_body, score_of
 from tests.test_p25_capacity_fill import _hub10
@@ -406,8 +405,11 @@ async def test_preview_equals_the_saved_result_including_capacity_fill(db_sessio
         # (the template copy; P33-T13: was the retired user override).
         db_session.add(
             ProjectWorkflowStep(
-                project_id=project.id, step_template_id="PDD-A", sequence_order=1,
-                duration_weeks=1, plan_weeks=weeks,
+                project_id=project.id,
+                step_template_id="PDD-A",
+                sequence_order=1,
+                duration_weeks=1,
+                plan_weeks=weeks,
             )
         )
     await make_project(db_session, hub, name="Unscored")
@@ -700,7 +702,9 @@ async def test_score_put_shape_unknown_keys_null_and_partial(db_session):
         .all()
     )
     cleared_all = [
-        a for a in audit if "strategic_project" in a.after_state["scores"]
+        a
+        for a in audit
+        if "strategic_project" in a.after_state["scores"]
         and a.after_state["scores"]["strategic_project"] is None
     ]
     assert len(cleared_all) == 1
@@ -711,9 +715,8 @@ async def test_score_put_shape_unknown_keys_null_and_partial(db_session):
 
 
 def _export_rows(content: bytes) -> tuple[list[str], dict[str, dict[str, str]]]:
-    reader = csv.DictReader(io.StringIO(content.decode("utf-8-sig")))
-    rows = list(reader)
-    return list(reader.fieldnames or []), {r["project_name"]: r for r in rows}
+    # P43: human headers (a dimension column is headed by its rubric label).
+    return csv_header(content), {r["project_name"]: r for r in csv_rows(content)}
 
 
 async def test_all_readers_consistent_after_a_rubric_change(db_session):
@@ -782,12 +785,14 @@ async def test_all_readers_consistent_after_a_rubric_change(db_session):
     # Export: one column per ACTIVE dimension, after has_score, display order.
     assert export.status_code == 200
     headers, exported = _export_rows(export.content)
-    at = headers.index("has_score") + 1
-    assert headers[at : at + len(active_keys)] == active_keys
-    assert "annual_volume" not in headers
-    assert exported["Alpha"]["strategic_project"] == "5"
-    assert exported["Alpha"]["carbon"] == ""
-    assert exported["Gamma"]["strategic_project"] == ""
+    label = {d["key"]: d["label"] for d in dims_table["dimensions"]}
+    old_label = {d["key"]: d["label"] for d in rubric["dimensions"]}
+    at = headers.index("Scored") + 1
+    assert headers[at : at + len(active_keys)] == [label[k] for k in active_keys]
+    assert old_label["annual_volume"] not in headers
+    assert exported["Alpha"][label["strategic_project"]] == "5"
+    assert exported["Alpha"][label["carbon"]] == ""
+    assert exported["Gamma"][label["strategic_project"]] == ""
     assert exported["Alpha"]["normalized_pct"] == "67"
 
 

@@ -33,6 +33,7 @@ from services.plan_import_xlsx import (
     norm_alias,
 )
 from services.whatif_baseline import principal_audit_hub_id
+from services.xlsx_writer import SheetBook
 
 #: ADR 0055 D1 / API_CONTRACT_P41 A: fixed plain-English labels.
 FIELD_LABELS: dict[str, str] = {
@@ -294,4 +295,12 @@ def template_xlsx(aliases: Mapping[str, Sequence[str]]) -> bytes:
         for pdd, letter in zip(pdd_codes, STEP_LETTERS, strict=True):
             section[pdd] = f"{wf}-{letter}"
         steps_rows.extend([blank(), section, category_header(), blank()])
-    return xlsx_bytes({"Projects": (headers, []), "Process steps": (steps_headers, steps_rows)})
+    # P43 (ADR 0057 D1): the header styling only. No title block and the
+    # headers exactly as given, so the parser reads the template unchanged.
+    return xlsx_bytes(
+        SheetBook(
+            {"Projects": (headers, []), "Process steps": (steps_headers, steps_rows)},
+            title_block=False,
+            raw_headers=True,
+        )
+    )

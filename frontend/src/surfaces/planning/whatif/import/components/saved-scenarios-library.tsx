@@ -284,10 +284,10 @@ function SavedCard({ s }: { s: SavedScenarioSummary }): React.JSX.Element {
           variant="ghost"
           disabled={download.pending !== null}
           onClick={() => void download.run('export', () => downloadSavedScenario(s.id, s.name))}
-          aria-label={`Export ${s.name}`}
+          aria-label={`Export to Excel: ${s.name} (with Gantt chart)`}
         >
           {download.pending ? <Spinner className="size-3.5" /> : <Download />}
-          Export
+          Export to Excel
         </Button>
         {s.can_edit ? (
           <>

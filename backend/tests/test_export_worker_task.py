@@ -57,6 +57,7 @@ from models.user import User
 from seed.initial_scoring_rubric import seed_priority_score
 from services.scoring_rubric import load_rubric
 from tests.conftest import run_alembic
+from tests.export_read import xlsx_table
 from tests.factories import rank_all_bands
 from workers.export_tasks import _generate_export_async
 
@@ -237,11 +238,10 @@ async def test_generate_export_uploads_to_minio_and_completes(_point_at_real_inf
                 response.close()
                 response.release_conn()
             workbook = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
-            assert workbook.sheetnames == ["Matrix"]
-            ws = workbook["Matrix"]
-            rows = list(ws.iter_rows(values_only=True))
-            headers = list(rows[0])
-            data_row = dict(zip(headers, rows[1], strict=True))
+            assert workbook.sheetnames == ["Summary", "Matrix"]  # P43 rework
+            # P43: styled table (title block, human headers).
+            _, table_rows = xlsx_table(content, "Matrix")
+            data_row = table_rows[0]
             assert data_row["project_name"] == "Worker Task Matrix Project"
             assert float(data_row["tcogs_eur"]) == pytest.approx(999.99)
 

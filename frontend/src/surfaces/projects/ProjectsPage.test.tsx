@@ -365,7 +365,7 @@ describe('Projects page — Export menu', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'Export' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'Registration register as XLSX' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Registration register as Excel' }));
     expect(http.download).toHaveBeenLastCalledWith(
       '/exports/project-registration',
       // `type` there too (P31); Unmapped is a 422 on that endpoint, so it is not sent.
@@ -378,7 +378,7 @@ describe('Projects page — Export menu', () => {
     useDashboardProjects.mockReturnValue(ok([row('a')]));
     renderWithProviders(<ProjectsPage />, { session: READ_ONLY });
     await user.click(screen.getByRole('button', { name: 'Export' }));
-    expect(await screen.findByRole('menuitem', { name: 'Projects list as XLSX' })).toBeInTheDocument();
+    expect(await screen.findByRole('menuitem', { name: 'Projects list as Excel' })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: /Registration register/ })).not.toBeInTheDocument();
   });
 });

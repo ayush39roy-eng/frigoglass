@@ -4,6 +4,8 @@
 * `POST /whatif/simulate`  the real greedy scheduler on a copy of the plan
 * `POST /whatif/solve`     the smallest additions that meet a target
 * `POST /whatif/ask`       the chat: a model that only translates and explains
+* `POST /whatif/export.xlsx` P43 (ADR 0057 D3): the simulation as a workbook
+  (Summary, a drawn Gantt, Gantt data), recomputed on the server
 
 **Pure read.** Nothing here writes to the plan, a schedule run, a project, an
 engineer or a chamber. The one write is the audit row (coalesced per user,
@@ -56,6 +58,7 @@ from schemas.whatif import (
     AskResponse,
     EstimateRequest,
     EstimateResponse,
+    SimulateExportIn,
     SimulateRequest,
     SimulateResponse,
     SolveRequest,
@@ -96,6 +99,7 @@ from services.whatif import (
 )
 from services.whatif_baseline import load_context
 from services.whatif_chat import run_chat
+from services.whatif_export import planner_export, planner_xlsx
 from services.whatif_import import (
     audit_import_simulate,
     audit_parse,
@@ -118,6 +122,9 @@ _format_admin = require_roles(RoleName.ADMIN, RoleName.SUPER_ADMIN)
 WHATIF_RATE_LIMIT = TokenBucketLimiter(capacity=30, refill_per_second=0.5)
 WHATIF_SOLVE_RATE_LIMIT = TokenBucketLimiter(capacity=6, refill_per_second=1 / 10)
 WHATIF_ASK_RATE_LIMIT = TokenBucketLimiter(capacity=5, refill_per_second=1 / 12)
+#: P43-R01 (security L-1): the planner export simulates AND writes a
+#: workbook, so it has its own, smaller bucket (as solve does).
+WHATIF_EXPORT_RATE_LIMIT = TokenBucketLimiter(capacity=6, refill_per_second=1 / 10)
 
 
 def _throttle(limiter: TokenBucketLimiter, principal: Principal) -> None:
@@ -168,6 +175,34 @@ async def simulate_scenario(
     await audit_whatif(db, current_user, "simulate", scenario_shape(body.scenario))
     await db.commit()
     return result
+
+
+@router.post("/export.xlsx", response_class=Response)
+async def export_simulation(
+    body: SimulateExportIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
+) -> Response:
+    """P43 (ADR 0057 D3, docs/API_CONTRACT_P43.md §3): the What-if read's
+    RBAC and hub scope; its own rate limit (P43-R01). The server simulates the scenario again;
+    no result is accepted from the browser."""
+
+    _throttle(WHATIF_EXPORT_RATE_LIMIT, current_user)
+    ctx = await load_context(db, current_user, clock=clock)
+    sim, book = await planner_export(ctx, body)
+    # P43-R01: the workbook is built in the What-if pool under the same
+    # per-user in-flight slot and time cap as the simulation.
+    data = await run_capped(
+        lambda: planner_xlsx(book), WHATIF_TIME_CAP_SECONDS, user_key=ctx.user_key
+    )
+    await audit_whatif(
+        db, current_user, "export",
+        scenario_shape(body.scenario),
+        extra={"projects": len(sim.projects), "named": body.name is not None},
+    )  # fmt: skip
+    await db.commit()
+    return _xlsx_response(data, scenarios.safe_download_name(body.name, "whatif-scenario"))
 
 
 @router.post("/solve", response_model=SolveResponse)

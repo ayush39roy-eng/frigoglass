@@ -34,6 +34,7 @@ from api.main import app
 from models.audit import AuditLogEntry
 from models.enums import ProjectStatus, RoleName
 from services.plan_import_xlsx import FIELD_KEYS, parse_plan_workbook
+from services.xlsx_writer import TABLE_HEADER_ROW
 from tests.auth_helpers import clear_current_principal_override
 from tests.factories import make_schedule_run
 from tests.test_p32_plan_import_xlsx import _ctx
@@ -399,11 +400,14 @@ async def test_compare_id_rules(db_session):
         two = await c.get(f"{url}?ids={ids[1]},{ids[0]}")
         four = await c.get(f"{url}?ids={','.join(ids[:4])}")
     assert two.status_code == 200 and four.status_code == 200
-    k2 = [[c.value for c in r] for r in wb_of(two.content)["KPIs"].iter_rows()]
+    # P43: the KPI header is on TABLE_HEADER_ROW, under the title block.
+    hr = TABLE_HEADER_ROW
+    k2 = [[c.value for c in r] for r in wb_of(two.content)["KPIs"].iter_rows(min_row=hr)]
     assert k2[0][1:3] == ["S1: S1", "S2: S0"]  # the caller's order
-    k4 = [[c.value for c in r] for r in wb_of(four.content)["KPIs"].iter_rows()]
+    k4 = [[c.value for c in r] for r in wb_of(four.content)["KPIs"].iter_rows(min_row=hr)]
     assert k4[0][0] == "KPI" and k4[0][1:5] == ["S1: S0", "S2: S1", "S3: S2", "S4: S3"]
     assert len(k4[0]) == 1 + 4 + 3  # a delta against the first for S2..S4
+    assert wb_of(four.content).sheetnames[2:] == ["Gantt S1", "Gantt S2", "Gantt S3", "Gantt S4"]
 
     # A Greece planner: one visible + one invisible id is a 404, not a partial file.
     await act_as(db_session, RoleName.HUB_PLANNER, hub_ids=[world.gr.id])
@@ -449,16 +453,23 @@ async def test_every_export_opens_with_the_stated_sheets(db_session):
         assert resp.headers["content-disposition"].endswith('.xlsx"'), kind
         # Both openpyxl modes open it.
         openpyxl.load_workbook(io.BytesIO(resp.content), read_only=True).close()
-    scen = ["Summary", "Breakdown", "Projects", "Steps", "Capacity"]
+    # P43 (ADR 0057 D2): a drawn Gantt after the Summary; one per compared scenario.
+    scen = ["Summary", "Gantt", "Breakdown", "Projects", "Steps", "Capacity"]
     assert wb_of(files["scenario"].content).sheetnames == scen
     assert wb_of(files["current"].content).sheetnames == scen
-    assert wb_of(files["compare"].content).sheetnames == ["KPIs", "Outcome changes"]
+    assert wb_of(files["compare"].content).sheetnames == [
+        "KPIs",
+        "Outcome changes",
+        "Gantt S1",
+        "Gantt S2",
+    ]
     assert wb_of(files["template"].content).sheetnames == ["Projects", "Process steps"]
     # The same request exported saved or unsaved gives the same data sheets.
     ws, wc = wb_of(files["scenario"].content), wb_of(files["current"].content)
     for sheet in ("Breakdown", "Projects", "Steps", "Capacity"):
-        cs = [[c.value for c in r] for r in ws[sheet].iter_rows()]
-        cc = [[c.value for c in r] for r in wc[sheet].iter_rows()]
+        # From the header row down (the title block names the scenario).
+        cs = [[c.value for c in r] for r in ws[sheet].iter_rows(min_row=TABLE_HEADER_ROW)]
+        cc = [[c.value for c in r] for r in wc[sheet].iter_rows(min_row=TABLE_HEADER_ROW)]
         assert cs == cc, sheet
         assert len(cs) > 1, sheet  # a header and at least one data row
 

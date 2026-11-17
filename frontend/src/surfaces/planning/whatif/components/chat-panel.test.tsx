@@ -6,7 +6,7 @@ import { ApiError } from '@/lib/api/client';
 import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
 
-import { askFixture, solveFixture } from '../test-fixtures';
+import { askFixture, simulateFixture, solveFixture } from '../test-fixtures';
 
 const postAsk = vi.fn();
 vi.mock('../../api/whatif-api', () => ({
@@ -117,6 +117,25 @@ describe('ChatPanel', () => {
     expect(await screen.findByTestId('chat-refused')).toBeInTheDocument();
     expect(screen.getByTestId('whatif-solve')).toBeInTheDocument();
     expect(screen.getByTestId('chat-tool-error')).toHaveTextContent('Could not run: unknown chamber id');
+  });
+
+  it('P43: a simulation tool result with its scenario offers Export to Excel; one without a scenario does not', async () => {
+    const user = userEvent.setup();
+    const scenario = askFixture().scenario;
+    postAsk.mockResolvedValue(
+      askFixture({
+        results: [
+          { tool: 'simulate_scenario', scenario, error: null, result: simulateFixture() },
+          { tool: 'simulate_scenario', scenario: null, error: null, result: simulateFixture() },
+        ],
+      }),
+    );
+    const { container } = renderWithProviders(<ChatPanel onEditInBuilder={vi.fn()} />);
+    await ask(user, 'simulate');
+    const [withScenario, withoutScenario] = await screen.findAllByTestId('chat-tool-result');
+    expect(within(withScenario!).getByRole('button', { name: 'Export to Excel' })).toBeEnabled();
+    expect(within(withoutScenario!).queryByRole('button', { name: 'Export to Excel' })).not.toBeInTheDocument();
+    expect(await seriousAxeViolations(container)).toEqual([]);
   });
 
   it('503 AGENT_UNAVAILABLE hides the chat input and says to use the forms', async () => {
