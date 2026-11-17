@@ -2622,4 +2622,4 @@ Opened 2026-11-17 (owner request). Presentation only.
 | P43-T01 | ADR 0057, OQ #112 | orchestrator | — | docs written | DONE (MEMORY 2026-11-17 P43-T01) |
 | P43-T02 | Backend: styled workbook writer for every xlsx export; drawn Gantt sheet in the Gantt, What-if import result, saved scenario and comparison exports; What-if planner export if missing; contract note `docs/API_CONTRACT_P43.md`; tests | backend-builder | T01 | pytest green; openpyxl round-trip tests (styles, fills per week, legend, frozen panes, formula guard); MEMORY entry | DONE (MEMORY 2026-11-17 P43-T02) |
 | P43-T03 | Frontend: export buttons wherever a Gantt / scenario result is shown and none exists; tests | frontend-builder | T02 contract | tsc, eslint, vitest; MEMORY entry | DONE (MEMORY 2026-11-17 P43-T03) |
-| P43-T04 | Gate: qa, workflow (reconciliation: drawn bars = served weeks), security | three gatekeepers | T02, T03 | three PASSes | TODO |
+| P43-T04 | Gate: qa, workflow (reconciliation: drawn bars = served weeks), security | three gatekeepers | T02, T03 | three PASSes | DONE (MEMORY 2026-11-18 P43-T04: qa, workflow, security PASS; R01, R02 fixed) |

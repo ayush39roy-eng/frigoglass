@@ -42881,3 +42881,44 @@ No feature code was written and git was not touched.
 
 **Gate: qa leg PASS for P43.** Suggested P43-R01, non-blocking: G1–G4 and the minor copy item, removing the three
 xfail pins with the fix. G5 goes to the orchestrator for a ruling.
+
+## [2026-11-18] P43-R02 — QA gate gaps G2–G4, wording, empty tables, G5 Commercialized as Delivered — backend-builder: DONE
+
+The QA gate passed; its strict-xfail pins G1–G3 in `tests/test_p43_qa_gate.py` are now plain passing tests (G1 was fixed at R01).
+
+**QA gaps:**
+- **G2.** Capacity `design_load_by_priority_*` / `lab_load_by_priority_*` read "Design load P1 (weeks)" etc., via per-surface labels. `xlsx_writer._KEY_RE` also accepts capitalised segments, so such keys humanise.
+- **G3.** The comparison "Outcome changes" headers are `S{n}: <name> finish (week)`.
+- **G4.** `LEAD_KEYS` gained `project` and `step_id`. `step_id` is a step code, not an id, and lead keys are never moved right. The import Steps sheet starts Project, Step code, Status, is frozen at D6, and has Ref last.
+- **Empty tables** keep their header: `rows_from_models(models, model_cls)` takes the headers from the row model when there are no rows. Wired for Dashboard, Capacity, Matrix, Projects, Engineers and Chambers.
+- **Wording.** A status-excluded outcome reads "Not in the plan (status)" everywhere (`OUTCOME_STYLES`, surface chart, import charts, planner Summary). Contract §5 is updated.
+- **Dashboard Summary layout.** The share is the last column of every table ("By priority" reordered). Labels and notes that aren't shares no longer say "share". The QA format test keys on that word.
+
+**G5 (coordinator ruling): Commercialized counts as within year (OQ #109).**
+- Every drawn Gantt has a "Delivered (Commercialized) — counts as within year" section after "In the plan": one line, no bar, green "Delivered — counts as within year".
+- Status source: the surface reads `projects.status` in the same scoped id lookup as `band_rank` (`_project_meta`); the planner reads `ProjectInput.status`; the import reads the served `status`.
+- Planner Summary: the outcome tables split the served `excluded` class into "Not in the plan (status)" and "Delivered (Commercialized)" (served flags `outcome = excluded ∧ within_year`). They end with "Within year, in total (the headline above)". On the dev copy: 63 + 51 = 114 = the headline.
+- No classifier or served figure changed.
+
+**Tests:**
+- New file `tests/test_p43_r02.py`, kept separate to avoid an import cycle with the QA file. It covers: the Delivered chart section; the surface Delivered section and wording; planner reconciliation against `/whatif/simulate`; the Steps lead columns and freeze; the empty Chambers header.
+- Suites: P43, export and QA gate: 458 passed. Full suite: 3574 passed, 4 failed. All four are the known non-P43 failures (migration table count, render CSP, P37 PlanWeek contract, P20 step-row contract).
+- ruff and mypy: nothing new.
+
+**Contract:** `docs/API_CONTRACT_P43.md` §9 added and §5 corrected.
+
+**Samples:** re-rendered into `.../scratchpad/exports/` (11 files) from a fresh throwaway upgraded copy of dev. Dev is untouched, the container is stopped, and the dump and env copy are deleted.
+- The sample scripts now run from `scratchpad/p43scripts/`, because another session left an `inspect.py` in the shared scratchpad that shadowed the standard library.
+- The import samples have no extra sections: the import serves no Commercialized, P4 or queued rows.
+
+## [2026-11-18] P43 gate CLOSED (orchestrator)
+
+qa-inspector, workflow-auditor and security-auditor each recorded a PASS at P43-T04. The
+follow-ups are fixed in two passes:
+- P43-R01: security M-1 (CSV header formula guard), L-1 (separate export rate limit, workbook
+  built inside run_capped), I-1 (contract wording), the share format, and workflow A1, A3, A4;
+- P43-R02: QA G2–G4, the "Not in the plan (status)" wording, empty-table headers, and the G5
+  ruling. Commercialized projects get their own "Delivered — counts as within year" section in
+  every drawn Gantt, and the planner Summary reconciles to its headline. No classifier change.
+
+Full backend suite: 3574 passed, 4 known non-P43 failures. Open: OQ #112.
