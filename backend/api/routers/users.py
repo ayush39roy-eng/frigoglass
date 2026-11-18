@@ -66,6 +66,7 @@ from sqlalchemy.orm import selectinload
 from api.db import get_db
 from api.deps import get_current_principal, require_permission
 from api.errors import HTTP_422, CodedHTTPException
+from api.super_admin import ensure_super_admin
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
@@ -487,6 +488,13 @@ async def _update_user(
     new_roles: list[RoleName] = updates["roles"] if "roles" in updates else current_roles
     if "roles" in updates:
         _forbid_admin_roles_for_admin(current_user, new_roles)
+    # ADR 0058 D1.4: deactivating an account (`is_active` true -> false) or
+    # removing any role it holds is Super Admin only. Reactivating, adding a
+    # role and every other field stay with `user_role_admin` write.
+    deactivates = user.is_active and updates.get("is_active") is False
+    removes_role = bool(set(current_roles) - set(new_roles))
+    if deactivates or removes_role:
+        ensure_super_admin(current_user)
     effective_hub_scope_all = (
         updates["hub_scope_all"] if "hub_scope_all" in updates else user.hub_scope_all
     )

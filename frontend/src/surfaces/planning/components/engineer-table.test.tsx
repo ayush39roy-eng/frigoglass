@@ -87,4 +87,34 @@ describe('EngineerTable', () => {
     expect(within(india).getByTestId('flag-India')).toBeInTheDocument();
     expect(await seriousAxeViolations(container)).toEqual([]);
   });
+
+  describe('P46 (ADR 0058 D1.3): deactivate is Super Admin only, reactivate stays Admin', () => {
+    it('an Admin sees Deactivate disabled with "Super Admin only"', async () => {
+      const user = userEvent.setup();
+      const onDeactivate = vi.fn();
+      renderWithProviders(
+        <EngineerTable rows={ROWS} canEdit canChangeStatus onEdit={vi.fn()} onDeactivate={onDeactivate} onReactivate={vi.fn()} />,
+        { session: { roles: ['Admin'] } },
+      );
+      const button = screen.getByRole('button', { name: 'Deactivate Ada Lovelace' });
+      expect(button).toBeDisabled();
+      expect(button.closest('[data-super-admin-only]')).toHaveAttribute('title', 'Super Admin only');
+      await user.click(button);
+      expect(onDeactivate).not.toHaveBeenCalled();
+    });
+
+    it('an Admin may still reactivate', () => {
+      const inactive = { ...ROWS[0]!, active: false, deactivated_week: 47, deactivation_reason: 'left_company' as const };
+      renderWithProviders(
+        <EngineerTable rows={[inactive]} canEdit canChangeStatus onEdit={vi.fn()} onDeactivate={vi.fn()} onReactivate={vi.fn()} />,
+        { session: { roles: ['Admin'] } },
+      );
+      expect(screen.getByRole('button', { name: 'Reactivate Ada Lovelace' })).toBeEnabled();
+    });
+
+    it('a Super Admin may deactivate', () => {
+      renderWithProviders(<EngineerTable rows={ROWS} canEdit canChangeStatus onEdit={vi.fn()} onDeactivate={vi.fn()} onReactivate={vi.fn()} />);
+      expect(screen.getByRole('button', { name: 'Deactivate Ada Lovelace' })).toBeEnabled();
+    });
+  });
 });

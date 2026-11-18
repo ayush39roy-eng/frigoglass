@@ -17,6 +17,8 @@ import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { useHubs } from '@/lib/api/reference';
 import { formatTimestamp } from '@/lib/format';
+import { useSessionStore } from '@/stores/session';
+import { SuperAdminOnly } from '@/components/shared/super-admin-only';
 import { ConfirmDialog } from '@/surfaces/planning/components/confirm-dialog';
 
 import { PROJECT_ACCESS_ROLES, type ProjectAccessGrantRead, type ProjectAccessRole, type UserRead } from '../api/types';
@@ -27,6 +29,7 @@ import {
 } from '../hooks/use-project-access';
 import { useProjectsForPicker } from '../hooks/use-projects-for-picker';
 import { useUsersForPicker } from '../hooks/use-users';
+import { canRevokeGrant } from '../lib/user-helpers';
 import { SearchPicker } from './search-picker';
 
 /**
@@ -136,6 +139,8 @@ function ProjectGrants({
   const [pendingRole, setPendingRole] = React.useState<ProjectAccessRole>('viewer');
   const [grantError, setGrantError] = React.useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = React.useState<ProjectAccessGrantRead | null>(null);
+  const [revokeError, setRevokeError] = React.useState<string | null>(null);
+  const me = useSessionStore((st) => st.me);
 
   const forbidden = grantsQuery.error instanceof ApiError && grantsQuery.error.isForbidden;
 
@@ -237,16 +242,27 @@ function ProjectGrants({
                     <Badge tone={g.project_role === 'admin' ? 'primary' : g.project_role === 'editor' ? 'outline' : 'neutral'}>
                       {g.project_role.charAt(0).toUpperCase() + g.project_role.slice(1)}
                     </Badge>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="size-7"
-                      aria-label={`Revoke access for ${resolveUser(usersById, g.user_id)}`}
-                      onClick={() => setRevokeTarget(g)}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
+                    {(() => {
+                      const allowed = canRevokeGrant(me);
+                      return (
+                        <SuperAdminOnly locked={!allowed}>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-7"
+                            aria-label={`Revoke access for ${resolveUser(usersById, g.user_id)}`}
+                            disabled={!allowed}
+                            onClick={() => {
+                              setRevokeError(null);
+                              setRevokeTarget(g);
+                            }}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </SuperAdminOnly>
+                      );
+                    })()}
                   </li>
                 ))}
               </ul>
@@ -258,14 +274,24 @@ function ProjectGrants({
       <ConfirmDialog
         open={revokeTarget !== null}
         onOpenChange={(o) => {
-          if (!o) setRevokeTarget(null);
+          if (!o) {
+            setRevokeTarget(null);
+            setRevokeError(null);
+          }
         }}
         title="Revoke this access grant?"
         description="The user returns to whatever their role and hub scope alone would give them — never below it."
         confirmLabel="Revoke"
         busy={revokeMut.isPending}
+        error={revokeError}
         onConfirm={() => {
-          if (revokeTarget) void revokeMut.mutateAsync(revokeTarget.id).finally(() => setRevokeTarget(null));
+          if (!revokeTarget) return;
+          setRevokeError(null);
+          // P46: a refused revoke (e.g. 403 SUPER_ADMIN_ONLY) stays open with the reason.
+          revokeMut.mutateAsync(revokeTarget.id).then(
+            () => setRevokeTarget(null),
+            (err: unknown) => setRevokeError(apiErrorMessage(err, 'The access grant could not be revoked. Please try again.')),
+          );
         }}
       />
     </Card>

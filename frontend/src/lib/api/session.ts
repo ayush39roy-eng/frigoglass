@@ -4,7 +4,7 @@
 // gate (P3-T07 contract test). Same convention as every per-surface
 // `api/types.ts` (see `src/types/README.md`).
 
-import { apiGet, type ApiRequestOptions } from '@/lib/api/client';
+import { apiGet, apiSend, type ApiRequestOptions } from '@/lib/api/client';
 import type { RoleName, SurfaceKey } from '@/types/enums';
 import type { Id } from '@/types/common';
 
@@ -87,4 +87,19 @@ export function fetchMe(ctx: FetchCtx = {}): Promise<MeResponse> {
 
 export function fetchDevUsers(ctx: FetchCtx = {}): Promise<DevUser[]> {
   return apiGet<DevUser[]>('/me/dev-users', ctx);
+}
+
+/** `POST /me/dev-login` body (P46, ADR 0058 L1). `username` may also be the email. */
+export interface DevLoginRequest {
+  username: string;
+  password: string;
+}
+
+/**
+ * P46 (ADR 0058 L1): the server checks a test login (dev mode only). 200 is the
+ * `DevUser` to sign in as; 401 is one generic failure; 429 is rate-limited;
+ * 404 means the server is not in dev mode.
+ */
+export function devLogin(body: DevLoginRequest): Promise<DevUser> {
+  return apiSend<DevUser>('POST', '/me/dev-login', body);
 }

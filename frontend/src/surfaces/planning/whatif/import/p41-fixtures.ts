@@ -72,6 +72,7 @@ export function p41Summary(o: Partial<SavedScenarioSummary> = {}): SavedScenario
     created_at: '2026-11-17T09:30:00Z',
     created_by_name: 'Synthetic Planner',
     can_edit: true,
+    can_delete: true,
     mode: 'merge',
     plan_year_end_week: 104,
     simulated_week: 40,

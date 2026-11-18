@@ -177,6 +177,34 @@ describe('P41 Excel format card', () => {
   });
 });
 
+describe('P46 (ADR 0058 D1.4): "Reset all to default" is Super Admin only', () => {
+  it('an Admin can edit the format but sees Reset all disabled with "Super Admin only"', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ImportPlanView />, { session: { roles: ['Admin'] } });
+    await user.click(await screen.findByRole('button', { name: 'Edit format' }));
+    const dialog = await screen.findByTestId('import-format-dialog');
+    const reset = within(dialog).getByTestId('format-reset-all');
+    expect(reset).toBeDisabled();
+    expect(reset.closest('[data-super-admin-only]')).toHaveAttribute('title', 'Super Admin only');
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeInTheDocument();
+  });
+
+  it('a Super Admin who gets a 403 SUPER_ADMIN_ONLY sees the plain message', async () => {
+    const user = userEvent.setup();
+    override = (url) =>
+      url.pathname === '/whatif/import/format/reset'
+        ? json({ detail: 'Only a Super Admin can do this.', code: 'SUPER_ADMIN_ONLY' }, 403)
+        : undefined;
+    renderWithProviders(<ImportPlanView />);
+    await user.click(await screen.findByRole('button', { name: 'Edit format' }));
+    const dialog = await screen.findByTestId('import-format-dialog');
+    expect(within(dialog).getByTestId('format-reset-all')).toBeEnabled();
+    await user.click(within(dialog).getByTestId('format-reset-all'));
+    await user.click(within(dialog).getByRole('button', { name: 'Reset all' }));
+    expect(await within(dialog).findByTestId('format-save-error')).toHaveTextContent('Only a Super Admin can do this.');
+  });
+});
+
 describe('P41 Executive scenario bar', () => {
   it('the picker sends the ticked rows as include and the unticked plan projects as exclude_plan_project_ids', async () => {
     const user = userEvent.setup();
@@ -374,6 +402,35 @@ describe('P41 library and compare', () => {
     );
     await waitFor(() => expect(useImportScenarios.getState().scenarios).toEqual([]));
     expect(await within(library).findByTestId('import-library-empty')).toBeInTheDocument();
+  });
+
+  it('P46: a scenario someone else saved (served can_delete false) shows Delete disabled with "Super Admin only"; rename stays', async () => {
+    const user = userEvent.setup();
+    savedById = { 'saved-1': p41Saved({ can_delete: false }) };
+    startAtResults();
+    renderWithProviders(<ImportPlanView />, { session: { roles: ['Admin'] } });
+    await user.click(await screen.findByRole('tab', { name: /Compare/ }));
+    const library = await screen.findByTestId('import-library');
+    const del = await within(library).findByRole('button', { name: 'Delete Saved base' });
+    expect(del).toBeDisabled();
+    expect(del.closest('[data-super-admin-only]')).toHaveAttribute('title', 'Super Admin only');
+    expect(within(library).getByRole('button', { name: 'Rename Saved base' })).toBeEnabled();
+  });
+
+  it('P46: a 403 SUPER_ADMIN_ONLY on delete shows the plain message', async () => {
+    const user = userEvent.setup();
+    savedById = { 'saved-1': p41Saved() };
+    override = (url, init) =>
+      init.method === 'DELETE' && url.pathname === '/whatif/import/scenarios/saved-1'
+        ? json({ detail: 'Only a Super Admin can do this.', code: 'SUPER_ADMIN_ONLY' }, 403)
+        : undefined;
+    startAtResults();
+    renderWithProviders(<ImportPlanView />);
+    await user.click(await screen.findByRole('tab', { name: /Compare/ }));
+    const library = await screen.findByTestId('import-library');
+    await user.click(await within(library).findByRole('button', { name: 'Delete Saved base' }));
+    await user.click(within(library).getByRole('button', { name: 'Delete' }));
+    expect(await within(library).findByText('Only a Super Admin can do this. Ask a Super Admin to make this change.')).toBeInTheDocument();
   });
 
   it('P41-R01: the library pages by 50 and "Load more" fetches the next offset until the total is reached', async () => {

@@ -686,6 +686,19 @@ describe('Projects page — registration drawer', () => {
   });
 });
 
+describe('Projects page — P44-R01 sticky register header', () => {
+  it('the header row is sticky, opaque and above the rows, inside the table scroll box', () => {
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha cooler' })]));
+    renderWithProviders(<ProjectsPage />);
+    const header = screen.getByTestId('projects-table-header');
+    expect(header).toHaveClass('sticky', 'top-0', 'z-10', 'bg-ink');
+    expect(within(header).getByRole('columnheader', { name: 'Status' })).toBeInTheDocument();
+    const scroll = screen.getByTestId('projects-table-scroll');
+    expect(scroll).toHaveClass('overflow-auto');
+    expect(scroll).toContainElement(header);
+  });
+});
+
 describe('Projects page — P24-T02 workbook fields and "No leader" (ADR 0035)', () => {
   it('the Workbook fields toggle adds Plant / Req. dept / Product type columns with the served values', async () => {
     const user = userEvent.setup();

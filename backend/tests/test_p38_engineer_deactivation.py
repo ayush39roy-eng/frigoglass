@@ -483,7 +483,7 @@ async def test_preview_no_supply_effect_when_not_counted_and_409_when_inactive(d
 async def test_deactivate_mixed_rows_one_transaction_one_run(db_session, dispatch):
     w = await _world(db_session)
     await _activate_baseline(db_session)
-    user = await _act_as(db_session, RoleName.ADMIN)
+    user = await _act_as(db_session, RoleName.SUPER_ADMIN)
     ranks = {p.id: p.band_rank for p in (w.dev, w.queued, w.frozen)}
     async with _client(db_session) as client:
         token = (await _preview(client, w.elena.id)).json()["led_projects_token"]
@@ -627,7 +627,7 @@ async def test_only_on_hold_changed_and_no_booking_is_not_needed(db_session, dis
         status=ProjectStatus.ON_HOLD,
         priority=None,
     )
-    await _act_as(db_session, RoleName.ADMIN)
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     async with _client(db_session) as client:
         token = (await _preview(client, lone.id)).json()["led_projects_token"]
         resp = await _deactivate(client, lone.id, token, [(held.id, other.id)])
@@ -651,7 +651,7 @@ async def test_no_open_project_but_active_run_books_after_d_dispatches(db_sessio
     for p in (w.dev, w.queued, w.held, w.frozen):
         p.leader_engineer_id = w.nikos.id
     await db_session.flush()
-    await _act_as(db_session, RoleName.ADMIN)
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     async with _client(db_session) as client:
         preview = (await _preview(client, w.elena.id)).json()
         assert preview["open_projects"] == []
@@ -665,7 +665,7 @@ async def test_no_open_project_but_active_run_books_after_d_dispatches(db_sessio
 async def test_no_open_project_and_no_booking_is_not_needed(db_session, dispatch):
     hub = await make_hub(db_session)
     idle = await make_engineer(db_session, hub, name="Idle")
-    await _act_as(db_session, RoleName.ADMIN)
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     async with _client(db_session) as client:
         token = (await _preview(client, idle.id)).json()["led_projects_token"]
         resp = await _deactivate(client, idle.id, token, [], reason="long_absence")
@@ -688,7 +688,7 @@ async def test_deferred_when_a_run_is_in_flight(db_session, dispatch):
         )
     )
     await db_session.flush()
-    await _act_as(db_session, RoleName.ADMIN)
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     async with _client(db_session) as client:
         token = (await _preview(client, w.elena.id)).json()["led_projects_token"]
         resp = await _deactivate(
@@ -709,7 +709,7 @@ async def test_deferred_when_a_run_is_in_flight(db_session, dispatch):
 
 async def test_project_assigned_between_preview_and_confirm_is_409(db_session, dispatch):
     w = await _world(db_session)
-    await _act_as(db_session, RoleName.ADMIN)
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     audits = await _count(db_session, AuditLogEntry)
     i = w.ids
     async with _client(db_session) as client:
@@ -772,10 +772,11 @@ async def test_row_error_codes(db_session, dispatch, case, code):
     i = w.ids
     await _mark_inactive(db_session, w.maria)
     if case == "out_of_scope":
-        # A hub-scoped Admin cannot name an engineer of another hub.
-        await _act_as(db_session, RoleName.ADMIN, hub_ids=[w.hub.id])
+        # A hub-scoped Admin cannot name an engineer of another hub. (P46, ADR
+        # 0058 D1.3: deactivation is Super Admin only, so the probe is one.)
+        await _act_as(db_session, RoleName.SUPER_ADMIN, hub_ids=[w.hub.id])
     else:
-        await _act_as(db_session, RoleName.ADMIN)
+        await _act_as(db_session, RoleName.SUPER_ADMIN)
     project, leader = {
         "frozen_null": (i.frozen, None),
         "inactive": (i.dev, i.maria),
@@ -797,7 +798,7 @@ async def test_row_error_codes(db_session, dispatch, case, code):
 
 async def test_target_outside_capacity_hub_is_accepted_with_a_warning(db_session, dispatch):
     w = await _world(db_session)
-    await _act_as(db_session, RoleName.ADMIN)
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     async with _client(db_session) as client:
         token = (await _preview(client, w.elena.id)).json()["led_projects_token"]
         resp = await _deactivate(
@@ -865,7 +866,7 @@ async def test_hub_scoped_admin_with_out_of_scope_open_project_is_403(db_session
 
 async def test_reactivate_restores_no_project_and_dispatches_nothing(db_session, dispatch):
     w = await _world(db_session)
-    await _act_as(db_session, RoleName.ADMIN)
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     async with _client(db_session) as client:
         token = (await _preview(client, w.elena.id)).json()["led_projects_token"]
         pairs = [(p.id, w.nikos.id) for p in (w.dev, w.queued, w.held, w.frozen)]
@@ -930,7 +931,7 @@ async def test_delete_without_write_keeps_403(db_session, role):
 
 async def test_patch_inactive_engineer_accepts_name_only(db_session, dispatch):
     w = await _world(db_session)
-    await _act_as(db_session, RoleName.ADMIN)
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     async with _client(db_session) as client:
         token = (await _preview(client, w.maria.id)).json()["led_projects_token"]
         assert (await _deactivate(client, w.maria.id, token, [])).status_code == 200
@@ -957,7 +958,7 @@ async def _deactivate_maria(db_session, w, client) -> None:
 async def test_every_leader_write_rejects_an_inactive_leader(db_session, dispatch):
     w = await _world(db_session)
     i = w.ids
-    await _act_as(db_session, RoleName.ADMIN)
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     async with _client(db_session) as client:
         await _deactivate_maria(db_session, w, client)
         patch = await client.patch(
@@ -988,7 +989,7 @@ async def test_every_leader_write_rejects_an_inactive_leader(db_session, dispatc
 async def test_reopen_with_inactive_stored_leader_needs_a_leader(db_session, dispatch):
     w = await _world(db_session)
     i = w.ids
-    await _act_as(db_session, RoleName.ADMIN)
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     w.cancelled.leader_engineer_id = i.maria
     w.done.leader_engineer_id = i.maria
     await db_session.flush()
@@ -1111,7 +1112,7 @@ async def test_closed_plan_year_records_week_52(db_session, dispatch, monkeypatc
     w = await _world(db_session)
     monkeypatch.delenv("RPD_CURRENT_WEEK", raising=False)
     monkeypatch.setenv("RPD_PLAN_YEAR", "2026")
-    await _act_as(db_session, RoleName.ADMIN)
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     with plan_clock.override_now(datetime(2027, 1, 20, 12, 0, tzinfo=UTC)):
         async with _client(db_session) as client:
             preview = (await _preview(client, w.maria.id)).json()
@@ -1293,7 +1294,7 @@ async def test_closed_project_steps_status_untouched(db_session, dispatch):
             )
         )
     ).all()
-    await _act_as(db_session, RoleName.ADMIN)
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     async with _client(db_session) as client:
         token = (await _preview(client, w.elena.id)).json()["led_projects_token"]
         pairs = [(p.id, w.nikos.id) for p in (w.dev, w.queued, w.held, w.frozen)]

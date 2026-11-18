@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError, type DownloadedFile } from '@/lib/api/client';
+import { isSuperAdminOnlyError, SUPER_ADMIN_ONLY_MESSAGE } from '@/lib/auth/super-admin';
 import { saveBlob } from '@/lib/download';
 import { useSessionStore } from '@/stores/session';
 
@@ -161,6 +162,8 @@ export function libraryErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 0) return 'The server could not be reached. Try again.';
     if (error.status === 401) return 'Your session has ended. Sign in again.';
+    // P46 (ADR 0058 D1.4): deleting someone else's scenario, resetting the format.
+    if (isSuperAdminOnlyError(error)) return SUPER_ADMIN_ONLY_MESSAGE;
     if (error.status === 403 && error.code === 'SCENARIO_FORBIDDEN')
       return 'Only the person who saved this scenario, an Admin or a Super Admin can change it.';
     if (error.status === 403) return 'You do not have permission to do this.';

@@ -452,6 +452,8 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # landed first" pattern as `UserRead`'s P10-T02/T03 entry below).
     (_SESSION_TS, "MeResponse", "MeResponse", "exact"),
     (_SESSION_TS, "DevUser", "DevUser", "exact"),
+    # P46 (ADR 0058 L1): `POST /me/dev-login` body.
+    (_SESSION_TS, "DevLoginRequest", "DevLoginRequest", "exact"),
     # --- P9-T03: user / role admin (backend/schemas/user_admin.py) ---
     # `UserUpdateRequest extends Partial<UserCreateRequest>` is not matched by
     # the parser's `extends` regex (generic type argument), so it is not

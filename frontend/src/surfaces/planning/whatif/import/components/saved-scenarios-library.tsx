@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
+import { SuperAdminOnly } from '@/components/shared/super-admin-only';
 import { formatTimestamp } from '@/lib/format';
 
 import { int } from '../../components/figures';
@@ -303,9 +304,20 @@ function SavedCard({ s }: { s: SavedScenarioSummary }): React.JSX.Element {
             >
               <Pencil />
             </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmDelete(true)} aria-label={`Delete ${s.name}`}>
-              <Trash2 />
-            </Button>
+            {/* P46 (ADR 0058 D1.4): deleting someone else's scenario is Super Admin
+                only; the served `can_delete` decides (the creator or a Super Admin). */}
+            <SuperAdminOnly locked={!s.can_delete}>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={!s.can_delete}
+                onClick={() => setConfirmDelete(true)}
+                aria-label={`Delete ${s.name}`}
+              >
+                <Trash2 />
+              </Button>
+            </SuperAdminOnly>
           </>
         ) : null}
       </div>

@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
+import { isSuperAdminOnlyError, SUPER_ADMIN_ONLY_MESSAGE } from '@/lib/auth/super-admin';
 import { formatFactor, formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { ProjectRows } from '@/surfaces/workflow-settings/components/template-apply/project-rows';
@@ -97,6 +98,8 @@ export function DeactivateEngineerDialog({
 }
 
 function previewErrorMessage(err: unknown): string {
+  // P46 (ADR 0058 D1.3): deactivating is Super Admin only.
+  if (isSuperAdminOnlyError(err)) return SUPER_ADMIN_ONLY_MESSAGE;
   if (err instanceof ApiError) {
     if (err.isForbidden || err.code === 'ENGINEER_STATUS_ADMIN_ONLY') return DEACTIVATION_COPY.adminOnly;
     if (err.code === 'ENGINEER_ALREADY_INACTIVE') return DEACTIVATION_COPY.alreadyInactive;
@@ -131,7 +134,8 @@ function DeactivateBody({
   const choices = React.useMemo(() => keepValidChoices(rows, rawChoices), [rows, rawChoices]);
 
   React.useEffect(() => {
-    if (preview.error instanceof ApiError && preview.error.isForbidden) onForbidden();
+    // A Super-Admin-only 403 refuses this one action; the page stays writable.
+    if (preview.error instanceof ApiError && preview.error.isForbidden && !isSuperAdminOnlyError(preview.error)) onForbidden();
   }, [preview.error, onForbidden]);
 
   const empty = emptyRows(rows, choices);
@@ -160,7 +164,10 @@ function DeactivateBody({
         setError('The engineer could not be deactivated. Nothing was changed. Please try again.');
         return;
       }
-      if (err.isForbidden) {
+      if (isSuperAdminOnlyError(err)) {
+        // P46 (ADR 0058 D1.3): only this action is refused; the page stays writable.
+        setError(SUPER_ADMIN_ONLY_MESSAGE);
+      } else if (err.isForbidden) {
         onForbidden();
         setError(DEACTIVATION_COPY.adminOnly);
       } else if (err.code === 'LED_PROJECTS_CHANGED') {

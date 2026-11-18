@@ -409,6 +409,7 @@ const savedSummaryShape = {
   created_at: z.string(),
   created_by_name: nstr,
   can_edit: z.boolean(),
+  can_delete: z.boolean(),
   mode: z.enum(['merge', 'file_only']),
   plan_year_end_week: int,
   simulated_week: int,

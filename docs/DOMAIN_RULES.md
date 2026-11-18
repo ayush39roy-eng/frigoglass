@@ -1629,7 +1629,7 @@ I25/I29 hold through R35-1/R35-9.
 ## Engineer deactivation *(2026-11-17, P38, ADR 0053 as ruled at P38-T01, R38-1..R38-9)*
 
 Engineers are never deleted. `DELETE /engineers/{id}` is retired: it answers 410 and writes
-nothing. Admin and Super Admin deactivate or reactivate an engineer. Whether a Hub Planner may too
+nothing. Super Admin deactivates an engineer; Admin and Super Admin reactivate (ADR 0058, 2026-11-18). Whether a Hub Planner may too
 is OQ #93; until answered, they may not.
 
 - **State.**
@@ -1989,3 +1989,16 @@ Served on each `HubCapacityRow` (`GET /capacity/hub-load`); never a scheduler in
   hub (own + members, ADR 0042); lab per lab region, repeated on each hub of the region.
 - It is an aggregate capacity figure, not the run's verdict: the run may still leave a P1 project
   out because of sequencing or eligibility, even when `need_p1 = 0`.
+
+
+## Super-Admin-only destructive actions *(2026-11-18, ADR 0058)*
+
+Only Super Admin may: set a project's status to Cancelled (any API path; leaving Cancelled is an
+edit); remove or retire a category or workflow step, or delete a project or category (no such
+route exists today; any new DELETE route must be classified); delete a lab chamber; deactivate an
+engineer; deactivate a user or remove a role from a user; revoke a project access grant through
+Admin rights (the ADR 0012 manager delegation is unchanged); cancel a schedule run; delete a saved
+import scenario saved by someone else; reset the import format. Every other role gets 403
+`SUPER_ADMIN_ONLY`. All other Admin rights are unchanged. Dev mode has exactly two test logins
+(`superadmin`, `admin`, password = username), provisioned at startup in dev mode only; this is not
+security (OQ #107).

@@ -306,8 +306,23 @@ async def test_cancel_requires_admin(db_session, revoked, published):
         _teardown()
 
 
-async def test_cancel_unknown_run_404s(db_session, revoked, published):
+async def test_cancel_is_super_admin_only_for_admin(db_session, revoked, published):
+    """P46 (ADR 0058 D1.4): an Admin gets 403 `SUPER_ADMIN_ONLY`; the tests
+    below run as Super Admin (they ran as Admin before P46)."""
+
+    run = await make_schedule_run(db_session, status=ScheduleRunStatus.QUEUED)
     client, _ = await _client(db_session, RoleName.ADMIN)
+    try:
+        resp = await client.post(f"/schedule-runs/{run.id}/cancel")
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "SUPER_ADMIN_ONLY"
+        assert revoked == []
+    finally:
+        _teardown()
+
+
+async def test_cancel_unknown_run_404s(db_session, revoked, published):
+    client, _ = await _client(db_session, RoleName.SUPER_ADMIN)
     try:
         resp = await client.post(f"/schedule-runs/{uuid.uuid4()}/cancel")
         assert resp.status_code == 404
@@ -317,7 +332,7 @@ async def test_cancel_unknown_run_404s(db_session, revoked, published):
 
 async def test_cancel_terminal_run_409s(db_session, revoked, published):
     run = await make_schedule_run(db_session, status=ScheduleRunStatus.COMPLETED)
-    client, _ = await _client(db_session, RoleName.ADMIN)
+    client, _ = await _client(db_session, RoleName.SUPER_ADMIN)
     try:
         resp = await client.post(f"/schedule-runs/{run.id}/cancel")
         assert resp.status_code == 409
@@ -332,7 +347,7 @@ async def test_cancel_queued_run_without_celery_task_id_never_calls_revoke(
     run = await make_schedule_run(
         db_session, status=ScheduleRunStatus.QUEUED, celery_task_id=None
     )
-    client, _ = await _client(db_session, RoleName.ADMIN)
+    client, _ = await _client(db_session, RoleName.SUPER_ADMIN)
     try:
         resp = await client.post(f"/schedule-runs/{run.id}/cancel")
         assert resp.status_code == 200
@@ -352,7 +367,7 @@ async def test_cancel_running_run_with_celery_task_id_calls_revoke_with_terminat
         celery_task_id="real-task-id-123",
         solver_type=SolverType.CP_SAT,
     )
-    client, _ = await _client(db_session, RoleName.ADMIN)
+    client, _ = await _client(db_session, RoleName.SUPER_ADMIN)
     try:
         resp = await client.post(f"/schedule-runs/{run.id}/cancel")
         assert resp.status_code == 200
@@ -366,7 +381,7 @@ async def test_cancel_writes_audit_row(db_session, revoked, published):
     from sqlalchemy import select
 
     run = await make_schedule_run(db_session, status=ScheduleRunStatus.QUEUED)
-    client, user_id = await _client(db_session, RoleName.ADMIN)
+    client, user_id = await _client(db_session, RoleName.SUPER_ADMIN)
     try:
         await client.post(f"/schedule-runs/{run.id}/cancel")
         rows = (

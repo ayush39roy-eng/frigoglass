@@ -525,3 +525,37 @@ describe('Register row edit — editable affordance', () => {
     expect(status).toHaveClass('hover:border-primary/60');
   });
 });
+
+describe('P46 (ADR 0058 D1.1): setting Cancelled is Super Admin only', () => {
+  const cancelled = (select: HTMLElement): HTMLOptionElement =>
+    within(select).getByRole('option', { name: /^Cancelled/ });
+
+  it('an Admin: Cancelled is disabled and labelled "Super Admin only" in the popup and the row status', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<FolderEditHarness projectId={P1} projectName="Cooler A" />, { session: { roles: ['Admin'] } });
+    await user.click(screen.getByTestId('folder-edit'));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
+    const popupStatus = within(within(dialog).getByTestId('register-popup-section')).getByLabelText('Status');
+    expect(cancelled(popupStatus)).toBeDisabled();
+    expect(cancelled(popupStatus)).toHaveTextContent('Cancelled (Super Admin only)');
+    expect(within(popupStatus).getByRole('option', { name: 'On Hold' })).toBeEnabled();
+  });
+
+  it('an Admin: the Projects row status offers Cancelled disabled', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProjectsPage />, { session: { roles: ['Admin'] } });
+    await user.click(screen.getByRole('button', { name: 'Edit Cooler A' }));
+    const select = screen.getByRole('combobox', { name: 'Status of Cooler A' });
+    expect(cancelled(select)).toBeDisabled();
+    expect(cancelled(select)).toHaveTextContent('Cancelled (Super Admin only)');
+  });
+
+  it('a Super Admin: Cancelled is offered in the popup and the row status', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProjectsPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit Cooler A' }));
+    const select = screen.getByRole('combobox', { name: 'Status of Cooler A' });
+    expect(cancelled(select)).toBeEnabled();
+    expect(cancelled(select)).toHaveTextContent(/^Cancelled$/);
+  });
+});

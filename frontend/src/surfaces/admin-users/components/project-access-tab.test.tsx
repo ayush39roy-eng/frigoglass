@@ -158,6 +158,59 @@ describe('ProjectAccessTab (ADR 0012)', () => {
     expect(mutateAsync).toHaveBeenCalledWith('grant-1');
   });
 
+  describe('P46 (ADR 0058 D1.4): revoking through Admin rights is Super Admin only', () => {
+    const ADMIN = { roles: ['Admin' as const], user_id: 'u-admin' };
+
+    it('an Admin who is not the grantee\'s manager sees Revoke disabled with "Super Admin only"', async () => {
+      const user = userEvent.setup();
+      hooks.useProjectAccessGrants.mockReturnValue(ready([grant()]));
+      renderWithProviders(<ProjectAccessTab />, { session: ADMIN });
+      await pickProject(user);
+      const button = await screen.findByRole('button', { name: /Revoke access for Carol Eng/ });
+      expect(button).toBeDisabled();
+      expect(button.closest('[data-super-admin-only]')).toHaveAttribute('title', 'Super Admin only');
+    });
+
+    it('M-1: an Admin who is the grantee\'s direct manager still cannot revoke ("Super Admin only")', async () => {
+      const user = userEvent.setup();
+      hooks.useUsersForPicker.mockReturnValue(ready({ total_count: 2, items: [bob, { ...carol, manager_id: 'u-admin' }] }));
+      hooks.useProjectAccessGrants.mockReturnValue(ready([grant()]));
+      renderWithProviders(<ProjectAccessTab />, { session: ADMIN });
+      await pickProject(user);
+      const button = await screen.findByRole('button', { name: /Revoke access for Carol Eng/ });
+      expect(button).toBeDisabled();
+      expect(button.closest('[data-super-admin-only]')).toHaveAttribute('title', 'Super Admin only');
+    });
+
+    it('a manager delegate without the Admin role keeps Revoke', async () => {
+      const user = userEvent.setup();
+      hooks.useProjectAccessGrants.mockReturnValue(ready([grant()]));
+      renderWithProviders(<ProjectAccessTab />, { session: { roles: ['Hub Planner'], user_id: 'u-bob', is_delegate_manager: true } });
+      await pickProject(user);
+      expect(await screen.findByRole('button', { name: /Revoke access for Carol Eng/ })).toBeEnabled();
+    });
+
+    it('a Super Admin may revoke any grant', async () => {
+      const user = userEvent.setup();
+      hooks.useProjectAccessGrants.mockReturnValue(ready([grant()]));
+      renderWithProviders(<ProjectAccessTab />);
+      await pickProject(user);
+      expect(await screen.findByRole('button', { name: /Revoke access for Carol Eng/ })).toBeEnabled();
+    });
+
+    it('a 403 SUPER_ADMIN_ONLY keeps the dialog open with a plain message', async () => {
+      const user = userEvent.setup();
+      hooks.useProjectAccessGrants.mockReturnValue(ready([grant()]));
+      const mutateAsync = vi.fn().mockRejectedValue(new ApiError(403, 'forbidden', 'x', 'SUPER_ADMIN_ONLY'));
+      hooks.useRevokeProjectAccessGrant.mockReturnValue({ mutateAsync, isPending: false });
+      renderWithProviders(<ProjectAccessTab />);
+      await pickProject(user);
+      await user.click(await screen.findByRole('button', { name: /Revoke access for Carol Eng/ }));
+      await user.click(screen.getByRole('button', { name: 'Revoke' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Only a Super Admin can do this.');
+    });
+  });
+
   it('has no serious/critical axe violations with a project selected', async () => {
     const user = userEvent.setup();
     hooks.useProjectAccessGrants.mockReturnValue(ready([grant()]));

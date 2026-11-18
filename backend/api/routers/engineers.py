@@ -44,6 +44,7 @@ from api.db import get_db
 from api.deps import require_permission
 from api.errors import HTTP_422, CodedHTTPException
 from api.query_params import HubIdListQuery
+from api.super_admin import ensure_super_admin
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
@@ -533,6 +534,9 @@ async def deactivate_engineer(
     """
 
     _require_status_admin(current_user)
+    # ADR 0058 D1.3: deactivating is Super Admin only; reactivating stays an
+    # Admin right (`_require_status_admin` alone).
+    ensure_super_admin(current_user)
     _rate_limited(ENGINEER_STATUS_RATE_LIMIT, f"engineer-status:{current_user.user_id}")
     engineer = await _get_engineer_or_404(db, engineer_id, current_user)
     if not engineer.active:

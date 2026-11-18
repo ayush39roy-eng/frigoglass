@@ -5,22 +5,17 @@ import { motion } from 'framer-motion';
 import {
   AlertCircle,
   CalendarRange,
-  Check,
-  Copy,
   Eye,
   EyeOff,
-  FlaskConical,
   KeyRound,
   Layers,
   LogIn,
-  Mail,
   ShieldCheck,
   Sparkles,
+  UserRound,
 } from 'lucide-react';
 
 import { CoolerIllustration } from '@/components/brand/cooler-illustration';
-import { initialsOf } from '@/lib/initials';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -28,33 +23,29 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ApiError } from '@/lib/api/client';
 import { getDevUserEmail, setDevUserEmail } from '@/lib/api/dev-user';
-import { fetchDevUsers, type DevUser } from '@/lib/api/session';
-import { pickTestAccounts, TEST_LOGIN_PASSWORD, verifyTestLogin } from '@/lib/auth/test-logins';
+import { devLogin, fetchDevUsers } from '@/lib/api/session';
+import { devLoginErrorMessage, loginFormError } from '@/lib/auth/test-logins';
 import { useMotionTokens } from '@/lib/motion';
 import { queryKeys } from '@/lib/query-keys';
-import { cn } from '@/lib/utils';
 import { resolveStartPage, usePreferencesStore } from '@/stores/preferences';
 import { useSessionStore } from '@/stores/session';
-import { ROLE_NAMES, type RoleName } from '@/types/enums';
 
 import { buildAuthorizeUrl, getOidcConfig } from './login-sso';
 
 /**
  * Sign-in (2026-10-01 redesign). Two paths, decided by the server:
  *
- *  - DEV MODE (`GET /me/dev-users` answers): an email + password form checked
- *    against the seeded users and the shared test password
- *    (`lib/auth/test-logins.ts`), plus a "Test logins" panel listing one account
- *    per role. See that module for why this is a demo convention, not security.
+ *  - DEV MODE (`GET /me/dev-users` answers): a username-or-email + password
+ *    form checked by the server (`POST /me/dev-login`, P46 / ADR 0058). The
+ *    probe only decides that dev mode is on; its users are never rendered here
+ *    (owner, 2026-11-18: no accounts shown on the login page). See
+ *    `lib/auth/test-logins.ts` for why this is a demo convention, not security.
  *  - PRODUCTION (the probe 404s or fails): the OIDC "Sign in with SSO" card.
  *
  * Left half: brand panel with the bundled cooler illustration (no external image).
  */
 
 const GATEWAY_STATUSES = new Set([502, 503, 504]);
-
-const SUPER_ADMIN: RoleName = 'Super Admin';
-const ROLE_ORDER: RoleName[] = [SUPER_ADMIN, ...ROLE_NAMES.filter((r) => r !== SUPER_ADMIN)];
 
 export default function LoginPage(): React.JSX.Element {
   const navigate = useNavigate();
@@ -118,7 +109,7 @@ export default function LoginPage(): React.JSX.Element {
                 <Skeleton className="h-10 w-full" />
               </div>
             ) : isDevMode ? (
-              <TestLoginForm users={devUsers.data ?? []} onSignIn={handleSignIn} />
+              <TestLoginForm onSignIn={handleSignIn} />
             ) : (
               <SsoCard failedProbe={devUsersFailed} />
             )}
@@ -195,13 +186,11 @@ function BrandPanel(): React.JSX.Element {
 /* -------------------------------------------------------------------------- */
 
 function TestLoginForm({
-  users,
   onSignIn,
 }: {
-  users: DevUser[];
   onSignIn: (email: string, remember: boolean) => Promise<void>;
 }): React.JSX.Element {
-  const [email, setEmail] = React.useState('');
+  const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [showPassword, setShowPassword] = React.useState(false);
   // P31-R01: on by default, so a reload or a new tab keeps the signed-in test
@@ -209,29 +198,28 @@ function TestLoginForm({
   const [remember, setRemember] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
-  const accounts = React.useMemo(() => pickTestAccounts(users, ROLE_ORDER), [users]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    const result = verifyTestLogin(email, password, users);
-    if (!result.ok) {
-      setError(result.error);
+    if (submitting) return;
+    const missing = loginFormError(username, password);
+    if (missing) {
+      setError(missing);
       return;
     }
     setError(null);
     setSubmitting(true);
     try {
-      await onSignIn(result.user.email, remember);
+      // P46 (ADR 0058 L1): the server checks the password; the browser never does.
+      const user = await devLogin({ username: username.trim(), password });
+      await onSignIn(user.email, remember);
+    } catch (err) {
+      setError(devLoginErrorMessage(err));
     } finally {
       setSubmitting(false);
     }
   };
 
-  const fill = (account: DevUser) => {
-    setEmail(account.email);
-    setPassword(TEST_LOGIN_PASSWORD);
-    setError(null);
-  };
 
   return (
     <div className="space-y-s6" data-testid="login-dev-picker">
@@ -242,19 +230,21 @@ function TestLoginForm({
         aria-label="Sign in"
       >
         <div className="space-y-1.5">
-          <Label htmlFor="login-email" className="text-sm font-bold">
-            Email
+          <Label htmlFor="login-username" className="text-sm font-bold">
+            Username or email
           </Label>
           <div className="relative">
-            <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-text-subtle" aria-hidden="true" />
+            <UserRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-text-subtle" aria-hidden="true" />
             <Input
-              id="login-email"
-              type="email"
+              id="login-username"
+              type="text"
               autoComplete="username"
-              placeholder="name@example.com"
+              autoCapitalize="none"
+              spellCheck={false}
+              placeholder="Username or email"
               className="h-11 pl-9"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               aria-invalid={error !== null}
             />
           </div>
@@ -304,82 +294,7 @@ function TestLoginForm({
           {submitting ? 'Signing in…' : 'Sign in'}
         </Button>
       </form>
-
-      <TestLoginsPanel accounts={accounts} onPick={fill} />
     </div>
-  );
-}
-
-function TestLoginsPanel({
-  accounts,
-  onPick,
-}: {
-  accounts: DevUser[];
-  onPick: (account: DevUser) => void;
-}): React.JSX.Element {
-  const [copied, setCopied] = React.useState(false);
-  const copy = () => {
-    void navigator.clipboard?.writeText(TEST_LOGIN_PASSWORD).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    });
-  };
-
-  return (
-    <section
-      aria-labelledby="test-logins-heading"
-      className="space-y-s3 rounded-card border-2 border-dashed border-warning/60 bg-warning-subtle/40 p-card"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-s2">
-        <h2 id="test-logins-heading" className="flex items-center gap-2 text-sm font-extrabold text-text">
-          <FlaskConical className="size-4 text-warning-subtle-fg" aria-hidden="true" />
-          Test logins
-        </h2>
-        <button
-          type="button"
-          onClick={copy}
-          className="inline-flex items-center gap-1.5 rounded-pill border-2 border-border bg-surface px-2.5 py-1 font-mono text-xs font-bold text-text hover:border-border-strong"
-          aria-label={`Copy test password ${TEST_LOGIN_PASSWORD}`}
-        >
-          {copied ? <Check className="size-3.5 text-success" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
-          {TEST_LOGIN_PASSWORD}
-        </button>
-      </div>
-      <p className="text-xs font-medium text-text-muted">
-        This environment runs with <code>RPD_DEV_MODE</code> on. Every seeded user signs in with the
-        password above. Pick an account to fill the form.
-      </p>
-      <ul className="space-y-1.5">
-        {accounts.map((account) => {
-          const role = account.roles[0] ?? 'User';
-          return (
-            <li key={account.email}>
-              <button
-                type="button"
-                onClick={() => onPick(account)}
-                className="flex w-full items-center gap-s3 rounded-xl border-2 border-transparent bg-surface px-s3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-primary-subtle/40"
-                aria-label={`Use ${account.full_name} — ${account.email}`}
-              >
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    'grid size-9 shrink-0 place-items-center rounded-full text-2xs font-bold',
-                    role === SUPER_ADMIN || role === 'Admin' ? 'bg-ink text-ink-fg' : 'bg-primary-subtle text-primary-subtle-fg',
-                  )}
-                >
-                  {initialsOf(account.full_name)}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-bold text-text">{account.full_name}</span>
-                  <span className="block truncate text-xs text-text-subtle">{account.email}</span>
-                </span>
-                <Badge tone={role === SUPER_ADMIN ? 'primary' : 'neutral'}>{role}</Badge>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
   );
 }
 

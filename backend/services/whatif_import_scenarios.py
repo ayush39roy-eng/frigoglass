@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import domain_constants as dc
 from api.errors import HTTP_413, HTTP_422, CodedHTTPException
+from api.super_admin import is_super_admin, super_admin_only_error
 from core.principal import Principal
 from models.audit import AuditLogEntry
 from models.enums import RoleName
@@ -177,6 +178,17 @@ def _can_edit(principal: Principal, row_created_by: uuid.UUID | None) -> bool:
     )
 
 
+def _is_creator(principal: Principal, row_created_by: uuid.UUID | None) -> bool:
+    return row_created_by is not None and row_created_by == principal.user_id
+
+
+def _can_delete(principal: Principal, row_created_by: uuid.UUID | None) -> bool:
+    """ADR 0058 D1.4: deleting a saved scenario is for its creator or a Super
+    Admin. An Admin keeps `_can_edit` (rename / note) on others' rows."""
+
+    return _is_creator(principal, row_created_by) or is_super_admin(principal)
+
+
 async def _get_visible(
     db: AsyncSession, principal: Principal, scenario_id: uuid.UUID
 ) -> WhatifImportScenario:
@@ -210,6 +222,7 @@ def _summary(
         "created_at": row.created_at,
         "created_by_name": creator,
         "can_edit": _can_edit(principal, row.created_by),
+        "can_delete": _can_delete(principal, row.created_by),
         "mode": row.mode,
         "plan_year_end_week": row.plan_year_end_week,
         "simulated_week": row.simulated_week,
@@ -400,6 +413,7 @@ async def list_scenarios(
                 created_at=r.created_at,
                 created_by_name=r.full_name,
                 can_edit=_can_edit(principal, r.created_by),
+                can_delete=_can_delete(principal, r.created_by),
                 mode=r.mode,
                 plan_year_end_week=r.plan_year_end_week,
                 simulated_week=r.simulated_week,
@@ -460,6 +474,9 @@ async def delete_scenario(db: AsyncSession, principal: Principal, scenario_id: u
     row = await _get_visible(db, principal, scenario_id)
     if not _can_edit(principal, row.created_by):
         raise _forbidden()
+    if not _can_delete(principal, row.created_by):
+        # ADR 0058 D1.4: an Admin deleting someone else's scenario.
+        raise super_admin_only_error()
     rid, name = row.id, row.name
     # ADR 0055 D3: a real delete, no soft delete.
     await db.execute(delete(WhatifImportScenario).where(WhatifImportScenario.id == rid))

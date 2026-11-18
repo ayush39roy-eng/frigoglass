@@ -317,4 +317,16 @@ describe('DeactivateEngineerDialog (P38-T06)', () => {
     expect(list).toHaveAttribute('tabindex', '0');
     expect(await seriousAxeViolations(screen.getByRole('dialog'))).toEqual([]);
   }, 30000);
+
+  it('P46: a 403 SUPER_ADMIN_ONLY shows the plain message and does not downgrade the page', async () => {
+    const user = userEvent.setup();
+    seed(preview([], { supply_effect: null, has_linked_login: false }));
+    mutateAsync.mockRejectedValueOnce(new ApiError(403, 'forbidden', 'x', 'SUPER_ADMIN_ONLY'));
+    const { onDeactivated, onForbidden } = renderDialog();
+    await chooseReason(user);
+    await user.click(screen.getByTestId('deactivate-confirm'));
+    expect(await screen.findByTestId('deactivate-error')).toHaveTextContent('Only a Super Admin can do this.');
+    expect(onForbidden).not.toHaveBeenCalled();
+    expect(onDeactivated).not.toHaveBeenCalled();
+  });
 });

@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
 from api.deps import require_permission
+from api.super_admin import ensure_super_admin
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
@@ -309,8 +310,12 @@ async def delete_chamber(
 ) -> None:
     """Delete a chamber. Fails with 409 if still referenced by a workflow step
     or schedule-run snapshot — same rationale as `engineers.delete_engineer`.
+
+    ADR 0058 D1.3: Super Admin only (403 `SUPER_ADMIN_ONLY` for every other
+    role with Capacity Planning write, checked before the lookup).
     """
 
+    ensure_super_admin(current_user)
     chamber = await _get_chamber_or_404(db, chamber_id, current_user)
     before_state = chamber_audit_state(chamber)
 

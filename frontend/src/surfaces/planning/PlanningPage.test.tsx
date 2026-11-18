@@ -733,3 +733,26 @@ describe('PlanningPage (P38-T06 deactivate / reactivate)', () => {
     expect(await seriousAxeViolations(container)).toEqual([]);
   }, 30000);
 });
+
+describe('PlanningPage P46 (ADR 0058 D1.3): delete chamber is Super Admin only', () => {
+  it('an Admin sees the Overview card Delete disabled with "Super Admin only"', () => {
+    renderWithProviders(<PlanningPage />, { session: { roles: ['Admin'] } });
+    const del = screen.getByRole('button', { name: 'Delete GR-CH1' });
+    expect(del).toBeDisabled();
+    expect(del.closest('[data-super-admin-only]')).toHaveAttribute('title', 'Super Admin only');
+  });
+
+  it('a 403 SUPER_ADMIN_ONLY on delete shows the plain message and keeps the page writable', async () => {
+    const user = userEvent.setup();
+    const mutateAsync = vi.fn().mockRejectedValue(new ApiError(403, 'forbidden', 'x', 'SUPER_ADMIN_ONLY'));
+    hooks.useDeleteChamber.mockReturnValue({ mutateAsync, isPending: false });
+    renderWithProviders(<PlanningPage />);
+    await user.click(screen.getByRole('button', { name: 'Delete GR-CH1' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Only a Super Admin can do this.');
+    expect(mutateAsync).toHaveBeenCalledWith('c1');
+    // The page stays writable (the dialog hides the page from the a11y tree).
+    expect(screen.getByRole('button', { name: 'Delete GR-CH1', hidden: true })).toBeEnabled();
+  });
+});

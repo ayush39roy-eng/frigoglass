@@ -232,6 +232,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.db import get_db, get_session_factory
 from api.deps import require_any_permission, require_roles
 from api.errors import CodedHTTPException
+from api.super_admin import ensure_super_admin
 from core.celery_config import get_celery_settings, get_redis_settings
 from core.principal import Principal
 from core.rbac import Action, Surface
@@ -556,7 +557,9 @@ async def cancel_schedule_run(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_admin_only),
 ) -> ScheduleRun:
-    """Request cancellation of a `QUEUED` or `RUNNING` `ScheduleRun`. See
+    """ADR 0058 D1.4: Super Admin only (403 `SUPER_ADMIN_ONLY` for an Admin).
+
+    Request cancellation of a `QUEUED` or `RUNNING` `ScheduleRun`. See
     module docstring + `workers/schedule_tasks.py`'s module docstring for the
     full, honest cancellation semantics: a `QUEUED` run is cleanly prevented
     from ever starting; a `RUNNING` run's worker process is hard-killed
@@ -570,6 +573,7 @@ async def cancel_schedule_run(
     no-op-that-should-fail-loudly, not silently accepted.
     """
 
+    ensure_super_admin(current_user)
     run = await db.get(ScheduleRun, schedule_run_id)
     if run is None:
         raise HTTPException(

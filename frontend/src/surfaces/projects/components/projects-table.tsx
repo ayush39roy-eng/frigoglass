@@ -994,7 +994,10 @@ export function ProjectsTable({
     <div
       ref={scrollRef}
       className="overflow-auto scrollbar-thin rounded-lg border border-border"
-      style={{ maxHeight }}
+      // P44-R01: the table is its own vertical scroll box, so its sticky header row stays
+      // in view. Capped to the viewport (less the shell padding and app header) so the box
+      // never runs below the fold, where the page would scroll instead and take the header with it.
+      style={{ maxHeight: `min(${String(maxHeight)}px, calc(100dvh - var(--app-header-h) - 6rem))` }}
       data-testid="projects-table-scroll"
       tabIndex={0}
       aria-label="Projects list, scrollable"
@@ -1011,6 +1014,7 @@ export function ProjectsTable({
           <div
             role="row"
             aria-rowindex={1}
+            data-testid="projects-table-header"
             className="sticky top-0 z-10 grid items-center gap-2 border-b-[1.5px] border-transparent bg-ink px-4 py-3 text-2xs font-bold uppercase tracking-wider text-ink-fg"
             style={{ gridTemplateColumns: gridTemplate }}
           >

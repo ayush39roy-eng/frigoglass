@@ -15,6 +15,8 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { ApiError } from '@/lib/api/client';
+import { useIsSuperAdmin } from '@/lib/auth/super-admin';
+import { SuperAdminOnly } from '@/components/shared/super-admin-only';
 import { formatTimestamp } from '@/lib/format';
 
 import { downloadFormatTemplate } from '../import-api';
@@ -291,6 +293,8 @@ function FormatDialog({
 }): React.JSX.Element {
   const [draft, setDraft] = React.useState<FormatDraft>(() => draftOf(format));
   const [confirmReset, setConfirmReset] = React.useState(false);
+  // P46 (ADR 0058 D1.4): "Reset all to default" is Super Admin only.
+  const superAdmin = useIsSuperAdmin();
   const save = useSaveImportFormat();
   const reset = useResetImportFormat();
   const toast = useImportToast((s) => s.show);
@@ -367,7 +371,7 @@ function FormatDialog({
               ) : null}
             </div>
           ) : null}
-          {confirmReset ? (
+          {confirmReset && superAdmin ? (
             <div
               role="alertdialog"
               aria-label="Reset all to default"
@@ -383,10 +387,18 @@ function FormatDialog({
             </div>
           ) : null}
           <DialogFooter className="gap-s2 sm:justify-between">
-            <Button type="button" variant="ghost" disabled={busy} onClick={() => setConfirmReset(true)}>
-              <RotateCcw />
-              Reset all to default
-            </Button>
+            <SuperAdminOnly locked={!superAdmin}>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={busy || !superAdmin}
+                onClick={() => setConfirmReset(true)}
+                data-testid="format-reset-all"
+              >
+                <RotateCcw />
+                Reset all to default
+              </Button>
+            </SuperAdminOnly>
             <div className="flex gap-s2">
               <Button type="button" variant="ghost" disabled={busy} onClick={onClose}>
                 Cancel

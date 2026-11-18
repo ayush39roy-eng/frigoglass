@@ -216,17 +216,22 @@ async def test_admin_updates_non_admin_user_with_audit(db_session):
     actor = await _act_as(db_session, RoleName.ADMIN)
     hub = await make_hub(db_session)
     eng = await make_engineer(db_session, hub)
-    target = await make_user(db_session, RoleName.ENGINEER, full_name="Before")
+    # P46 (ADR 0058 D1.4): an Admin may no longer deactivate a user or remove
+    # a role (tests/test_p46_super_admin_only.py), so this Admin edit now
+    # reactivates and adds a role instead of deactivating and swapping one.
+    target = await make_user(
+        db_session, RoleName.ENGINEER, full_name="Before", is_active=False
+    )
     async with _client(db_session) as client:
         resp = await client.patch(
             f"/users/{target.id}",
             json={
                 "full_name": "After",
-                "roles": ["Hub Planner"],
+                "roles": ["Hub Planner", "Engineer"],
                 "hub_scope_all": False,
                 "hub_ids": [str(hub.id)],
                 "engineer_id": str(eng.id),
-                "is_active": False,
+                "is_active": True,
             },
         )
         unlink = await client.patch(f"/users/{target.id}", json={"engineer_id": None})
@@ -235,10 +240,10 @@ async def test_admin_updates_non_admin_user_with_audit(db_session):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["full_name"] == "After"
-    assert body["roles"] == ["Hub Planner"]
+    assert body["roles"] == ["Hub Planner", "Engineer"]
     assert body["hub_ids"] == [str(hub.id)]
     assert body["engineer_id"] == str(eng.id)
-    assert body["is_active"] is False
+    assert body["is_active"] is True
     assert unlink.status_code == 200 and unlink.json()["engineer_id"] is None
     assert null_roles.status_code == 422
     assert missing.status_code == 404
@@ -258,7 +263,7 @@ async def test_admin_updates_non_admin_user_with_audit(db_session):
     assert len(rows) == 2
     first = next(r for r in rows if r.before_state.get("full_name") == "Before")
     assert first.actor_user_id == actor.id
-    assert first.after_state["roles"] == ["Hub Planner"]
+    assert first.after_state["roles"] == ["Hub Planner", "Engineer"]
     engineer_link = (
         await db_session.execute(select(Engineer.user_id).where(Engineer.id == eng.id))
     ).scalar_one()

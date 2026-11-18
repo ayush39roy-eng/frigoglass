@@ -95,6 +95,9 @@ class SavedScenarioSummary(BaseModel):
     created_at: datetime
     created_by_name: str | None
     can_edit: bool
+    #: ADR 0058 D1.4: the creator or a Super Admin. An Admin who did not save
+    #: the scenario may rename it (`can_edit`) but not delete it.
+    can_delete: bool
     mode: Literal["merge", "file_only"]
     plan_year_end_week: int
     simulated_week: int

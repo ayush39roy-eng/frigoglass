@@ -12,6 +12,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
+import { SuperAdminOnly } from '@/components/shared/super-admin-only';
+import { useIsSuperAdmin } from '@/lib/auth/super-admin';
 import { formatDecimal, formatFactor, formatInteger } from '@/lib/format';
 import { LAB_REGIONS, type LabRegion } from '@/types/enums';
 
@@ -32,6 +34,7 @@ export interface ChamberTableProps {
  *  derived. */
 export function ChamberTable({ rows, canEdit, onEdit, onDelete }: ChamberTableProps): React.JSX.Element {
   const groups = React.useMemo(() => groupRows(rows, (r) => r.lab_region, LAB_REGIONS), [rows]);
+  const superAdmin = useIsSuperAdmin();
   const columns = canEdit ? 9 : 8;
   return (
     <Table>
@@ -119,15 +122,19 @@ export function ChamberTable({ rows, canEdit, onEdit, onDelete }: ChamberTablePr
                   >
                     <Pencil />
                   </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Delete ${row.code}`}
-                    onClick={() => onDelete(row)}
-                  >
-                    <Trash2 />
-                  </Button>
+                  {/* P46 (ADR 0058 D1.3): delete is Super Admin only. */}
+                  <SuperAdminOnly locked={!superAdmin}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Delete ${row.code}`}
+                      disabled={!superAdmin}
+                      onClick={() => onDelete(row)}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </SuperAdminOnly>
                 </div>
               </TableCell>
             ) : null}

@@ -3,38 +3,21 @@ import { describe, expect, it } from 'vitest';
 import { makeMe } from '@/test/session';
 import { resolveStartPage } from '@/stores/preferences';
 
-import { pickTestAccounts, TEST_LOGIN_PASSWORD, verifyTestLogin } from './test-logins';
+import { ApiError } from '@/lib/api/client';
 
-const USERS = [
-  { email: 'alex.admin@example.com', full_name: 'Alex Admin', roles: ['Admin' as const] },
-  { email: 'sam.super@example.com', full_name: 'Sam Super', roles: ['Super Admin' as const] },
-];
+import { devLoginErrorMessage, LOGIN_FAILED_MESSAGE, loginFormError } from './test-logins';
 
-describe('verifyTestLogin', () => {
-  it('accepts a seeded email (any case) with the shared test password', () => {
-    const result = verifyTestLogin(' SAM.super@example.com ', TEST_LOGIN_PASSWORD, USERS);
-    expect(result.ok && result.user.email).toBe('sam.super@example.com');
+describe('test logins (P46, ADR 0058 L1)', () => {
+  it('asks for missing fields before any request', () => {
+    expect(loginFormError('  ', 'x')).toBe('Enter your username or email.');
+    expect(loginFormError('admin', '')).toBe('Enter your password.');
+    expect(loginFormError('admin', 'admin')).toBeNull();
   });
 
-  it('gives one message for an unknown email and for a wrong password', () => {
-    const unknown = verifyTestLogin('nobody@example.com', TEST_LOGIN_PASSWORD, USERS);
-    const wrong = verifyTestLogin('sam.super@example.com', 'nope', USERS);
-    expect(unknown).toEqual(wrong);
-    expect(unknown.ok).toBe(false);
-  });
-
-  it('asks for missing fields', () => {
-    expect(verifyTestLogin('', 'x', USERS)).toEqual({ ok: false, error: 'Enter your email address.' });
-    expect(verifyTestLogin('a@b.c', '', USERS)).toEqual({ ok: false, error: 'Enter your password.' });
-  });
-});
-
-describe('pickTestAccounts', () => {
-  it('returns one account per role in the given order', () => {
-    expect(pickTestAccounts(USERS, ['Super Admin', 'Admin']).map((u) => u.email)).toEqual([
-      'sam.super@example.com',
-      'alex.admin@example.com',
-    ]);
+  it('gives plain copy for 401 and 429', () => {
+    expect(devLoginErrorMessage(new ApiError(401, 'x'))).toBe(LOGIN_FAILED_MESSAGE);
+    expect(devLoginErrorMessage(new ApiError(429, 'x'))).toMatch(/Too many sign-in attempts/);
+    expect(devLoginErrorMessage(new ApiError(429, 'x', undefined, 'RATE_LIMITED', 30))).toMatch(/Wait 30 s/);
   });
 });
 

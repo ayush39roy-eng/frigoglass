@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.db import get_db
 from api.deps import require_permission, require_roles
 from api.errors import HTTP_413, HTTP_422, CodedHTTPException
+from api.super_admin import ensure_super_admin
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.enums import RoleName
@@ -392,6 +393,9 @@ async def reset_import_format(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_format_admin),
 ) -> ImportFormatOut:
+    # ADR 0058 D1.4: resetting the import format is Super Admin only; editing
+    # it (`PUT /import/format`) stays an Admin right.
+    ensure_super_admin(current_user)
     _throttle(WHATIF_RATE_LIMIT, current_user)
     await reset_format(db, current_user, version=body.version)
     await db.commit()

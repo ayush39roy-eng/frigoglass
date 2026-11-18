@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.db import get_db
 from api.deps import get_current_principal
 from api.errors import CodedHTTPException
+from api.super_admin import is_super_admin, super_admin_only_error
 from core.principal import Principal
 from models.audit import AuditLogEntry
 from models.enums import RoleName
@@ -189,15 +190,27 @@ async def revoke_access(
     if grant is None or grant.project_id != project.id or grant.revoked_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grant not found")
     target = await _user_or_404(db, grant.user_id)
-    actor_role = await effective_project_access(db, current_user, project)
-    if not can_manage_grant(current_user, target, actor_role):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Not authorized to revoke project access — must be Super Admin, global "
-                "Admin, or the target's manager with Admin-level access on this project."
-            ),
-        )
+    # ADR 0058 D1.4 (P46-R01, security M-1): a revoke is Super Admin only for
+    # every caller who holds the global Admin role, whatever `manager_id`
+    # says. Otherwise an Admin could make themselves the grantee's manager
+    # (`PATCH /users/{id}`, an Admin right) and pass the delegate check below,
+    # because `effective_project_access` gives a global Admin "admin" on every
+    # project. The ADR 0012 manager delegation stays for everyone else: the
+    # target's manager whose own project-admin level comes from a role that
+    # is not Admin / Super Admin (Portfolio Manager, in-scope Hub Planner) or
+    # from an Admin-level project grant.
+    if not is_super_admin(current_user):
+        if RoleName.ADMIN in current_user.roles:
+            raise super_admin_only_error()
+        actor_role = await effective_project_access(db, current_user, project)
+        if not can_manage_grant(current_user, target, actor_role):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Not authorized to revoke project access — must be Super Admin, or "
+                    "the target's manager with Admin-level access on this project."
+                ),
+            )
 
     before_state = _audit_state(grant)
     grant.revoked_at = datetime.now(UTC)

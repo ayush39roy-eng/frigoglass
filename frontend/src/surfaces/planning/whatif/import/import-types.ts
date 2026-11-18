@@ -431,6 +431,9 @@ export interface SavedScenarioSummary {
   created_at: string;
   created_by_name: string | null;
   can_edit: boolean;
+  /** P46 (ADR 0058 D1.4), served: the creator or a Super Admin. An Admin who did
+   *  not save the scenario may rename it (`can_edit`) but not delete it. */
+  can_delete: boolean;
   mode: ImportMode;
   plan_year_end_week: number;
   simulated_week: number;

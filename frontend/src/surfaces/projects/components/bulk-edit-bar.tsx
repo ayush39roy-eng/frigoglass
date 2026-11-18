@@ -2,6 +2,7 @@ import * as React from 'react';
 import { RotateCcw, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { isStatusOptionLocked, statusOptionLabel, useIsSuperAdmin } from '@/lib/auth/super-admin';
 import { formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { UI_PROJECT_STATUSES, type ProjectStatus } from '@/types/enums';
@@ -44,6 +45,7 @@ export function BulkEditBar({
   const ids = React.useId();
   const [leader, setLeader] = React.useState(NO_CHANGE);
   const [status, setStatus] = React.useState<string>(NO_CHANGE);
+  const superAdmin = useIsSuperAdmin();
   const [design, setDesign] = React.useState('');
   const [lab, setLab] = React.useState('');
   const [notice, setNotice] = React.useState<string | null>(null);
@@ -115,11 +117,15 @@ export function BulkEditBar({
             data-testid="bulk-status"
           >
             <option value={NO_CHANGE}>Choose…</option>
-            {UI_PROJECT_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
+            {UI_PROJECT_STATUSES.map((s) => {
+              // P46 (ADR 0058 D1.1): only a Super Admin may set Cancelled.
+              const locked = isStatusOptionLocked(s, superAdmin);
+              return (
+                <option key={s} value={s} disabled={locked}>
+                  {statusOptionLabel(s, locked)}
+                </option>
+              );
+            })}
           </select>
         </label>
         <Button

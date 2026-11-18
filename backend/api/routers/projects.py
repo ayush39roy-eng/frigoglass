@@ -80,6 +80,7 @@ from api.query_params import (
     StatusListQuery,
     TypeListQuery,
 )
+from api.super_admin import ensure_super_admin
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
@@ -611,6 +612,18 @@ async def update_project(
     return project
 
 
+def ensure_may_cancel(
+    project: Project, new_status: ProjectStatus | None, principal: Principal
+) -> None:
+    """ADR 0058 D1.1: setting a project's status to Cancelled is Super Admin
+    only (403 `SUPER_ADMIN_ONLY`), on every API write path. Leaving Cancelled
+    is an ordinary edit, and re-sending Cancelled for a project that already
+    is Cancelled changes nothing, so neither is restricted."""
+
+    if new_status == ProjectStatus.CANCELLED and project.status != ProjectStatus.CANCELLED:
+        ensure_super_admin(principal)
+
+
 @dataclass(frozen=True)
 class StagedProjectUpdate:
     """What `stage_project_update` staged (nothing committed)."""
@@ -666,6 +679,8 @@ async def stage_project_update(
     `project_leader_history` row (`leader_cause`), at `clock`'s week."""
 
     status_before = project.status
+    # ADR 0058 D1.1: only a Super Admin sets a project to Cancelled.
+    ensure_may_cancel(project, updates.get("status"), current_user)
     if updates.get("status") == ProjectStatus.DRAFT:
         raise CodedHTTPException(
             HTTP_422,
@@ -1076,7 +1091,12 @@ async def save_register_edits(
     # P36-R01 (security M-1): scoped lookup + write authorisation with plain
     # SELECTs first, so a batch naming a project the caller may not edit is
     # refused without ever taking (or waiting on) the band-rank lock.
-    await _authorize_register_batch(db, edits, current_user)
+    readable = await _authorize_register_batch(db, edits, current_user)
+    # ADR 0058 D1.1: a batch that cancels a project is refused as a whole
+    # (403 `SUPER_ADMIN_ONLY`) before any lock, not as a per-row 422.
+    for edit in edits:
+        if "status" in edit.model_fields_set:
+            ensure_may_cancel(readable[edit.project_id], edit.status, current_user)
     # ADR 0050 / R36-8: the band-rank lock is the first lock, before the row
     # locks below, so this batch and a re-rank / priority move serialise
     # without deadlock.

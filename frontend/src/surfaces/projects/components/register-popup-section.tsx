@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import type { Hub } from '@/lib/api/reference';
+import { isStatusOptionLocked, statusOptionLabel, useIsSuperAdmin } from '@/lib/auth/super-admin';
 import { formatPlanWeek } from '@/lib/format';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { cn } from '@/lib/utils';
@@ -122,6 +123,8 @@ export function RegisterPopupSection({
   const servedLeaderMissing =
     base.leader_engineer_id !== null && !leaderList.some((e) => e.id === base.leader_engineer_id);
 
+  // P46 (ADR 0058 D1.1): only a Super Admin may set Cancelled.
+  const superAdmin = useIsSuperAdmin();
   const statusOptions: ProjectStatus[] = UI_PROJECT_STATUSES.includes(base.status)
     ? [...UI_PROJECT_STATUSES]
     : [base.status, ...UI_PROJECT_STATUSES];
@@ -192,11 +195,14 @@ export function RegisterPopupSection({
               aria-describedby={describe('status')}
               onChange={(e) => set('status', e.currentTarget.value as ProjectStatus)}
             >
-              {statusOptions.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
+              {statusOptions.map((s) => {
+                const locked = isStatusOptionLocked(s, superAdmin, base.status);
+                return (
+                  <option key={s} value={s} disabled={locked}>
+                    {statusOptionLabel(s, locked)}
+                  </option>
+                );
+              })}
             </NativeSelect>
           )}
         </PopupField>

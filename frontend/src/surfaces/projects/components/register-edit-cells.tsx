@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ChevronDown, RotateCcw, TriangleAlert } from 'lucide-react';
 
 import { Checkbox } from '@/components/ui/checkbox';
+import { isStatusOptionLocked, statusOptionLabel, useIsSuperAdmin } from '@/lib/auth/super-admin';
 import type { Hub } from '@/lib/api/reference';
 import { formatPlanWeek } from '@/lib/format';
 import { hubPickerLabel } from '@/lib/hub-labels';
@@ -214,6 +215,8 @@ export function StatusSelect({
 }): React.JSX.Element {
   const options = UI_PROJECT_STATUSES.includes(served) || served === 'Draft' ? UI_PROJECT_STATUSES : [served, ...UI_PROJECT_STATUSES];
   const descId = React.useId();
+  // P46 (ADR 0058 D1.1): only a Super Admin may set Cancelled.
+  const superAdmin = useIsSuperAdmin();
   const mismatch = mismatchExpected === null ? null : statusMismatchText(mismatchExpected);
   return (
     <span
@@ -236,11 +239,14 @@ export function StatusSelect({
         data-testid="status-select"
         onChange={(e) => onChange(e.currentTarget.value as ProjectStatus)}
       >
-        {options.map((s) => (
-          <option key={s} value={s}>
-            {s}
-          </option>
-        ))}
+        {options.map((s) => {
+          const locked = isStatusOptionLocked(s, superAdmin, served);
+          return (
+            <option key={s} value={s} disabled={locked}>
+              {statusOptionLabel(s, locked)}
+            </option>
+          );
+        })}
       </NativeSelect>
     </span>
   );

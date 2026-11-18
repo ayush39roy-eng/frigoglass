@@ -8,17 +8,28 @@
   It lists the accounts the dev-only role switcher can pick for
   `X-Dev-User-Email`. It is a 404 rather than a 403 outside dev mode, so a
   production deployment does not even reveal that the switcher exists.
+  ADR 0058 L1: it lists only the two test logins
+  (`services.dev_accounts.DEV_LOGIN_ACCOUNTS`), when active.
+- `POST /me/dev-login`: dev mode only, 404 otherwise (ADR 0058 L1). Checks
+  `{username, password}` on the server (password = username, constant-time)
+  and answers the `DevUser`, or one generic 401. Rate-limited per client
+  address (`_dev_login_client_key`).
+  The password is never logged, stored or echoed.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+import hmac
+import math
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.db import get_db
 from api.deps import get_current_principal
+from api.errors import CodedHTTPException
 from core.config import is_dev_mode
 from core.principal import Principal
 from core.rbac import Action, Surface, role_allows
@@ -26,21 +37,59 @@ from models.engineer import Engineer
 from models.enums import RoleName
 from models.user import User, UserRole
 from schemas.session import (
+    DevLoginRequest,
     DevUser,
     MeResponse,
     PlanWeek,
     SurfacePermission,
     SurfacePermissions,
 )
+from services.dev_accounts import DEV_LOGIN_EMAILS, account_for_login
 from services.plan_clock import PlanClock, get_plan_clock
 from services.plan_week import plan_week_state
 from services.project_access import has_any_manageable_project
+from services.rate_limit import TokenBucketLimiter
 
 router = APIRouter(prefix="/me", tags=["session"])
 
-#: Upper bound on the dev switcher list. A dev database has a handful of
-#: seeded users; the cap only keeps the query bounded.
-_DEV_USERS_LIMIT = 100
+#: ADR 0058 L1 / P46-R01 (security L-1): per client address, a burst of 10
+#: login attempts, then one every 3 seconds. Per API process
+#: (`services.rate_limit`). At most `_DEV_LOGIN_MAX_KEYS` buckets are kept
+#: (least recently used evicted), because the key comes from a header.
+DEV_LOGIN_RATE_LIMIT = TokenBucketLimiter(
+    capacity=10, refill_per_second=1 / 3, max_keys=10_000
+)
+
+#: Longest `X-Forwarded-For` entry used as a key (an IPv6 address is at most
+#: 45 chars); a longer one falls back to the peer address.
+_MAX_FORWARDED_LEN = 64
+
+
+def _dev_login_client_key(request: Request) -> str:
+    """The rate-limit key for `POST /me/dev-login`: the left-most
+    `X-Forwarded-For` entry when present, else the peer address.
+
+    DEV MODE ONLY, and only for this limiter. On the hosted demo the API sits
+    behind Render's proxy and uvicorn does not trust `X-Forwarded-For`, so the
+    peer address is the proxy's and every caller would share one bucket; one
+    client could then block everyone's sign-in. The left-most entry is what
+    the client claims, so a caller can spoof it, but that only lets them dodge
+    their own limit on a test login whose password equals its username. It is
+    never used for authorisation, logging or anything outside dev mode.
+    """
+
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        first = forwarded.split(",", 1)[0].strip()
+        if first and len(first) <= _MAX_FORWARDED_LEN:
+            return f"xff:{first}"
+    return f"peer:{request.client.host if request.client else 'unknown'}"
+
+
+#: Longest identifier / password even looked at; anything longer is the 401.
+_DEV_LOGIN_MAX_LEN = 320
+
+_DEV_LOGIN_FAILED = "Invalid username or password."
 
 
 def _role_sort_key(role: RoleName) -> int:
@@ -111,6 +160,41 @@ async def get_me(
     )
 
 
+def _not_found() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+
+def _dev_user(user: User) -> DevUser:
+    return DevUser(
+        email=user.email,
+        full_name=user.full_name,
+        roles=sorted(
+            (RoleName(ur.role.name) for ur in user.roles if ur.role is not None),
+            key=_role_sort_key,
+        ),
+    )
+
+
+async def _active_dev_login_users(db: AsyncSession) -> dict[str, User]:
+    """The active test-login accounts that hold a role, by lower-cased email."""
+
+    users = (
+        (
+            await db.execute(
+                select(User)
+                .options(selectinload(User.roles).selectinload(UserRole.role))
+                .where(
+                    func.lower(User.email).in_(DEV_LOGIN_EMAILS),
+                    User.is_active.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {u.email.lower(): u for u in users if u.roles}
+
+
 @router.get("/dev-users", response_model=list[DevUser])
 async def list_dev_users(
     db: AsyncSession = Depends(get_db),
@@ -123,30 +207,63 @@ async def list_dev_users(
     # actual unauthenticated call — masking the intended "404 outside dev
     # mode" behaviour.
     if not is_dev_mode():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+        raise _not_found()
 
-    users = (
-        (
-            await db.execute(
-                select(User)
-                .options(selectinload(User.roles).selectinload(UserRole.role))
-                .where(User.is_active.is_(True))
-                .order_by(User.email)
-                .limit(_DEV_USERS_LIMIT)
-            )
+    # ADR 0058 L1: only the two test logins, in their fixed order. Every other
+    # seeded user stays in the database but is not offered here.
+    found = await _active_dev_login_users(db)
+    return [_dev_user(found[email]) for email in DEV_LOGIN_EMAILS if email in found]
+
+
+async def _dev_mode_only() -> None:
+    """Runs before body validation, so outside dev mode every request to the
+    route is the same 404, whatever its body."""
+
+    if not is_dev_mode():
+        raise _not_found()
+
+
+@router.post(
+    "/dev-login",
+    response_model=DevUser,
+    dependencies=[Depends(_dev_mode_only)],
+    responses={
+        401: {"description": "Any failure: one generic message."},
+        404: {"description": "Not in dev mode."},
+        429: {"description": "RATE_LIMITED, with Retry-After."},
+    },
+)
+async def dev_login(
+    body: DevLoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> DevUser:
+    """ADR 0058 L1. `username` is `superadmin` / `admin` or the full email
+    (case-insensitive); `password` must equal the account's username,
+    compared in constant time. Answers the account's `DevUser`; the client
+    then sends that `email` as `X-Dev-User-Email`. Any failure (unknown
+    user, wrong password, account missing, inactive or without a role) is
+    the same 401. The password is never logged or echoed."""
+
+    allowed, retry_after = DEV_LOGIN_RATE_LIMIT.allow(_dev_login_client_key(request))
+    if not allowed:
+        raise CodedHTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "RATE_LIMITED",
+            "Too many sign-in attempts. Please wait a moment and try again.",
+            headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
         )
-        .scalars()
-        .all()
-    )
-    return [
-        DevUser(
-            email=u.email,
-            full_name=u.full_name,
-            roles=sorted(
-                (RoleName(ur.role.name) for ur in u.roles if ur.role is not None),
-                key=_role_sort_key,
-            ),
-        )
-        for u in users
-        if u.roles
-    ]
+
+    failed = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_DEV_LOGIN_FAILED)
+    if len(body.username) > _DEV_LOGIN_MAX_LEN or len(body.password) > _DEV_LOGIN_MAX_LEN:
+        raise failed
+    account = account_for_login(body.username)
+    # Compared even for an unknown username, so both paths do the same work.
+    expected = account.username if account is not None else "\x00" * 16
+    password_ok = hmac.compare_digest(body.password.encode(), expected.encode())
+    if account is None or not password_ok:
+        raise failed
+    user = (await _active_dev_login_users(db)).get(account.email)
+    if user is None:
+        raise failed
+    return _dev_user(user)

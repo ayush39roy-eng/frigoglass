@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/select';
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
+import { SUPER_ADMIN_ONLY_HINT, useIsSuperAdmin } from '@/lib/auth/super-admin';
 import type { Hub } from '@/lib/api/reference';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import type { EngineerOption } from '@/surfaces/registration/api/engineers-api';
@@ -96,6 +97,12 @@ function UserForm({
   const [engineerId, setEngineerId] = React.useState<string>(user?.engineer_id ?? NONE);
   const [isActive, setIsActive] = React.useState<boolean>(user?.is_active ?? true);
   const [managerId, setManagerId] = React.useState<string>(user?.manager_id ?? NONE);
+  // P46 (ADR 0058 D1.4): deactivating a user and removing a role they hold
+  // are Super Admin only. Reactivating and adding a role are unchanged.
+  const callerIsSuperAdmin = useIsSuperAdmin();
+  const heldRoles = mode === 'edit' ? (user?.roles ?? []) : [];
+  const roleRemovalLocked = (role: RoleName): boolean => !callerIsSuperAdmin && heldRoles.includes(role);
+  const deactivateLocked = mode === 'edit' && !callerIsSuperAdmin && (user?.is_active ?? true);
 
   const {
     register,
@@ -188,21 +195,28 @@ function UserForm({
           <div className="grid gap-1.5 sm:grid-cols-2">
             {roles.map((role) => {
               const checked = selectedRoles.includes(role.name);
+              const removalLocked = role.assignable && roleRemovalLocked(role.name);
               return (
                 <label
                   key={role.name}
-                  className={`flex items-start gap-2 rounded-control border border-border px-2 py-1.5 text-xs ${role.assignable ? 'text-text' : 'text-text-muted'}`}
+                  title={removalLocked ? `${SUPER_ADMIN_ONLY_HINT}: removing a role` : undefined}
+                  data-super-admin-only={removalLocked ? 'true' : undefined}
+                  className={`flex items-start gap-2 rounded-control border border-border px-2 py-1.5 text-xs ${role.assignable && !removalLocked ? 'text-text' : 'text-text-muted'}`}
                 >
                   <Checkbox
                     checked={checked}
-                    disabled={!role.assignable}
+                    disabled={!role.assignable || removalLocked}
                     onCheckedChange={(next) => toggleRole(role.name, next === true)}
                     aria-label={role.name}
                   />
                   <span className="min-w-0">
                     <span className="block font-medium">{role.name}</span>
                     <span className="block text-2xs text-text-subtle">
-                      {role.assignable ? role.description : 'Only a Super Admin can grant this role'}
+                      {!role.assignable
+                        ? 'Only a Super Admin can grant this role'
+                        : removalLocked
+                          ? `${SUPER_ADMIN_ONLY_HINT}: removing this role`
+                          : role.description}
                     </span>
                   </span>
                 </label>
@@ -256,9 +270,19 @@ function UserForm({
             </span>
           </div>
           {mode === 'edit' ? (
-            <label className="flex items-center gap-2 self-end pb-5 text-xs text-text">
-              <Checkbox checked={isActive} onCheckedChange={(next) => setIsActive(next === true)} />
+            <label
+              className="flex items-center gap-2 self-end pb-5 text-xs text-text"
+              title={deactivateLocked ? `${SUPER_ADMIN_ONLY_HINT}: deactivating a user` : undefined}
+              data-super-admin-only={deactivateLocked ? 'true' : undefined}
+            >
+              <Checkbox
+                checked={isActive}
+                disabled={deactivateLocked}
+                onCheckedChange={(next) => setIsActive(next === true)}
+                aria-label="Active"
+              />
               Active
+              {deactivateLocked ? <span className="text-2xs text-text-subtle">({SUPER_ADMIN_ONLY_HINT})</span> : null}
             </label>
           ) : null}
         </div>

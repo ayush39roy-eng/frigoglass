@@ -43211,3 +43211,325 @@ password = username, on the hosted Render demo (dev mode).
 - **Not restricted:** a per-project step exclusion, leaving Cancelled, and reactivating an engineer.
 
 **Next:** T02 (backend-builder) and T03 (frontend-builder) in parallel, then the T04 gate.
+
+## [2026-11-18] P44 follow-up — compact horizontal step chips — frontend-builder: DONE
+
+Owner request: the Projects list "Steps (click to exclude)" chips are smaller and more horizontal.
+- `compact` mode in `frontend/src/surfaces/projects/components/step-chips.tsx`:
+  - The grid is now 7 columns (`grid-cols-7 gap-0.5`), so 14 steps fit in 2 rows.
+  - Each chip is one line, 22px tall, and shows the step letter (`step_code` without the workflow prefix).
+  - On chips show a tiny ✓. Changed chips show a 4px warning dot.
+  - N/A chips are dashed and greyed, with no ✓. Excluded chips are struck through.
+  - The current step uses an inset ring, so the ring adds no height.
+  - `title`, `aria-label` and the read-only sr-only text keep the full code, name and state.
+  - No prefix caption was added; the column header and the tooltip are enough.
+  - The non-compact popup layout is unchanged.
+- `projects-table.tsx`: the Steps column is now `min 11rem, fr 0.8` (was 14 / 1.4). The loading skeleton matches the 2-row height. ROW_HEIGHT stays 60 (an estimate; rows are measured).
+- Tests: `ProjectsPage.register-edit.test.tsx` read-only chip assertions moved from the 'off' and 'N/A' text to letter, line-through, border-dashed, no ✓, ring-inset and grid-cols-7. The behaviour tests are unchanged and pass (axe is included).
+- Results:
+  - `tsc -b` is clean.
+  - eslint has 0 errors. There is 1 pre-existing warning: useVirtualizer incompatible-library.
+  - vitest `src/surfaces/projects`: 7 files, 117 passed.
+
+## 2026-11-18 — P45-R01 hub strip colour legend — frontend-builder: DONE
+
+Owner request: the "Hub demand and capacity" legend explains the bar colours.
+- `frontend/src/surfaces/priority-board/components/hub-load-strip.tsx`: the legend (`role="group"`, "Bar colour legend") now has two wrapping groups:
+  - status: red / amber / green swatches with "Full ≥100%", "Near full 85–<100%" and "Available <85%". The labels and tones come from `BOOKING_STATUS_META`. The thresholds are the served `near_full_threshold_pct` / `full_threshold_pct` on `HubCapacitySummary` (I9), not hard-coded.
+  - shade: neutral `bg-text-muted` at full, /55 and /25 opacity, labelled P1, P2 and "P3+ / other".
+  - The swatches are aria-hidden, and each group has sr-only lead text.
+- The info tooltip now shows the new `LEGEND_TOOLTIP` and then `TO_FINISH_TOOLTIP`. The button is renamed "About the bar colours and To finish figures".
+- Tests: `hub-load-strip.test.tsx` has a new legend test and an updated tooltip test. The Executive tests did not assert the legend.
+- Results:
+  - `tsc -b` is clean.
+  - eslint is clean.
+  - vitest priority-board + dashboard: 49 files, 387 passed.
+
+## [2026-11-18] P44-R01 sticky register header — frontend-builder: DONE
+
+Owner request: the Projects register column header row stays fixed while scrolling.
+- The table already scrolls in its own box (`projects-table-scroll`, `overflow-auto`) and the header row was already `sticky top-0 z-10 bg-ink` (opaque in both themes: `--color-ink` is solid HSL in light and dark). The gap was the box's fixed 640px max height: on shorter screens it ran below the fold, so the app `<main>` scrolled instead and carried the header away.
+- Fix in `frontend/src/surfaces/projects/components/projects-table.tsx`: the box max height is now `min(640px, calc(100dvh - var(--app-header-h) - 6rem))`, so the box always fits the viewport and its own scroll keeps the header visible. Header row gets `data-testid="projects-table-header"`.
+- Horizontal scroll: header and rows share the same scroll box and grid template, so they stay aligned. There is no sticky first/name column, so no corner cell.
+- Layering: the bulk-edit bar and register edit bar sit outside the scroll box (edit bar `sticky bottom-0 z-20`); row popovers, selects and dialogs are Radix portals (z-50/60), all above the header's z-10.
+- Test: `ProjectsPage.test.tsx` "P44-R01 sticky register header" asserts the sticky/top-0/z-10/bg-ink classes and that the header is inside the scroll box.
+- Results: eslint 0 errors (1 pre-existing useVirtualizer warning); vitest `src/surfaces/projects` 7 files, 118 passed; `tsc -b` has no errors in projects (the only errors are in `src/lib/auth/test-logins.test.ts`, another agent's in-progress P46 work).
+
+## [2026-11-18] P46-T03 — Frontend: server-checked test login; D1 destructive controls Super Admin only — frontend-builder: DONE
+
+**Login** (`frontend/src/pages/login.tsx`, `frontend/src/lib/auth/test-logins.ts`, `frontend/src/lib/api/session.ts`):
+- The form takes a username or email and a password, and calls `POST /me/dev-login` (`devLogin()`, `DevLoginRequest` in `session.ts`). On 200 the user signs in as the returned `DevUser.email` through the existing dev-user header and "Remember me" flow.
+- Plain errors: 401 gives one generic message; 429 says "Too many sign-in attempts…", using Retry-After when the server sends it; 404 and network failures have their own copy. Empty fields are caught before any request.
+- The browser-side password check, `verifyTestLogin`, `pickTestAccounts` and the shared `TEST_LOGIN_PASSWORD` (`rpd-test-2026`) are removed.
+- **Owner change mid-task (2026-11-18):** the login page shows NO accounts. There is no "Test logins" panel, no suggested accounts and no "password = username" hint. `GET /me/dev-users` is only the dev-mode probe (form vs SSO), and its users are never rendered. A test asserts that no username, email, role name or hint appears in the page. The SSO path is unchanged.
+- Contract: added a `(session.ts, "DevLoginRequest", "DevLoginRequest", "exact")` row to `backend/tests/test_openapi_frontend_contract.py`. The only remaining failure there is the known P37 `PlanWeek` one.
+
+**Shared:**
+- `frontend/src/lib/auth/super-admin.ts`: `useIsSuperAdmin()` (session store), `isSuperAdminOnlyError`, `SUPER_ADMIN_ONLY_HINT` ("Super Admin only"), and the Cancelled-option helpers. Leaving Cancelled stays selectable.
+- `frontend/src/components/shared/super-admin-only.tsx`: a wrapper that puts the tooltip and sr-only text on a disabled control.
+- `API_ERROR_MESSAGES.SUPER_ADMIN_ONLY`, so every `apiErrorMessage` path shows the plain message for a 403 `SUPER_ADMIN_ONLY`.
+
+**Controls gated (non-Super-Admin: disabled, with "Super Admin only"):**
+- **Cancelled option.** Projects row inline status (`StatusSelect`), the register popup status, and bulk edit. Not applicable on the other status surfaces: the Matrix grid edit and the Kanban/priority board have no status control; the registration submit offers only schedulable statuses; the what-if import review status edits a simulation and writes no project.
+- **Workflow templates / settings.** No remove or retire control for a category or step exists in the UI, so nothing to gate.
+- **Capacity Planning.**
+  - Delete chamber: chamber table and Overview lab card. A 403 `SUPER_ADMIN_ONLY` shows in the confirm dialog and does not downgrade the page.
+  - Deactivate engineer (`StatusAction`): disabled. Reactivate is unchanged. The deactivate dialog shows the message and does not call `onForbidden`.
+- **Admin users.**
+  - User form "Active" checkbox: disabled when the user is active, so reactivation still works.
+  - Role checkboxes: a role the user already holds cannot be unticked. Adding a role, and unticking one just added, still work.
+  - Project Access revoke: enabled for a Super Admin, for a caller without the Admin role (a manager delegate; the server lists only their reports), or for a global Admin who is the grantee's direct manager (`canRevokeGrant` in `admin-users/lib/user-helpers.ts`). A refused revoke now keeps the dialog open with the error; before, it closed silently.
+- **Cancel a schedule run.** There is no cancel control in the frontend, so nothing to gate.
+- **What-if import.**
+  - Saved scenario Delete follows the served `can_delete`, a new field mirrored from backend `SavedScenarioSummary` in `import-types.ts`, `import-schema.ts` and `p41-fixtures`. Rename still follows `can_edit`.
+  - "Reset all to default" on the Excel format is disabled.
+  - `libraryErrorMessage` maps `SUPER_ADMIN_ONLY`.
+
+**Tests:**
+- `login.test.tsx`: no accounts rendered; success via username and via email; 401; 429; empty fields; SSO; axe.
+- `test-logins.test.ts`.
+- `AdminUsersPage.test.tsx` and `project-access-tab.test.tsx`.
+- `chamber-table`, `engineer-table`, `deactivate-engineer-dialog` and `PlanningPage` tests.
+- `ProjectsPage.register-popup.test.tsx` and the new `bulk-edit-bar.p46.test.tsx`.
+- `p41-import-scenarios.test.tsx`.
+- Each covers Admin (disabled with the hint) vs Super Admin (available), plus the 403 message where an action is triggered.
+- One existing assertion changed on purpose: the Admin users test, where a held "Hub Planner" is now disabled for an Admin.
+
+**Checks:**
+- tsc clean. eslint: 0 errors on the touched files.
+- Full vitest: 275 files, 2307 tests, 2 failures. One is the known `app.test.tsx` Gantt-nav failure. The other is `ProjectsPage.register-edit.test.tsx` "Steps column chips read-only", which passes in isolation (48/48 with the login files). It is P44 code I did not touch, and other agents were editing the tree during the run.
+
+**Assumptions:**
+- Hints use a `title` tooltip on a wrapper, because a disabled button has no pointer events.
+- The new `SUPER_ADMIN_ONLY` copy is "Only a Super Admin can do this. Ask a Super Admin to make this change."
+
+## [2026-11-18] P46-T02 — Backend: two dev test logins + Super-Admin-only destructive actions (ADR 0058 L1/D1) — backend-builder: DONE
+
+**L1 — test logins (dev mode only).**
+- `services/dev_accounts.py`:
+  - `DEV_LOGIN_ACCOUNTS` lists `superadmin` / `superadmin@example.com` / "Super Admin" / Super Admin and `admin` / `admin@example.com` / "Admin" / Admin.
+  - `provision_dev_accounts(db)` is idempotent and runs under one `pg_advisory_xact_lock`. It creates a missing account with `hub_scope_all=True`, active. An existing account only gets its missing role added and `is_active` set back to true. Name, other roles, `hub_scope_all`, manager and engineer link are never changed. It returns `{username: created|repaired|unchanged}`.
+  - Each create or repair writes one `user.dev_provision` audit row with a NULL actor (system, like `run_dispatch`). An unchanged account writes nothing.
+- Startup: `api/main.py` lifespan calls `provision_dev_accounts_at_startup()`. It is a no-op outside `is_dev_mode()`. A failure is logged by exception type only and does not stop the API.
+- Script: `RPD_DEV_MODE=true RPD_DATABASE_URL=... python -m scripts.provision_dev_accounts`. It refuses (exit 2) outside dev mode.
+- `GET /me/dev-users` returns only those two accounts, in that order, when active and holding a role. Other seeded users stay in the database.
+- `POST /me/dev-login`:
+  - Body `{username, password}`, schema `DevLoginRequest` with `extra="forbid"`. There are no length constraints in the schema, so a validation error never echoes the password.
+  - Answers `DevUser` (unchanged shape: `email`, `full_name`, `roles`).
+  - The username or the full email is accepted, case-insensitive and trimmed. The password must equal the username, checked with `hmac.compare_digest`; a dummy compare runs for an unknown user.
+  - Every failure is one 401 `{"detail": "Invalid username or password."}`: unknown user, wrong password, over 320 chars, account missing, inactive or without a role.
+  - It is a 404 outside dev mode. A dependency runs before body validation, so a bad body is a 404 too.
+  - Rate limit: `DEV_LOGIN_RATE_LIMIT`, a token bucket keyed on `request.client.host`, burst 10 then 1 per 3 s. Over the limit it answers 429 `RATE_LIMITED` with `Retry-After`. Behind a proxy that does not forward the client address, all callers share one bucket.
+  - The password is never logged (tested with caplog).
+- `X-Dev-User-Email` and `DEV_DEFAULT_USER_EMAIL` (`frank.admin@`) are unchanged.
+
+**D1 — 403 `SUPER_ADMIN_ONLY`.** There is one helper module, `api/super_admin.py`, with `is_super_admin`, `ensure_super_admin` and `super_admin_only_error`. Each route keeps its own permission dependency first, so callers without that permission keep their old 401/403. Guarded points:
+- **Cancel a project.** `ensure_may_cancel` (`api/routers/projects.py`) fires only on a transition into Cancelled.
+  - It runs inside `stage_project_update`, which covers PATCH `/projects/{id}`.
+  - `POST /projects/register-edits` pre-checks it before any lock, so a batch with a cancel is a whole-batch 403, not a per-row 422. This one endpoint is the register inline/batch save, the row/popup edit and the bulk edit.
+  - Not restricted: leaving Cancelled, or re-sending Cancelled on a Cancelled project.
+  - The Matrix inline edit (`/scenarios/apply`, priority scores only), `POST /projects` (no `status`) and `/submit` (400 on Cancelled for everyone) cannot set Cancelled.
+- **Remove/retire a category or step: no route exists.** `PUT /workflow-settings/steps` needs every step (`BAD_STEP_SET`), and nothing deletes or retires a category. `test_no_unguarded_delete_route_exists` pins the DELETE inventory from the OpenAPI schema, so a new DELETE fails until it is classified.
+- `DELETE /chambers/{id}`: checked before the lookup.
+- `POST /engineers/{id}/deactivate`: checked after `ENGINEER_STATUS_ADMIN_ONLY` and before the rate limit. Reactivate is unchanged.
+- `PATCH /users/{id}`: guarded when `is_active` goes from true to false, or any held role is missing from the new `roles`. A swap counts as a removal. Reactivating, adding roles and other fields stay Admin rights.
+- `DELETE /projects/{id}/access/{grant}`: allowed for a Super Admin, or for the ADR 0012 delegate (target's manager with effective `admin` on the project, whatever their global role). A global Admin who is not the delegate gets `SUPER_ADMIN_ONLY`. Others keep the old plain 403.
+- `POST /schedule-runs/{id}/cancel`: checked before the lookup.
+- `DELETE /whatif/import/scenarios/{id}`: allowed for the creator or a Super Admin. A non-creator Admin gets `SUPER_ADMIN_ONLY`; others keep `SCENARIO_FORBIDDEN`. **API addition:** `SavedScenarioSummary` / `SavedScenarioOut` get `can_delete: bool`. `can_edit` (rename/note) is unchanged.
+- `POST /whatif/import/format/reset`. `PUT /whatif/import/format` stays an Admin right.
+
+**Tests.**
+- New: `tests/test_p46_dev_logins.py` (25) and `tests/test_p46_super_admin_only.py` (29), all passing. Each D1 item has an Admin 403 probe, plus Portfolio Manager / Hub Planner probes for cancel and chamber delete, and a Super Admin positive test. The kept Admin rights are tested next to them.
+- Changed, because they expected Admin to do a D1 action:
+  - `test_session_api.py::test_dev_users_lists_active_users_with_roles`, renamed `..._lists_only_the_two_test_logins`.
+  - `test_schedule_runs_cp_sat_api.py`: the five cancel tests (unknown 404, terminal 409, queued, running, audit) now run as Super Admin, and `test_cancel_is_super_admin_only_for_admin` was added.
+  - `test_p38_engineer_deactivation.py`: 14 tests that deactivate (as the subject or as setup) now act as Super Admin: mixed_rows, only_on_hold, no_open_project_but_active_run, no_open_project_and_no_booking, deferred, project_assigned_between_preview_and_confirm, row_error_codes (all 5), target_outside_capacity_hub, reactivate_restores, patch_inactive_engineer, every_leader_write, reopen_with_inactive_stored_leader, closed_plan_year, closed_project_steps.
+  - `test_p38_engineer_race.py`: the world user and principal are Super Admin.
+  - `test_p41_import_scenarios.py::test_format_put_version_conflict_reset_and_audit[Admin]`: Admin now asserts the reset 403, then a Super Admin resets.
+  - `test_p9_api_extensions.py::test_update_marks_stale_only_for_scheduler_inputs` runs as Super Admin.
+  - `test_p36_band_rank_api.py::test_register_batch_appends_enterers_by_id_and_renumbers_once` runs as Super Admin.
+  - `test_user_admin_api.py::test_admin_updates_non_admin_user_with_audit`: Admin now reactivates and adds a role, instead of deactivating and swapping one.
+- Run: 30 related suites (901 tests) and then the eight changed files again. Everything passes except the known pre-existing `test_every_p4_surface_types_file_is_covered` (`PlanWeek`, P37).
+- ruff and mypy (strict) are clean on every touched file. No `ruff format` on directories; only the two new test files were formatted.
+
+**Left for others.**
+- DOMAIN_RULES still says "Admin and Super Admin deactivate or reactivate an engineer" (§ near line 1632) and describes the user-admin/access rights without D1. That doc is the orchestrator's.
+- The README test-login note is not updated.
+- Not in D1, so not guarded: VIP board item DELETE and workspace comment DELETE (own comment).
+- Admin can still set a template step's `weeks` to 0 through `/workflow-templates/apply`; ADR 0058 classifies that as a length edit.
+
+## [2026-11-18] P46-T04 — workflow-auditor gate: PASS
+
+Light check: the scheduler did not change. `git status` shows no changes under `backend/scheduling`, `backend/workers`, `backend/models`, `backend/alembic` or `domain_constants.py`. In `backend/services` the only changes are `whatif_import_scenarios.py` and the new `dev_accounts.py`.
+
+1. **Allowed caller: behaviour unchanged.**
+   - `ensure_may_cancel` (`api/routers/projects.py`) is a pure check. It raises only on a transition into Cancelled by a caller who is not Super Admin. For a Super Admin it returns, and `stage_project_update` runs exactly as before: stale marking, band-rank plan, P38 leader rules, audit.
+   - The engineer deactivate guard is a single raise before the rate limit. The rest of the handler is unchanged in the diff.
+   - The schedule-run cancel guard is a single raise before the lookup. The body is unchanged.
+   - The existing behaviour suites now act as Super Admin. In the P38 deactivation suite (14 tests), the P38 race suite, `test_p9_api_extensions::test_update_marks_stale_only_for_scheduler_inputs`, `test_p36_band_rank_api` and `test_schedule_runs_cp_sat_api`, only the acting role changed. Every stale, dispatch, P38 and run assertion is the same as before.
+   - Run on testcontainers: those suites plus `test_p46_*`, 167 passed.
+2. **A 403 writes nothing and dispatches no run.**
+   - In `POST /projects/register-edits`, the cancel pre-check runs after `_authorize_register_batch` (plain SELECTs only) and before `lock_band_ranks`, so it comes before any lock or write.
+   - `test_register_batch_with_a_cancel_is_super_admin_only` asserts that both rows are unchanged and `dispatch == []`.
+   - The chamber delete, run cancel, format reset, user and access guards all raise before any mutation. The run-cancel test asserts the status is still QUEUED and there was no revoke.
+   - Observation (not a fail): on PATCH `/projects/{id}`, the band lock (`_lock_bands_and_reload`) is taken before the guard inside `stage_project_update`. Nothing is written, and the lock is released when the request is rolled back.
+   - Observation (not a fail): if a project's status changes between the register pre-check and the row lock, the in-stage re-check turns into a per-row error. The whole batch is still rolled back.
+3. **Dev provisioning is isolated.**
+   - `services/dev_accounts.py` writes only User, UserRole, Role (only when the role is missing) and `user.dev_provision` audit rows.
+   - It runs only in dev mode, under an advisory lock, and does not commit in the service.
+   - The only triggers on these tables are the audit append-only protections.
+   - Scratch test on a disposable testcontainers DB (`scratchpad/p46/test_prov_isolation.py`, not in the repo): seeded a hub, engineer, project (`schedule_stale=false`) and schedule run, plus an inactive `admin@` holding the wrong role. Provisioning returned created/repaired. A `row_to_json` snapshot of every other public table was identical before and after, no project became stale, and a second run returned unchanged/unchanged with nothing changed.
+4. **Frontend.**
+   - P45-R01: the legend thresholds come from the served `near_full_threshold_pct` / `full_threshold_pct` (`api/routers/capacity.py`, from `dc.BOOKING_*_PCT`). Bar colour is the served `*_booking_status_year`. Nothing is recalculated locally (I9 holds).
+   - P44-R01: the change is a `maxHeight` CSS expression and a `data-testid`, so presentation only.
+   - vitest `hub-load-strip` + `ProjectsPage`: 49 passed.
+
+No feature code written. Verdict: **PASS** (workflow leg of P46-T04).
+
+## [2026-11-18] P46-T04 — security-auditor gate (ADR 0058 L1/D1): PASS
+
+Scope: the uncommitted P46-T02/T03 working tree, which includes `api/super_admin.py`, `services/dev_accounts.py`, `scripts/provision_dev_accounts.py`, the `api/main.py` lifespan, `me.py` (dev-login / dev-users), the guarded routers, `whatif_import_scenarios.py`, the login page and the frontend gating. No feature code was written. One temporary probe test was written, run and deleted.
+
+**Runs.**
+- `tests/test_p46_*` plus session, user_admin, schedule_runs_cp_sat, p41_import_scenarios, p38_engineer_deactivation and p38_engineer_race: 227 passed.
+- p9_api_extensions, p36_band_rank_api, openapi contract, project_access_api, project_access_delegation, p32_whatif_import_api and p35 register: 399 passed, 1 failed. The failure is the known P37 `PlanWeek` contract failure.
+- vitest (login, lib/auth, admin-users, chamber/engineer/deactivate dialogs): 73 passed.
+
+**Verified, server-side.**
+- **D1.1 cancel.** Only two code paths write `projects.status`:
+  - `stage_project_update`, used by PATCH and by register-edits (inline, batch, popup and bulk). It checks under the band lock after the re-read. register-edits also pre-checks the whole batch before taking any lock.
+  - `/submit`, which returns 400 on Cancelled for everyone.
+  - Nothing else can set the status: there is no PUT, `POST /projects` forces In Queue, `/scenarios/apply` and the Matrix touch priority scores only, and the what-if import is a simulation. Checked by grepping every write of `.status`, every `setattr` on a project and every `update(Project)`.
+- **D1.2.** No DELETE or retire route exists for a category or a step. Workflow Settings write is `_RW` for Super Admin only. The DELETE inventory is pinned by a test.
+- **D1.3.** Chamber DELETE and engineer deactivate are guarded. Engineer DELETE is a 410 for everyone.
+- **D1.4.**
+  - User PATCH: deactivating (true to false) or removing a role, including a swap, is guarded. PATCH is the only user update route.
+  - Run cancel: one code path, guarded.
+  - Scenario delete: guarded. PATCH is rename/note only.
+  - Format reset: guarded.
+- **dev-login.**
+  - Outside dev mode it returns 404, from a dependency that runs before body validation. The startup hook is a no-op outside dev mode, and the script exits 2.
+  - The password is compared with `hmac.compare_digest`. Every failure is the same generic 401.
+  - The password is never logged. Access logs record the route only; caplog test.
+  - Provisioning only inserts audit rows (NULL actor), never modifies other users, and offers no Admin-to-Super-Admin path. `_email_taken` is case-insensitive, and the two account emails are Admin-role accounts that only a Super Admin can edit.
+- **Login page.** It renders no account list (test asserted). No `dangerouslySetInnerHTML`.
+- **Frontend.** It is never the only control: each D1 item has an Admin 403 probe on the server.
+
+**Findings (none High or Critical).**
+- **M-1 (Medium), revoke delegate bypass.** A global Admin can chain two Admin rights into a D1.4 revoke: `PATCH /users/{grantee} {"manager_id": <self>}` returns 200, then `DELETE /projects/{p}/access/{g}` returns 204. Proven by the probe. It works because `effective_project_access` always returns "admin" for a global Admin, so `is_delegate` holds once the Admin is the grantee's manager. The frontend `canRevokeGrant` mirrors this.
+  - Mitigating: the revoke is reversible (re-grant), each step is audited, only non-Admin grantees are affected, and in dev mode D1 is moot anyway (X-Dev-User-Email).
+  - Fix (backend-builder): count the delegate branch only when the actor's project-admin level does not come from the global Admin role, or require that the manager link predates the grant. Add a test for the chain.
+- **L-1 (Low), dev-login rate limit behind Render.** Uvicorn trusts `X-Forwarded-For` only from `forwarded_allow_ips` (default 127.0.0.1), and render.yaml sets no `FORWARDED_ALLOW_IPS` for the API. So `request.client.host` is Render's proxy address, and all callers share one or a few buckets: 10 burst, then 1 per 3 s, per worker. One client can lock everyone out of sign-in. Users already signed in are unaffected. Do NOT set `FORWARDED_ALLOW_IPS='*'`: that makes the key spoofable, and the bucket dict is never pruned.
+- **L-2 (Low), format reset has an equivalent.** Admin can reach the same state as the Super-Admin-only reset by PUTting the default aliases to `/whatif/import/format`. The ADR keeps PUT as an Admin right. Similar soft equivalents exist: chamber PATCH to `platforms=1`, engineer `counts_in_capacity=false`. ADR 0058 accepts all of these as edits.
+- **I-1 (Info), accepted risk OQ #107.** Dev mode still accepts `X-Dev-User-Email`, so any caller can act as `superadmin@example.com`, which bypasses every D1 guard and dev-login itself. This is BLOCKING for go-live (OIDC, OQ #9).
+- **I-2 (Info), account names exposed.** `GET /me/dev-users` is unauthenticated and returns both account emails and roles. The page does not render them, but with password = username this is the credential list.
+- **I-3 (Info), username enumeration.** The unknown-username path skips the DB query, and `compare_digest` leaks length. Both reveal only usernames, which are public.
+- **I-4 (Info), sign-ins not audited.** A dev-login success or failure writes no audit row and no structured log line. ASVS V7.2.1 suggests one; it is moot in dev mode.
+- **I-5 (Info), password echoed on 422.** A missing or non-string field returns pydantic's 422 with `input`, which can echo the caller's own password to the caller. It is not logged.
+- **I-6 (Info), test accounts revert on restart.** A Super Admin who deactivates the `admin` test account, or removes its role, sees it repaired on the next restart. This is by design (ADR 0058 L1).
+- **I-7 (Info), unguarded DELETEs.** VIP item DELETE and comment DELETE are not in D1, as classified.
+
+Verdict: **PASS** (security leg of P46-T04). Open as follow-ups, non-blocking: M-1 and L-1.
+
+## [2026-11-18] P46-T03 follow-up — security M-1 (frontend): an Admin never revokes project access — frontend-builder: DONE
+
+`canRevokeGrant` in `frontend/src/surfaces/admin-users/lib/user-helpers.ts` now takes only the caller's roles:
+- Super Admin: allowed.
+- Holds Admin but not Super Admin: never allowed, even as the grantee's direct manager. The control is disabled with "Super Admin only".
+- Holds neither role: allowed (the ADR 0012 manager delegate; the server lists only their reports' grants).
+
+This matches the backend M-1 change. The test "an Admin who manages the grantee keeps the delegation" is replaced by "an Admin who is the grantee's direct manager still cannot revoke". Admin-users vitest 25/25. tsc clean. eslint 0 on `surfaces/admin-users`.
+
+## [2026-11-18] P46-T04 — qa-inspector gate (ADR 0058: two test logins, D1 Super Admin only): PASS
+
+**Verdict: PASS.** No P46 defect. The only failures are the known non-P46 ones, classified below. Tree uncommitted and shared with other agents during the run.
+
+**Backend (pytest, testcontainers, `--no-cov` runs):**
+- `tests/test_p46_dev_logins.py` + `tests/test_p46_super_admin_only.py`: 54/54 passed.
+- Related set: every test file that hits `/register-edits`, `/chambers`, `/engineers`, `/users`, project access, `/schedule-runs`, `/whatif/import`, `/me/dev-*` (48 files, which include all 8 files P46-T02 changed and the users, project_access, schedule-run, chambers, engineers, p38, p41, register suites), plus `test_p33_t06_workflow_templates_rbac.py` and `test_p35_t08b_expected_status.py`: **1317 passed, 1 failed**. The failure is the known P37 `test_openapi_frontend_contract.py::test_every_p4_surface_types_file_is_covered` (`PlanWeek` in `session.ts` not in CONTRACT_TABLE); not P46. The new `DevLoginRequest` contract row and the `can_delete` mirror pass.
+- Coverage of the new modules (P46 tests + QA file + `test_session_api.py`): `api/routers/me.py` 100%, `api/super_admin.py` 100%, `services/dev_accounts.py` 96% (missed 186-187, 191: startup hook's success/log lines in dev mode). `scripts/provision_dev_accounts.py` had no test; now covered by the QA file (subprocess run, so not attributed by coverage.py, like the seed scripts).
+- ruff: clean on all 17 touched/new backend files. mypy (strict): the 15 touched source files have no errors of their own (remaining output is the pre-existing celery/`models/types.py` etc. errors pulled in by imports). The two new test files are NOT strict-clean (about 80 `no-untyped-def`/`no-untyped-call` errors, e.g. `tests/test_p46_super_admin_only.py:560,569`), contrary to the T02 entry's "mypy (strict) clean on every touched file". Same as most existing test files (`test_p41_import_scenarios.py` 46, `test_p32_*` 97); not blocking.
+
+**Acceptance check against ADR 0058 (findings):**
+- D1.1 Cancelled write paths: only `PATCH /projects/{id}` (via `stage_project_update`) and `POST /projects/register-edits` can set a status; both are guarded (`backend/api/routers/projects.py` `ensure_may_cancel`, ~l.615, called at ~l.683 and in `save_register_edits` ~l.1095). `POST /projects` refuses a `status` field (422 extra_forbidden); `/submit` refuses Cancelled (400) for everyone; no checkin/board/VIP/scenario/workflow route writes `Project.status`; no bulk `update(Project)` touches status.
+- D1.2 has no route; `test_no_unguarded_delete_route_exists` pins the DELETE inventory. `DELETE /engineers/{id}` is the retired 410.
+- D1.3/D1.4: each guard is present and tested Admin 403 + Super Admin positive (chambers, engineer deactivate, user deactivate/role removal, revoke vs ADR 0012 delegate, run cancel, others' scenario delete, format reset).
+- L1: provisioning dev-mode only, idempotent, repairs only role + active; dev-users = the 2; dev-login username or email, generic 401, 404 outside dev mode (also with a bad body), rate-limited, password never logged.
+
+**Thin-coverage tests added — `backend/tests/test_p46_qa_gate.py` (29, all pass):**
+- register-batch cancel is 403 `SUPER_ADMIN_ONLY` for Admin, Portfolio Manager AND Hub Planner (T02 tested only Admin on this path), project unchanged, no audit row; PATCH cancel 403 writes no audit (3 roles); leaving Cancelled through the batch stays allowed (3 roles).
+- `POST /projects` with `status: Cancelled` is 422 `extra_forbidden` on `body.status` and creates nothing (3 roles); `/submit` to Cancelled is 400 for all 4 roles.
+- dev-login: username is case-insensitive and trimmed (`ADMIN`, `SuperAdmin`, `"  superadmin  "`); the password is exactly the username (email-as-password, `ADMIN`, `" admin"` all 401); a seeded Super Admin's own address cannot sign in and is not listed.
+- provisioning leaves other users untouched (inactive Frank stays inactive, no audit) and repairs a missing role on an active account (repaired, then unchanged).
+- `scripts/provision_dev_accounts.py`: exit 2 outside dev mode, exit 2 without `RPD_DATABASE_URL`, and an end-to-end run twice on its own Postgres container (`created`×2, then `unchanged`×2).
+
+**Frontend:**
+- `tsc -b`: clean (exit 0).
+- eslint on pages, lib/auth, lib/api, components/shared, admin-users, planning (incl. whatif import), projects, priority-board, dashboard: 0 errors, 2 warnings (pre-existing `useVirtualizer` incompatible-library in `projects-table.tsx:945`, plus one more of the same kind).
+- vitest on the same areas: **132 files, 1111 tests, all passed** (covers login, test-logins, admin-users, planning chamber/engineer/deactivate dialog, p41 import scenarios, projects register popup/edit/bulk-edit p46, P44-R01 sticky header, P45-R01 hub-strip legend, dashboard). The known `app.test.tsx` Gantt-nav failure is outside these areas and was not run.
+- Login page lists no accounts: `login.tsx` only uses `GET /me/dev-users` as the dev-mode probe (`isSuccess`), never renders it; `login.test.tsx:36-52` asserts no username, email, role, hint or `rpd-test-2026`. No `rpd-test-2026` / `TEST_LOGIN_PASSWORD` / `verifyTestLogin` left in `frontend/src`.
+- axe: `login.test.tsx` axe case passes in the run above.
+
+**Live smoke (dev mode, disposable copy `rpd_qa_p46` of `rpd`, port 8046, Redis db 15 so no worker picks anything up; DB dropped after):**
+- Startup provisioned `{'superadmin': 'created', 'admin': 'created'}`; restart `unchanged`×2.
+- `GET /me/dev-users` = superadmin, admin only. `POST /me/dev-login`: `admin/admin` 200, `SuperAdmin@Example.com/superadmin` 200, `admin/rpd-test-2026` 401, `frank.admin@…` 401.
+- As admin: `DELETE /chambers/{id}` 403, `PATCH /projects/{id} {status: Cancelled}` 403 `SUPER_ADMIN_ONLY`, `POST /whatif/import/format/reset` 403 `SUPER_ADMIN_ONLY`, `PATCH … {status: On Hold}` 200. As superadmin: chamber delete 204, cancel 200 (DB shows Cancelled, chamber gone), format reset 200.
+
+**Environment note (not P46):** the live `rpd` database is at alembic `p41a_import_format_and_scenarios`, behind head (`p41b`, `p38a`, `p42a`, `p35b_step_excluded` unapplied). The copy returned 500 on chamber delete (`project_workflow_steps.manual_start_week does not exist`) until upgraded. Whoever runs the dev server on `rpd` should `alembic upgrade head`.
+
+**For the security leg:** the dev-login bucket is keyed on `request.client.host`; on the Render demo behind its proxy every caller may share one bucket (T02 noted this). Not a QA defect.
+
+## [2026-11-18] P46-T04 qa-inspector — correction to the entry above
+
+The second eslint warning is not "of the same kind". It is `react-refresh/only-export-components` at `frontend/src/surfaces/dashboard/components/project-list-dialog.tsx:52`. That file was not touched by P46. The verdict is unchanged: eslint has 0 errors and 2 warnings, and the gate is a PASS.
+
+## [2026-11-18] P46-R01 — security follow-ups M-1 (revoke bypass) and L-1 (dev-login limiter behind the proxy) — backend-builder: DONE
+
+**M-1 — the revoke delegate bypass is closed.** In `api/routers/project_access.py::revoke_access` the order is now:
+- A Super Admin may revoke.
+- Otherwise, any caller holding the global **Admin** role gets 403 `SUPER_ADMIN_ONLY`, whatever `manager_id` says. This includes Admin combined with Hub Planner.
+- Everyone else goes through the unchanged ADR 0012 check: `effective_project_access` plus `can_manage_grant`, i.e. the target's manager with project-admin level from Portfolio Manager, an in-scope Hub Planner role, or an Admin-level project grant. A failure keeps the plain 403.
+- `PATCH /users/{id} {"manager_id": <self>}` is still an Admin right and still returns 200. It just no longer opens the revoke.
+- `can_manage_grant` / `effective_project_access` are unchanged (grant **creation** is not D1).
+
+**L-1 — the dev-login limiter.**
+- `me.py::_dev_login_client_key` keys `DEV_LOGIN_RATE_LIMIT` on the left-most `X-Forwarded-For` entry (`xff:<ip>`) when the header is present. An empty or over-64-char first entry, or no header, falls back to the peer (`peer:<ip>`).
+- It is commented as dev mode only: spoofing only dodges one's own limit on a password=username test login, and the key is never used for authorisation or logging.
+- `FORWARDED_ALLOW_IPS` was not touched.
+- `services/rate_limit.py::TokenBucketLimiter` gets an optional `max_keys`. It evicts the least recently used key (dict order, under the existing lock), and an evicted key restarts full. `__len__` was added for tests.
+- With the default `None` the behaviour is unchanged: the 26 other suites that use the limiter (604 tests) pass. Dev-login uses `max_keys=10_000`.
+
+**Tests**
+- `tests/test_p46_super_admin_only.py`:
+  - `test_manager_delegation_revoke_is_unchanged` is now parametrized over Hub Planner and Portfolio Manager. Its old `[Admin]` case encoded the bypass and was removed.
+  - New `test_manager_delegate_through_an_admin_project_grant`: an Engineer manager holding an Admin grant can revoke.
+  - New `test_admin_cannot_make_themselves_manager_then_revoke`: the two-step chain. PATCH returns 200, the revoke returns `SUPER_ADMIN_ONLY` and the grant stays active.
+  - New `test_admin_who_is_also_an_in_scope_hub_planner_manager_is_refused`.
+- `tests/test_p46_dev_logins.py`:
+  - New `test_dev_login_limit_keyed_on_left_most_forwarded_for`: client A is exhausted to 429, including through another hop; client B and the peer still get 200.
+  - New `test_dev_login_overlong_or_empty_forwarded_for_falls_back_to_peer`.
+  - New `test_dev_login_limiter_is_bounded`, `test_token_bucket_max_keys_evicts_least_recently_used` and `test_token_bucket_without_max_keys_is_unchanged`.
+- Run: p46 (both), project_access (api / delegation / resolver), p12_r01 grant scope, user_admin, super_admin_race, session: 193 passed. Plus every limiter-using suite: 604 passed.
+- ruff and strict mypy are clean on `me.py`, `project_access.py` and `rate_limit.py`. The frontend was not touched; frontend-builder is aligning `canRevokeGrant`.
+
+## [2026-11-18] P46-T04 — gate closed: qa PASS, workflow PASS, security PASS (M-1/L-1 fixed in P46-R01) — orchestrator
+
+**Results:**
+- **Security:** PASS. Two follow-ups were fixed before release in P46-R01:
+  - **M-1:** an Admin could revoke a grant by setting the grantee's `manager_id` to themselves. The
+    global Admin role now never revokes, on the backend and in `canRevokeGrant`.
+  - **L-1:** dev-login is rate-limited on the left-most X-Forwarded-For entry, with the keys capped
+    by LRU.
+- **QA:** PASS, with 29 extra tests in `test_p46_qa_gate.py` and a live smoke test on a disposable
+  DB.
+- **Workflow:** PASS. No scheduling change for allowed callers, a 403 writes nothing, and
+  provisioning is isolated.
+
+**Accepted risks:** `X-Dev-User-Email` in dev mode (OQ #107); L-2, the soft equivalents (aliases
+PUT, chamber/engineer flags), which count as edits.
+
+**Commit:** this release also includes P44-R01 (sticky register header) and P45-R01 (the hub strip
+colour legend).
+
+**Excluded from the commit:** another session's step-chip changes (`step-chips.tsx`, the
+register-edit test, and the row height and column hunks of `projects-table.tsx`).

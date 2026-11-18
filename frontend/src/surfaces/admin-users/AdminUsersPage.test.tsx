@@ -212,7 +212,61 @@ describe('AdminUsersPage', () => {
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByRole('checkbox', { name: 'Super Admin' })).toBeDisabled();
     expect(within(dialog).getByRole('checkbox', { name: 'Admin' })).toBeDisabled();
-    expect(within(dialog).getByRole('checkbox', { name: 'Hub Planner' })).toBeEnabled();
+    // P46 (ADR 0058 D1.4): a role the user holds cannot be removed by an Admin;
+    // adding a role stays an Admin right.
+    expect(within(dialog).getByRole('checkbox', { name: 'Hub Planner' })).toBeDisabled();
+    expect(within(dialog).getByRole('checkbox', { name: 'Portfolio Manager' })).toBeEnabled();
+  });
+
+  describe('P46 (ADR 0058 D1.4): deactivating a user and removing a role are Super Admin only', () => {
+    it('an Admin cannot untick Active or a held role, sees "Super Admin only", and can still add a role', async () => {
+      const u = userEvent.setup();
+      hooks.useRoles.mockReturnValue(ready(rolesFor(false)));
+      renderWithProviders(<AdminUsersPage />, { session: { roles: ['Admin'], permissions: ROLE_MATRIX.Admin } });
+      await u.click(screen.getByRole('button', { name: 'Edit hana.planner@example.com' }));
+      const dialog = screen.getByRole('dialog');
+      expect(within(dialog).getByRole('checkbox', { name: 'Active' })).toBeDisabled();
+      expect(within(dialog).getByText('Super Admin only: removing this role')).toBeInTheDocument();
+      expect(within(dialog).getByText('(Super Admin only)')).toBeInTheDocument();
+      expect(within(dialog).getByRole('checkbox', { name: 'Hub Planner' })).toBeDisabled();
+      await u.click(within(dialog).getByRole('checkbox', { name: 'Portfolio Manager' }));
+      expect(within(dialog).getByRole('checkbox', { name: 'Portfolio Manager' })).toBeChecked();
+      // A role just added in this edit is not held yet, so it can be unticked again.
+      await u.click(within(dialog).getByRole('checkbox', { name: 'Portfolio Manager' }));
+      expect(within(dialog).getByRole('checkbox', { name: 'Portfolio Manager' })).not.toBeChecked();
+    });
+
+    it('an Admin may reactivate an inactive user', async () => {
+      const u = userEvent.setup();
+      hooks.useRoles.mockReturnValue(ready(rolesFor(false)));
+      hooks.useUsers.mockReturnValue(ready({ total_count: 1, items: [user({ is_active: false })] }));
+      renderWithProviders(<AdminUsersPage />, { session: { roles: ['Admin'], permissions: ROLE_MATRIX.Admin } });
+      await u.click(screen.getByRole('button', { name: 'Edit hana.planner@example.com' }));
+      const dialog = screen.getByRole('dialog');
+      expect(within(dialog).getByRole('checkbox', { name: 'Active' })).toBeEnabled();
+    });
+
+    it('a Super Admin can untick Active and a held role', async () => {
+      const u = userEvent.setup();
+      renderWithProviders(<AdminUsersPage />);
+      await u.click(screen.getByRole('button', { name: 'Edit hana.planner@example.com' }));
+      const dialog = screen.getByRole('dialog');
+      expect(within(dialog).getByRole('checkbox', { name: 'Active' })).toBeEnabled();
+      expect(within(dialog).getByRole('checkbox', { name: 'Hub Planner' })).toBeEnabled();
+      expect(within(dialog).queryByText(/Super Admin only/)).toBeNull();
+    });
+
+    it('shows a 403 SUPER_ADMIN_ONLY from the server as a plain message', async () => {
+      const u = userEvent.setup();
+      const mutateAsync = vi.fn().mockRejectedValue(new ApiError(403, 'forbidden', 'Only a Super Admin can do this.', 'SUPER_ADMIN_ONLY'));
+      hooks.useUpdateUser.mockReturnValue({ mutateAsync });
+      renderWithProviders(<AdminUsersPage />);
+      await u.click(screen.getByRole('button', { name: 'Edit hana.planner@example.com' }));
+      const dialog = screen.getByRole('dialog');
+      await u.click(within(dialog).getByRole('checkbox', { name: 'Active' }));
+      await u.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+      expect(await within(dialog).findByRole('alert')).toHaveTextContent('Only a Super Admin can do this. Ask a Super Admin to make this change.');
+    });
   });
 
   it('a read-only permission hides every write control and shows the read-only notice', () => {

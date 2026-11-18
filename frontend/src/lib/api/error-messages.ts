@@ -40,6 +40,9 @@ export const API_ERROR_MESSAGES: Record<string, string> = {
   // Session / users (ADR 0010)
   LAST_SUPER_ADMIN: 'This change would leave no active Super Admin. Promote another user to Super Admin first.',
   ADMIN_ACCOUNT_REQUIRES_SUPER_ADMIN: 'Only a Super Admin can change an Admin or Super Admin account or grant those roles.',
+  // P46 (ADR 0058 D1): a destructive action reserved to Super Admin. Re-exported as
+  // `SUPER_ADMIN_ONLY_MESSAGE` by `lib/auth/super-admin.ts`.
+  SUPER_ADMIN_ONLY: 'Only a Super Admin can do this. Ask a Super Admin to make this change.',
   // Manager delegation (ADR 0012, P10-T02 `PATCH /users/{id}`'s `manager_id`)
   MANAGER_SELF_CYCLE: 'A user cannot be their own manager.',
   UNKNOWN_MANAGER: "That manager account could not be found. Refresh the page and try again.",

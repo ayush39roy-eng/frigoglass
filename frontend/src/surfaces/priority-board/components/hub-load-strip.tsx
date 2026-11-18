@@ -49,6 +49,9 @@ const SEGMENTS: readonly { key: keyof PriorityLoadSplit; shade: 'p1' | 'p2' | 'o
   { key: 'Queue', shade: 'other' },
 ];
 
+export const LEGEND_TOOLTIP =
+  'Bar colour is the booking status: red Full, amber Near full, green Available. Within a bar, the darkest shade is P1, mid is P2 and the lightest is P3 / P4 / Queue.';
+
 export const TO_FINISH_TOOLTIP =
   "Remaining P1/P2 demand vs the hub's remaining capacity this year. The schedule can still leave a project out because of sequencing or engineer eligibility.";
 
@@ -165,20 +168,56 @@ function HubLoadCard({ row }: { row: HubCapacityRow }): React.JSX.Element {
   );
 }
 
-function Legend(): React.JSX.Element {
-  const swatch = 'inline-block size-2 rounded-sm';
+const STATUS_ORDER: readonly BookingStatus[] = ['full', 'near_full', 'available'];
+const SWATCH_TONE: Record<'danger' | 'warning' | 'success', string> = {
+  danger: 'bg-danger',
+  warning: 'bg-warning',
+  success: 'bg-success',
+};
+
+/** P45-R01: status hue + priority shade legend. The thresholds are the served
+ *  `near_full_threshold_pct` / `full_threshold_pct` (backend/domain_constants.py
+ *  BOOKING_NEAR_FULL_PCT / BOOKING_FULL_PCT); nothing is computed beyond
+ *  printing the band edges. */
+function Legend({ nearFullPct, fullPct }: { nearFullPct: number; fullPct: number }): React.JSX.Element {
+  const swatch = 'inline-block size-2 shrink-0 rounded-sm';
+  const statusText: Record<BookingStatus, string> = {
+    full: `${BOOKING_STATUS_META.full.label} \u2265${String(fullPct)}%`,
+    near_full: `${BOOKING_STATUS_META.near_full.label} ${String(nearFullPct)}\u2013<${String(fullPct)}%`,
+    available: `${BOOKING_STATUS_META.available.label} <${String(nearFullPct)}%`,
+  };
+  const shades = [
+    { key: 'p1', cls: 'bg-text-muted', text: 'P1' },
+    { key: 'p2', cls: 'bg-text-muted/55', text: 'P2' },
+    { key: 'other', cls: 'bg-text-muted/25', text: 'P3+ / other' },
+  ];
   return (
-    <span className="flex items-center gap-1.5 text-2xs text-text-muted" data-testid="hub-load-legend">
-      <span className="sr-only">Bar shading: </span>
-      <span className={cn(swatch, 'bg-text-muted')} aria-hidden="true" />
-      P1
-      <span aria-hidden="true">·</span>
-      <span className={cn(swatch, 'bg-text-muted/55')} aria-hidden="true" />
-      P2
-      <span aria-hidden="true">·</span>
-      <span className={cn(swatch, 'bg-text-muted/25')} aria-hidden="true" />
-      other
-    </span>
+    <div
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-text-muted"
+      data-testid="hub-load-legend"
+      role="group"
+      aria-label="Bar colour legend"
+    >
+      <ul className="flex flex-wrap items-center gap-x-2 gap-y-0.5" data-testid="hub-load-legend-status">
+        <li className="sr-only">Bar colour is the booking status:</li>
+        {STATUS_ORDER.map((status) => (
+          <li key={status} className="inline-flex items-center gap-1" data-testid={`hub-load-legend-${status}`}>
+            <span className={cn(swatch, SWATCH_TONE[BOOKING_STATUS_META[status].tone])} aria-hidden="true" />
+            {statusText[status]}
+          </li>
+        ))}
+      </ul>
+      <span aria-hidden="true">|</span>
+      <ul className="flex flex-wrap items-center gap-x-2 gap-y-0.5" data-testid="hub-load-legend-shade">
+        <li className="sr-only">Shade within the colour is the priority, darker is higher:</li>
+        {shades.map((shade) => (
+          <li key={shade.key} className="inline-flex items-center gap-1" data-testid={`hub-load-legend-${shade.key}`}>
+            <span className={cn(swatch, shade.cls)} aria-hidden="true" />
+            {shade.text}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -188,14 +227,17 @@ function ToFinishInfo(): React.JSX.Element {
       <TooltipTrigger asChild>
         <button
           type="button"
-          aria-label="About the To finish figures"
+          aria-label="About the bar colours and To finish figures"
           className="inline-flex size-6 items-center justify-center rounded-full text-text-subtle hover:bg-dash-alt hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           data-testid="hub-load-need-info"
         >
           <Info className="size-3.5" aria-hidden="true" />
         </button>
       </TooltipTrigger>
-      <TooltipContent>{TO_FINISH_TOOLTIP}</TooltipContent>
+      <TooltipContent>
+        <p>{LEGEND_TOOLTIP}</p>
+        <p className="mt-1">{TO_FINISH_TOOLTIP}</p>
+      </TooltipContent>
     </Tooltip>
   );
 }
@@ -235,8 +277,8 @@ export function HubLoadStrip({
             {heading}
           </h2>
         )}
-        <div className="flex items-center gap-2">
-          <Legend />
+        <div className="flex flex-wrap items-center gap-2">
+          <Legend nearFullPct={query.data.near_full_threshold_pct} fullPct={query.data.full_threshold_pct} />
           <ToFinishInfo />
         </div>
       </div>

@@ -157,7 +157,7 @@ async def _world(migrated: str, hub_name: HubName) -> tuple[SimpleNamespace, obj
         other = await make_engineer(s, hub, name="Other", allowed_categories=c)
         led = await make_project(s, hub, leader=target, name="Led", category=ProjectCategory.C)
         free = await make_project(s, hub, leader=other, name="Free", category=ProjectCategory.C)
-        user = await make_user(s, RoleName.ADMIN, hub_scope_all=True)
+        user = await make_user(s, RoleName.SUPER_ADMIN, hub_scope_all=True)
         await s.commit()
         w = SimpleNamespace(
             hub=hub.id,
@@ -174,7 +174,7 @@ async def _world(migrated: str, hub_name: HubName) -> tuple[SimpleNamespace, obj
             yield session
 
     app.dependency_overrides[get_db] = _get_db
-    override_current_principal(make_principal(RoleName.ADMIN, user_id=w.user, email=w.email))
+    override_current_principal(make_principal(RoleName.SUPER_ADMIN, user_id=w.user, email=w.email))
     return w, engine
 
 

@@ -289,7 +289,8 @@ async def test_workflow_change_refused_once_progress_exists(db_session):
 
 
 async def test_update_marks_stale_only_for_scheduler_inputs(db_session):
-    await _act_as(db_session, RoleName.ADMIN)
+    # P46 (ADR 0058 D1.1): setting Cancelled is Super Admin only (was Admin).
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     hub = await make_hub(db_session)
     project = await make_project(db_session, hub, status=ProjectStatus.IN_DEVELOPMENT)
     async with _client(db_session) as client:

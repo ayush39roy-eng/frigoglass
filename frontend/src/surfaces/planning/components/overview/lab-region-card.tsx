@@ -4,6 +4,8 @@ import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
+import { SuperAdminOnly } from '@/components/shared/super-admin-only';
+import { useIsSuperAdmin } from '@/lib/auth/super-admin';
 import { LAB_REGIONS, type LabRegion } from '@/types/enums';
 
 import type { CapacityBasis, ChamberRead, ChamberUpdateRequest, LabRegionSummary } from '../../api/types';
@@ -200,6 +202,7 @@ function ChamberRow({
 }): React.JSX.Element {
   const editing = editor.editing;
   const allowed = editor.selected(chamber, 'allowed_stages');
+  const superAdmin = useIsSuperAdmin();
   const served = chamber.allowed_stages;
   const rowError = editor.rowError(chamber);
 
@@ -303,9 +306,20 @@ function ChamberRow({
             <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Edit ${chamber.code}`} onClick={() => onEdit(chamber)}>
               <Pencil />
             </Button>
-            <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Delete ${chamber.code}`} onClick={() => onDelete(chamber)}>
-              <Trash2 />
-            </Button>
+            {/* P46 (ADR 0058 D1.3): delete is Super Admin only. */}
+            <SuperAdminOnly locked={!superAdmin}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                aria-label={`Delete ${chamber.code}`}
+                disabled={!superAdmin}
+                onClick={() => onDelete(chamber)}
+              >
+                <Trash2 />
+              </Button>
+            </SuperAdminOnly>
           </div>
         </TableCell>
       ) : null}

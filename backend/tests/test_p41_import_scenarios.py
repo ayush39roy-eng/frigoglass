@@ -165,6 +165,16 @@ async def test_format_put_version_conflict_reset_and_audit(db_session, role):
             "/whatif/import/format", json={"version": 0, "fields": {"name": ["x name"]}}
         )
         assert stale.status_code == 409 and stale.json()["code"] == "FORMAT_VERSION_CONFLICT"
+
+    if role is RoleName.ADMIN:
+        # P46 (ADR 0058 D1.4): the reset is Super Admin only. The Admin's
+        # edit above stands; a Super Admin resets below.
+        async with client_for(db_session) as c:
+            refused = await c.post("/whatif/import/format/reset", json={"version": 1})
+        assert refused.status_code == 403 and refused.json()["code"] == "SUPER_ADMIN_ONLY"
+        await act_as(db_session, RoleName.SUPER_ADMIN)
+
+    async with client_for(db_session) as c:
         stale_reset = await c.post("/whatif/import/format/reset", json={"version": 0})
         assert stale_reset.status_code == 409
 

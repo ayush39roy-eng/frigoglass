@@ -13,13 +13,13 @@ vi.mock('@/surfaces/capacity/hooks/use-capacity', () => ({
   useHubLoadVsCapacity: (...a: unknown[]) => capacityHook.useHubLoadVsCapacity(...a),
 }));
 
-import { HubLoadStrip, TO_FINISH_TOOLTIP } from './hub-load-strip';
+import { HubLoadStrip, LEGEND_TOOLTIP, TO_FINISH_TOOLTIP } from './hub-load-strip';
 
 const ALL = { hubIds: [], regions: [] };
 
 function served(rows: HubCapacityRow[]): void {
   capacityHook.useHubLoadVsCapacity.mockReturnValue({
-    data: { has_active_schedule_run: true, rows },
+    data: { has_active_schedule_run: true, rows, near_full_threshold_pct: 85, full_threshold_pct: 100 },
     isPending: false,
     isError: false,
   });
@@ -63,7 +63,6 @@ describe('HubLoadStrip — P45 shading and "To finish" lines', () => {
     const design = screen.getByTestId('hub-load-PD-India-design');
     expect(design).toHaveTextContent('587 / 253 wks (232 %)');
     expect(design).toHaveTextContent('P1 400 wks, P2 100 wks');
-    expect(screen.getByTestId('hub-load-legend')).toHaveTextContent('P1·P2·other');
   });
 
   it('hides the P1 line when the served P1 need is 0 and shows P1 + P2 when positive', () => {
@@ -106,12 +105,32 @@ describe('HubLoadStrip — P45 shading and "To finish" lines', () => {
     expect(screen.getByTestId('hub-load-PD-India-need')).toHaveTextContent('To finish P1 + P2: +<1 wks design');
   });
 
+  it('P45-R01: the legend explains the status hue (served thresholds) and the priority shade', () => {
+    served([hubRow()]);
+    renderWithProviders(<HubLoadStrip hub={ALL} enabled />);
+    const legend = screen.getByRole('group', { name: 'Bar colour legend' });
+    expect(legend).toHaveTextContent('Full \u2265100%');
+    expect(legend).toHaveTextContent('Near full 85\u2013<100%');
+    expect(legend).toHaveTextContent('Available <85%');
+    expect(legend).toHaveTextContent('Bar colour is the booking status:');
+    expect(legend).toHaveTextContent('darker is higher');
+    expect(screen.getByTestId('hub-load-legend-full').querySelector('[aria-hidden="true"]')).toHaveClass('bg-danger');
+    expect(screen.getByTestId('hub-load-legend-near_full').querySelector('[aria-hidden="true"]')).toHaveClass('bg-warning');
+    expect(screen.getByTestId('hub-load-legend-available').querySelector('[aria-hidden="true"]')).toHaveClass('bg-success');
+    expect(screen.getByTestId('hub-load-legend-p1').querySelector('[aria-hidden="true"]')).toHaveClass('bg-text-muted');
+    expect(screen.getByTestId('hub-load-legend-p2').querySelector('[aria-hidden="true"]')).toHaveClass('bg-text-muted/55');
+    expect(screen.getByTestId('hub-load-legend-other')).toHaveTextContent('P3+ / other');
+    expect(screen.getByTestId('hub-load-legend-other').querySelector('[aria-hidden="true"]')).toHaveClass('bg-text-muted/25');
+  });
+
   it('explains the need figures in a tooltip', async () => {
     served([hubRow()]);
     const user = userEvent.setup();
     renderWithProviders(<HubLoadStrip hub={ALL} enabled />);
-    await user.hover(screen.getByRole('button', { name: 'About the To finish figures' }));
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(TO_FINISH_TOOLTIP);
+    await user.hover(screen.getByRole('button', { name: 'About the bar colours and To finish figures' }));
+    const tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveTextContent(TO_FINISH_TOOLTIP);
+    expect(tip).toHaveTextContent(LEGEND_TOOLTIP);
     expect(TO_FINISH_TOOLTIP).toBe(
       "Remaining P1/P2 demand vs the hub's remaining capacity this year. The schedule can still leave a project out because of sequencing or engineer eligibility.",
     );

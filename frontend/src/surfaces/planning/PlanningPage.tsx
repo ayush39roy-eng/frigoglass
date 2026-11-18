@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
+import { isSuperAdminOnlyError, SUPER_ADMIN_ONLY_MESSAGE } from '@/lib/auth/super-admin';
 import { useHubs, useWorkflowStepTemplates } from '@/lib/api/reference';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { hubsInScope, regionsInScope } from '@/components/shared/hub-filter/hub-scope';
@@ -99,6 +100,7 @@ export default function PlanningPage(): React.JSX.Element {
   const [chamberFormMode, setChamberFormMode] = React.useState<'create' | 'edit'>('create');
   const [editChamber, setEditChamber] = React.useState<ChamberRead | null>(null);
   const [deleteChamberTarget, setDeleteChamberTarget] = React.useState<ChamberRead | null>(null);
+  const [deleteChamberError, setDeleteChamberError] = React.useState<string | null>(null);
 
   // --- Apply Logic / Auto-assign (P19-T04: header buttons opening dialogs) ---
   const [applyError, setApplyError] = React.useState<string | null>(null);
@@ -252,11 +254,15 @@ export default function PlanningPage(): React.JSX.Element {
   );
   const handleDeleteChamberConfirm = React.useCallback(async () => {
     if (!deleteChamberTarget) return;
+    setDeleteChamberError(null);
     try {
       await deleteChamberMut.mutateAsync(deleteChamberTarget.id);
       setDeleteChamberTarget(null);
     } catch (err) {
-      if (err instanceof ApiError && err.isForbidden) handleForbidden();
+      // P46 (ADR 0058 D1.3): delete is Super Admin only. That 403 refuses
+      // this one action and keeps the page writable; any other 403 does not.
+      if (isSuperAdminOnlyError(err)) setDeleteChamberError(SUPER_ADMIN_ONLY_MESSAGE);
+      else if (err instanceof ApiError && err.isForbidden) handleForbidden();
     }
   }, [deleteChamberTarget, deleteChamberMut, handleForbidden]);
 
@@ -720,10 +726,14 @@ export default function PlanningPage(): React.JSX.Element {
       <ConfirmDialog
         open={deleteChamberTarget !== null}
         onOpenChange={(open) => {
-          if (!open) setDeleteChamberTarget(null);
+          if (!open) {
+            setDeleteChamberTarget(null);
+            setDeleteChamberError(null);
+          }
         }}
         title={`Delete ${deleteChamberTarget?.code ?? 'this chamber'}?`}
         description="This cannot be undone. Deleting a chamber fails if it is still referenced by existing schedule data."
+        error={deleteChamberError}
         busy={deleteChamberMut.isPending}
         onConfirm={() => void handleDeleteChamberConfirm()}
       />

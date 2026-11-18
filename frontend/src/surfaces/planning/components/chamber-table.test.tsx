@@ -68,4 +68,24 @@ describe('ChamberTable', () => {
     expect(within(screen.getByTestId('chamber-group-India')).getByText('IN-CH1')).toBeInTheDocument();
     expect(within(screen.getByTestId('chamber-group-India')).getByTestId('flag-India')).toBeInTheDocument();
   });
+
+  describe('P46 (ADR 0058 D1.3): delete is Super Admin only', () => {
+    it('an Admin sees Delete disabled with "Super Admin only"; Edit stays', async () => {
+      const user = userEvent.setup();
+      const onDelete = vi.fn();
+      renderWithProviders(<ChamberTable rows={ROWS} canEdit onEdit={vi.fn()} onDelete={onDelete} />, { session: { roles: ['Admin'] } });
+      const del = screen.getByRole('button', { name: 'Delete GR-CH1' });
+      expect(del).toBeDisabled();
+      expect(del.closest('[data-super-admin-only]')).toHaveAttribute('title', 'Super Admin only');
+      expect(screen.getByRole('button', { name: 'Edit GR-CH1' })).toBeEnabled();
+      await user.click(del);
+      expect(onDelete).not.toHaveBeenCalled();
+    });
+
+    it('a Super Admin may delete', () => {
+      renderWithProviders(<ChamberTable rows={ROWS} canEdit onEdit={vi.fn()} onDelete={vi.fn()} />);
+      expect(screen.getByRole('button', { name: 'Delete GR-CH1' })).toBeEnabled();
+      expect(document.querySelector('[data-super-admin-only]')).toBeNull();
+    });
+  });
 });

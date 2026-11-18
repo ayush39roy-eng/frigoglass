@@ -207,20 +207,24 @@ async def test_dev_users_404_outside_dev_mode_with_no_authorization_header(db_se
     assert resp.status_code == 404
 
 
-async def test_dev_users_lists_active_users_with_roles(db_session, monkeypatch):
+async def test_dev_users_lists_only_the_two_test_logins(db_session, monkeypatch):
+    """P46 (ADR 0058 L1): only `superadmin@` and `admin@`, when active and
+    holding a role. Other seeded users stay in the database but are not
+    listed (was: every active user with a role)."""
+
     monkeypatch.setenv("RPD_DEV_MODE", "true")
     await make_user(db_session, RoleName.ADMIN, email="frank.admin@example.com", full_name="F A")
     await make_user(db_session, RoleName.AUDITOR, email="erin@example.com", full_name="E A")
-    await make_user(db_session, RoleName.AUDITOR, email="off@example.com", is_active=False)
-    await make_user(db_session, email="norole@example.com")
+    await make_user(
+        db_session, RoleName.SUPER_ADMIN, email="superadmin@example.com", full_name="Super Admin"
+    )
+    await make_user(db_session, email="admin@example.com")  # no role: not listed
     async with _client(db_session) as client:
         resp = await client.get("/me/dev-users")
     assert resp.status_code == 200
-    emails = [row["email"] for row in resp.json()]
-    assert "frank.admin@example.com" in emails and "erin@example.com" in emails
-    assert "off@example.com" not in emails and "norole@example.com" not in emails
-    erin = next(row for row in resp.json() if row["email"] == "erin@example.com")
-    assert erin == {"email": "erin@example.com", "full_name": "E A", "roles": ["Auditor"]}
+    assert resp.json() == [
+        {"email": "superadmin@example.com", "full_name": "Super Admin", "roles": ["Super Admin"]}
+    ]
 
 
 # --- P10-F03: is_delegate_manager -------------------------------------------

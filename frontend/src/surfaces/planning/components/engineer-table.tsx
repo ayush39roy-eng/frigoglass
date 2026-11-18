@@ -12,7 +12,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { NotInCapacityRosterBadge } from '@/components/shared/capacity-roster-markers';
+import { SuperAdminOnly } from '@/components/shared/super-admin-only';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
+import { useIsSuperAdmin } from '@/lib/auth/super-admin';
 import { formatFactor, formatInteger } from '@/lib/format';
 import { HUB_NAMES, type LabRegion } from '@/types/enums';
 
@@ -138,7 +140,9 @@ export function EngineerTable({ rows, canEdit, canChangeStatus, onEdit, onDeacti
   );
 }
 
-/** Deactivate on an active row, Reactivate on an inactive one (Admin only). */
+/** Deactivate on an active row, Reactivate on an inactive one (Admin only).
+ *  P46 (ADR 0058 D1.3): Deactivate is Super Admin only — disabled with the
+ *  hint for anyone else; Reactivate stays an Admin right. */
 export function StatusAction({
   row,
   onDeactivate,
@@ -150,6 +154,7 @@ export function StatusAction({
   onReactivate: (row: EngineerRead) => void;
   className?: string;
 }): React.JSX.Element {
+  const superAdmin = useIsSuperAdmin();
   return isInactive(row) ? (
     <Button
       type="button"
@@ -164,17 +169,20 @@ export function StatusAction({
       <RotateCcw />
     </Button>
   ) : (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      className={className}
-      aria-label={`Deactivate ${row.name}`}
-      title="Deactivate"
-      aria-haspopup="dialog"
-      onClick={() => onDeactivate(row)}
-    >
-      <UserX />
-    </Button>
+    <SuperAdminOnly locked={!superAdmin}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className={className}
+        aria-label={`Deactivate ${row.name}`}
+        title={superAdmin ? 'Deactivate' : undefined}
+        aria-haspopup="dialog"
+        disabled={!superAdmin}
+        onClick={() => onDeactivate(row)}
+      >
+        <UserX />
+      </Button>
+    </SuperAdminOnly>
   );
 }

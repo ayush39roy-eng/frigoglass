@@ -1,4 +1,5 @@
-"""`GET /me` and `GET /me/dev-users` (docs/API_CONTRACT_P9.md §1, ADR 0010 §2/§4)."""
+"""`GET /me`, `GET /me/dev-users` (docs/API_CONTRACT_P9.md §1, ADR 0010 §2/§4) and
+`POST /me/dev-login` (ADR 0058 L1)."""
 
 from __future__ import annotations
 
@@ -6,7 +7,7 @@ import uuid
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from models.enums import RoleName
 
@@ -98,3 +99,15 @@ class DevUser(BaseModel):
     email: str
     full_name: str
     roles: list[RoleName]
+
+
+class DevLoginRequest(BaseModel):
+    """`POST /me/dev-login` (ADR 0058 L1). `username` is `superadmin` /
+    `admin` or the account's full email. No length or format constraint
+    here on purpose: every wrong value is the router's one generic 401, so
+    a validation error never echoes the password back."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    username: str
+    password: str

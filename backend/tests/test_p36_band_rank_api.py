@@ -689,7 +689,8 @@ async def test_register_batch_appends_enterers_by_id_and_renumbers_once(db_sessi
         await w.project(f"Held {i}", ProjectPriority.P2, status=ProjectStatus.ON_HOLD)
         for i in range(3)
     ]
-    await _act_as(db_session, RoleName.ADMIN)
+    # P46 (ADR 0058 D1.1): the batch cancels a project, Super Admin only (was Admin).
+    await _act_as(db_session, RoleName.SUPER_ADMIN)
     order = await _order(db_session, "P2")
     leaver = w.p2[0]
     edits = [{"project_id": str(p.id), "status": "In Queue"} for p in reversed(held)]
