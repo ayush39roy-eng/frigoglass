@@ -252,7 +252,7 @@ function StepsCell({
   if (!enabled && !inEdit) return DASH;
   if (query.isPending) {
     return (
-      <span className="block h-9 w-full animate-pulse rounded bg-surface-sunken motion-reduce:animate-none" aria-busy="true">
+      <span className="block h-[2.875rem] w-full animate-pulse rounded bg-surface-sunken motion-reduce:animate-none" aria-busy="true">
         <span className="sr-only">Loading steps</span>
       </span>
     );
@@ -826,8 +826,8 @@ export function ProjectsTable({
         id: 'steps',
         editable: true,
         header: 'Steps (click to exclude)',
-        min: 14,
-        fr: 1.4,
+        min: 11,
+        fr: 0.8,
         resizable: true,
         cell: (row) => <StepsCell row={row} edit={edit} inEdit={inEdit(row)} enabled={canReadSteps} />,
       },

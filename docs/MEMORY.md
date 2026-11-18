@@ -44669,3 +44669,9 @@ All 4 were confirmed to fail with the fix temporarily reverted (restored from a 
 - **QA:** first FAIL on QA48-2. It was fixed by P48-R01, and the re-check is a PASS (planning vitest 370/370). QA48-1 was fixed by adding the `PriorityScoreChangeBody` and `PlanWeek` contract entries, so the long-standing PlanWeek failure is closed too.
 - **P48-T01:** capacity planning is healthy on the live demo, checked with GETs only. Observation O1 (past-week chamber overbooking in the heatmap history) is for the owner to decide; it is not a defect.
 - **Commit:** P48 files only. Another session's `frontend/src/surfaces/projects/*` WIP is excluded.
+
+## 2026-11-18 — Projects edit mode: design/lab time box looks empty while typing (owner bug)
+
+- Owner: Backspace in the Design/Lab time box "doesn't go to zero". Cause: an emptied box means "use the calculated weeks", and the calculated figure showed as placeholder in the same green semibold, so the box looked unchanged.
+- Fix: `register-edit-cells.tsx` `EffortInput` hides the placeholder while focused (`focus:placeholder:text-transparent`); the calculated hint returns on blur. Semantics unchanged: empty = calculated, typed 0 = 0. tsc/eslint clean, vitest `src/surfaces/projects` 122 passed.
+- Shipped with the compact horizontal step chips (P44 follow-up).

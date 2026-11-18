@@ -727,9 +727,16 @@ describe('Projects register — P44-T01 the row Edit edits in place', () => {
     expect(chips.map((c) => c.getAttribute('data-step'))).toEqual(['PDD-A', 'PDD-B', 'PDD-C', 'PDD-D', 'PDD-F', 'PDD-G']);
     expect(chips[1]).toHaveAttribute('data-current', 'true');
     expect(chips[2]).toHaveAttribute('data-state', 'excluded');
-    expect(chips[2]).toHaveTextContent('off');
+    expect(chips[2]).toHaveTextContent(/^C/);
+    expect(chips[2].querySelector('.line-through')).not.toBeNull();
+    expect(chips[2]).toHaveAttribute('title', expect.stringContaining('PDD-C'));
     expect(chips[3]).toHaveAttribute('data-state', 'na');
-    expect(chips[3]).toHaveTextContent('N/A');
+    expect(chips[3]).toHaveClass('border-dashed');
+    expect(chips[3].querySelector('svg')).toBeNull();
+    expect(chips[0]).toHaveTextContent(/^A/);
+    expect(chips[0].querySelector('svg')).not.toBeNull();
+    expect(chips[1]).toHaveClass('ring-inset');
+    expect(list).toHaveClass('grid-cols-7');
     expect(within(list).getByText('PDD-B Feasibility: In Progress, current step')).toHaveClass('sr-only');
   });
 

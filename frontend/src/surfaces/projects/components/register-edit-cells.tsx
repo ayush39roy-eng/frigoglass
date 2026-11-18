@@ -155,6 +155,9 @@ export function EffortInput({
           'w-14 text-right font-semibold tabular-nums',
           manual ? MANUAL_TEXT : CALCULATED_TEXT,
           'placeholder:font-semibold placeholder:text-success-subtle-fg',
+          // While typing, an emptied box looks empty (the calculated hint
+          // returns on blur) — otherwise Backspace seems to do nothing.
+          'focus:placeholder:text-transparent',
           inputClassName,
         )}
         value={text}

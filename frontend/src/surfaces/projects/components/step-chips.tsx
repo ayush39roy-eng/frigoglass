@@ -21,8 +21,9 @@ import type { RegisterStep } from '../api/register-edits';
  * their own whether a step applies (I9).
  *
  * P44-T01 (owner 2026-11-18): the Projects list's "Steps (click to exclude)"
- * column uses `compact` (3 per line, code above a short name, like the old
- * tool) and, outside a row's edit, `readOnly` (a display of the served state:
+ * column uses `compact` (P44 follow-up 2026-11-18: 7 per line, one-line
+ * ~22px chips showing the step letter and a tiny state mark; the full code,
+ * name and state stay in `title`, the accessible name and sr-only text) and, outside a row's edit, `readOnly` (a display of the served state:
  * no buttons, one text per chip).
  */
 
@@ -72,7 +73,7 @@ export function StepChips({
   onToggle: (stepCode: string) => void;
   describedBy?: string | undefined;
   invalid?: boolean;
-  /** The list row's column: 3 per line, smaller chips. */
+  /** The list row's column: 7 per line, one-line letter chips. */
   compact?: boolean;
   /** A display only (a row not in edit): no buttons. */
   readOnly?: boolean;
@@ -82,7 +83,7 @@ export function StepChips({
   return (
     <ul
       className={cn(
-        compact ? 'grid w-full grid-cols-3 gap-1' : 'grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4',
+        compact ? 'grid w-full grid-cols-7 gap-0.5' : 'grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4',
         invalid && 'rounded-md p-1 ring-2 ring-danger/60',
       )}
       aria-label={label}
@@ -138,7 +139,7 @@ function StepChip({
   const readTitle = `${step.step_code} · ${step.step_name} — ${kindLabel} — ${state}${current ? ' — current step' : ''}`;
   const className = cn(
     compact
-      ? 'relative flex h-9 w-full min-w-0 flex-col items-start justify-center rounded border px-1 text-left text-[0.625rem] leading-tight transition-colors'
+      ? 'relative flex h-[1.375rem] w-full min-w-0 items-center justify-center gap-px rounded border px-0.5 text-[0.6875rem] leading-none transition-colors'
       : 'relative flex h-12 w-full min-w-0 flex-col items-start justify-center rounded-md border px-2 text-left text-2xs transition-colors',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface',
     na
@@ -149,10 +150,21 @@ function StepChip({
     !readOnly && !disabled && !excluded && KIND_HOVER[step.kind],
     !readOnly && !disabled && excluded && 'hover:border-primary/60 hover:bg-primary-subtle/30',
     (readOnly || (disabled && !na)) && 'cursor-default',
-    current && 'ring-2 ring-primary ring-offset-1 ring-offset-surface',
+    current && (compact ? 'ring-2 ring-inset ring-primary' : 'ring-2 ring-primary ring-offset-1 ring-offset-surface'),
     invalid && 'border-danger ring-2 ring-danger',
   );
-  const body = (
+  const letter = step.step_code.replace(/^[A-Za-z]+-/, '');
+  const body = compact ? (
+    <>
+      <span className={cn('truncate font-bold', excluded && 'line-through')} aria-hidden="true">
+        {letter}
+      </span>
+      {changed ? (
+        <span className="size-1 shrink-0 rounded-full bg-warning" aria-hidden="true" title="Changed, not saved" />
+      ) : null}
+      {!na && !excluded && !splitZero ? <Check className="size-2.5 shrink-0" aria-hidden="true" /> : null}
+    </>
+  ) : (
     <>
       <span className="flex w-full min-w-0 items-center justify-between gap-0.5">
         <span className={cn('truncate font-bold', excluded && 'line-through')}>{step.step_code}</span>
