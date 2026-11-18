@@ -66,7 +66,7 @@ export function ProjectRowBadges({ project }: { project: GanttProjectRow }): Rea
           <Clock className="size-3" aria-hidden="true" />+{project.delay_weeks}w
         </Badge>
       ) : null}
-      {band ? <BandOutcomeChip outcome={band} label={project.outcome_label} /> : null}
+      {band ? <BandOutcomeChip outcome={band} label={project.outcome_label} projectedEndWeek={project.projected_end_week} /> : null}
       {project.left_out && !band ? <ScheduleOutcomeBadge flag="LEFT_OUT" /> : null}
       {project.spillover ? <ScheduleOutcomeBadge flag="SPILLOVER" /> : null}
       {project.cat_not_allowed ? <ScheduleOutcomeBadge flag="CAT_NOT_ALLOWED" iconOnly /> : null}

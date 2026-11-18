@@ -57,7 +57,7 @@ describe('KpiProjectsDialog (P28 addendum)', () => {
     expect(within(dialog).getByText('Spill Two')).toBeInTheDocument();
     expect(within(dialog).queryByText('Within One')).not.toBeInTheDocument();
     // Served end week past W52 prints the plan-year framing; null priority → "—".
-    expect(within(dialog).getByText('After W52')).toBeInTheDocument();
+    expect(within(dialog).getByText("W9 '27")).toHaveAttribute('title', 'Week 9 of 2027');
     expect(within(dialog).getAllByText('—').length).toBeGreaterThan(0);
     // Outcome chip text (display framing of the served flag).
     expect(within(dialog).getAllByText('Spillover (past W52)').length).toBeGreaterThan(0);

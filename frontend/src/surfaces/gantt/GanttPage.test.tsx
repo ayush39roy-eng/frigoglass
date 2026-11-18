@@ -360,7 +360,7 @@ describe('GanttPage', () => {
       expect(within(row).getByTestId('gantt-marker-expected')).toHaveAttribute('data-week', '50');
       // No title or label on the row prints a W53+ week.
       expect(row.textContent).not.toMatch(/W5[3-9]/);
-      expect(within(row).getByRole('img', { name: /will be completed After W52/ })).toBeInTheDocument();
+      expect(within(row).getByRole('img', { name: /will be completed W5 '27/ })).toBeInTheDocument();
 
       await user.click(screen.getByRole('button', { name: 'Expand steps for Cooler Alpha' }));
       const stepRows = screen.getAllByTestId('gantt-step-row');

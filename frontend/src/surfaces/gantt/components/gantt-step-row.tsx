@@ -2,7 +2,7 @@ import * as React from 'react';
 import { TriangleAlert } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { formatPlanWeek } from '@/lib/format';
+import { formatPlanWeek, formatWeekTitle } from '@/lib/format';
 import { usePlanYearLabels } from '@/lib/plan-clock';
 import { StepKindBadge } from '@/components/shared/step-kind-badge';
 
@@ -22,7 +22,7 @@ import { PinnedSegmentMarker } from './pinned-marker';
  * provides the `<svg>` and `GanttHatchDefs`. Moved out of `gantt-chart.tsx`
  * in P32-R04 so the Timeline and the Workflow page's per-project waterfall
  * draw the same bar. `fmt` formats weeks in the hover text (default
- * `formatPlanWeek`, the Timeline's "After W52").
+ * `formatPlanWeek`: W47, or W5 '27 for a week past W52, owner rule 2026-11-18).
  */
 export function StepBarGraphic({
   project,
@@ -79,7 +79,7 @@ export function StepBarGraphic({
           scale={scale}
           rowHeight={height}
           variant="chevron"
-          title={`${s.step_name} continues past ${fmt(lastScaleWeek(scale))} — spillover to ${years.spilloverYear}`}
+          title={`${s.step_name} continues past ${fmt(lastScaleWeek(scale))}${s.planned_end_week != null && isPastScaleEnd(s.planned_end_week, scale) ? ` to ${fmt(s.planned_end_week)} (${formatWeekTitle(s.planned_end_week)})` : ''} — spillover to ${years.spilloverYear}`}
         />
       ) : null}
     </>

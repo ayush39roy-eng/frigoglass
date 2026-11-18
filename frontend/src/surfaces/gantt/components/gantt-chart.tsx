@@ -5,7 +5,8 @@ import { LayoutGroup, motion } from 'framer-motion';
 import { ArrowUpRight, ChevronRight, Info, Snowflake } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { formatPlanWeek } from '@/lib/format';
+import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { formatPlanWeek, formatWeekTitle } from '@/lib/format';
 import { usePlanYearLabels } from '@/lib/plan-clock';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
@@ -503,7 +504,9 @@ function BarLayer({
           title={
             p.left_out
               ? `${p.project_name}: not done by W52 — no slot found yet, spills over to ${years.spilloverYear} unscheduled`
-              : `${p.project_name}: not done by W52 — spillover to ${years.spilloverYear}`
+              : p.projected_end_week != null && p.projected_end_week > WITHIN_YEAR_WEEK
+                ? `${p.project_name}: not done by W52 — finishes ${fmt(p.projected_end_week)} (${formatWeekTitle(p.projected_end_week)}), spillover to ${years.spilloverYear}`
+                : `${p.project_name}: not done by W52 — spillover to ${years.spilloverYear}`
           }
         />
       );

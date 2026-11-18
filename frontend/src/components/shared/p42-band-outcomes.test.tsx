@@ -7,7 +7,7 @@ import { PRIORITY_LABELS } from '@/types/enums';
 
 import { PriorityBandPill } from './priority-band-pill';
 import { PRIORITY_BAND_TITLE, priorityBandName } from './priority-band-meta';
-import { BandOutcomeChip, ProjectedFinishChip } from './project-outcome-chips';
+import { BandOutcomeChip, outcomeLabelForDisplay, ProjectedFinishChip } from './project-outcome-chips';
 import { BAND_OUTCOME_META, nonCountingOutcome, servedNonCountingOutcome } from './schedule-outcome-meta';
 
 /**
@@ -70,8 +70,27 @@ describe('P42 outcome chips (R42-3 / R42-4)', () => {
       <ProjectedFinishChip projectedEndWeek={60} withinYear={false} outcome="QUEUED" outcomeLabel="Queued — after W52" />,
     );
     expect(screen.queryByTestId('finish-chip')).toBeNull();
-    expect(screen.getByTestId('band-outcome-chip')).toHaveTextContent('Queued — after W52');
+    // Owner rule 2026-11-18: the served "after W52" names the next-year week (60 → W8 '27).
+    const chip = screen.getByTestId('band-outcome-chip');
+    expect(chip).toHaveTextContent("Queued — fits by W8 '27");
+    expect(chip.getAttribute('title')).toContain('week 8 of 2027');
     expect(screen.queryByText(/Past W52/)).toBeNull();
+  });
+
+  it('a past-W52 finish chip shows the next-year week with the year on hover, never W53+', () => {
+    renderWithProviders(<ProjectedFinishChip projectedEndWeek={57} withinYear={false} outcome={null} />);
+    const chip = screen.getByTestId('finish-chip');
+    expect(chip).toHaveTextContent("W5 '27");
+    expect(chip).toHaveTextContent('Past W52 → 2027');
+    expect(chip.getAttribute('title')).toContain('week 5 of 2027');
+    expect(chip.textContent).not.toMatch(/W5[3-9]|W[6-9]\d/);
+  });
+
+  it('keeps every other served outcome label verbatim', () => {
+    expect(outcomeLabelForDisplay('Queued — fits by W40', 40)).toBe('Queued — fits by W40');
+    expect(outcomeLabelForDisplay('Queued — no slot', null)).toBe('Queued — no slot');
+    expect(outcomeLabelForDisplay('Queued — after W52', null)).toBe('Queued — after W52');
+    expect(outcomeLabelForDisplay('Not scheduled (P4)', 70)).toBe('Not scheduled (P4)');
   });
 
   it('a counting project keeps the pre-P42 finish chip', () => {

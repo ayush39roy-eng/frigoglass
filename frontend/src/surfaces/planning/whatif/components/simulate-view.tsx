@@ -3,7 +3,7 @@ import { ArrowRight } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { formatPlanWeek } from '@/lib/format';
+import { WeekText } from '@/components/shared/week-text';
 import { SimulatedWeekNotice } from '@/components/shared/plan-week-notice';
 import { useCurrentWeek } from '@/lib/plan-clock';
 
@@ -29,8 +29,9 @@ function OutcomeBadge({ outcome }: { outcome: WhatIfOutcome }): React.JSX.Elemen
   return <Badge tone={OUTCOME_TONE[outcome]}>{OUTCOME_LABEL[outcome]}</Badge>;
 }
 
-function week(w: number | null): string {
-  return w === null ? 'Not scheduled' : formatPlanWeek(w);
+/** A served week: W47, or W5 '27 past W52 with the year on hover (owner rule 2026-11-18). */
+function week(w: number | null): React.ReactNode {
+  return w === null ? 'Not scheduled' : <WeekText week={w} />;
 }
 
 function signed(n: number): string {
@@ -99,7 +100,7 @@ const NEW_COLUMNS = [
         {week(r.finish_week)}
         {r.unconstrained_end_week !== null && r.unconstrained_end_week > 52 ? (
           <span className="block text-2xs text-text-muted">
-            Earliest possible {formatPlanWeek(r.unconstrained_end_week)}
+            Earliest possible <WeekText week={r.unconstrained_end_week} />
           </span>
         ) : null}
       </span>

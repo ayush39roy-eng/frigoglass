@@ -1,3 +1,4 @@
+import { outcomeLabelForDisplay } from '@/components/shared/project-outcome-chips';
 import { BAND_OUTCOME_META, nonCountingOutcome, SCHEDULE_OUTCOME_META } from '@/components/shared/schedule-outcome-meta';
 
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
@@ -16,7 +17,7 @@ export function projectStatusLabels(project: GanttProjectRow): string[] {
   // left-out / spillover words — it is not counted this year.
   const band = nonCountingOutcome(project.outcome);
   if (band) {
-    out.push(project.outcome_label ?? BAND_OUTCOME_META[band].label);
+    out.push(outcomeLabelForDisplay(project.outcome_label, project.projected_end_week) ?? BAND_OUTCOME_META[band].label);
   } else if (project.left_out) {
     out.push(SCHEDULE_OUTCOME_META.LEFT_OUT.label);
   }

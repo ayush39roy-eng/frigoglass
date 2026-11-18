@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { formatInteger } from '@/lib/format';
+import { formatInteger, formatWeek } from '@/lib/format';
 
 import { STEP_COLORS, STEP_LETTERS, type StepCode } from '../lib/step-colors';
 
@@ -29,7 +29,7 @@ export function StepCountChips({
     }))
     .filter((g) => g.chips.length > 0);
   if (groups.length === 0) return null;
-  const when = week == null ? 'this week' : `W${String(week)}`;
+  const when = week == null ? 'this week' : formatWeek(week);
   return (
     <div
       className="flex flex-wrap items-center gap-x-3 gap-y-1"

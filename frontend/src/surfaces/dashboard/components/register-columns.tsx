@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { FolderKanban, FolderOpen, Pencil } from 'lucide-react';
 
+import { WeekText } from '@/components/shared/week-text';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { CharterCell } from '@/components/shared/charter-fields';
@@ -10,7 +11,7 @@ import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { CategoryTag } from '@/components/ui/category-tag';
 import { EntityCell } from '@/components/ui/table-cells';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
-import { formatInteger, formatPlanWeek } from '@/lib/format';
+import { formatInteger } from '@/lib/format';
 import { registrationEditHref } from '@/lib/registration-links';
 import { cn } from '@/lib/utils';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
@@ -141,11 +142,11 @@ export function registerColumns({
       header: 'End wk',
       width: '5.5rem',
       align: 'center',
-      // ADR 0024: a finish past W52 prints as "After W52"; the week is served.
+      // Owner rule 2026-11-18: a finish past W52 prints as its next-year week (W5 '27); the week is served.
       cell: (row) =>
         row.end_week !== null && row.end_week !== undefined ? (
           <span className="text-xs font-semibold tabular-nums text-text" data-numeric="">
-            {formatPlanWeek(row.end_week)}
+            <WeekText week={row.end_week} />
           </span>
         ) : (
           DASH

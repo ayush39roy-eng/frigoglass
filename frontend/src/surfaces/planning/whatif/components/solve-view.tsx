@@ -2,7 +2,7 @@ import * as React from 'react';
 import { CircleCheck, Info } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
-import { formatPlanWeek } from '@/lib/format';
+import { WeekText } from '@/components/shared/week-text';
 import { SimulatedWeekNotice } from '@/components/shared/plan-week-notice';
 import { useCurrentWeek } from '@/lib/plan-clock';
 
@@ -25,7 +25,7 @@ const UNATTAINABLE_COLUMNS = [
   {
     header: 'Earliest possible finish',
     cell: (r: SolveResponse['unattainable_projects'][number]) =>
-      r.unconstrained_end_week === null ? '—' : formatPlanWeek(r.unconstrained_end_week),
+      r.unconstrained_end_week === null ? '—' : <WeekText week={r.unconstrained_end_week} />,
   },
 ];
 

@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
 
+import { WeekText } from '@/components/shared/week-text';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatInteger, formatPlanWeek } from '@/lib/format';
+import { formatInteger } from '@/lib/format';
 import { toHubFilterParams, type HubSelection } from '@/stores/hub-filter';
 
 import type { DashboardSelection } from '../api/dashboard-api';
@@ -149,7 +150,7 @@ const COLUMNS: VirtualColumn<ProjectFilterRow>[] = [
     align: 'right',
     cell: (row) => (
       <span className="text-xs tabular-nums text-text" data-numeric="">
-        {row.end_week === null ? '—' : formatPlanWeek(row.end_week)}
+        {row.end_week === null ? '—' : <WeekText week={row.end_week} />}
       </span>
     ),
   },

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { X } from 'lucide-react';
 
+import { WeekText } from '@/components/shared/week-text';
 import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { usePlanYearLabels } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
@@ -172,7 +173,7 @@ export function StepPinCell({ project, step }: { project: GanttProjectRow; step:
           title="The typed start week had passed, so the run placed the step from its own week, keeping the length."
           data-testid="step-pin-lapsed"
         >
-          Lapsed: placed from W{step.planned_start_week}
+          Lapsed: placed from <WeekText week={step.planned_start_week} />
         </span>
       ) : null}
     </div>

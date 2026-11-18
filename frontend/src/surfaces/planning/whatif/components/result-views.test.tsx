@@ -212,7 +212,7 @@ describe('SolveView', () => {
     expect(box).toHaveTextContent('Cannot finish within the year whatever you add (critical path too long)');
     expect(within(box).getByTestId('solve-semantics')).toHaveTextContent('SERVER SENTENCE about unattainable projects.');
     expect(within(box).getByText('What-if project 1')).toBeInTheDocument();
-    expect(within(box).getByText('After W52')).toBeInTheDocument();
+    expect(within(box).getByText("W8 '27")).toHaveAttribute('title', 'Week 8 of 2027');
 
     const outcome = screen.getByTestId('solve-outcome');
     expect(outcome).toHaveTextContent('Everything that capacity can help finishes inside the year');

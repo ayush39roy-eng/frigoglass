@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Check, FolderKanban, FolderOpen, Lock, Pencil, TriangleAlert } from 'lucide-react';
 
+import { WeekText } from '@/components/shared/week-text';
 import { Badge } from '@/components/ui/badge';
 import { CategoryTag } from '@/components/ui/category-tag';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -17,7 +18,7 @@ import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { VipToggle } from '@/components/shared/vip-toggle';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
 import type { Hub } from '@/lib/api/reference';
-import { formatInteger, formatPlanWeek } from '@/lib/format';
+import { formatInteger } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
@@ -760,11 +761,11 @@ export function ProjectsTable({
         min: 4.75,
         align: 'center',
         resizable: true,
-        // ADR 0024: a finish past W52 prints as "After W52"; the week is served.
+        // Owner rule 2026-11-18: a finish past W52 prints as its next-year week (W5 '27); the week is served.
         cell: (row) =>
           row.end_week !== null ? (
             <span className="text-xs font-semibold tabular-nums text-text" data-numeric="">
-              {formatPlanWeek(row.end_week)}
+              <WeekText week={row.end_week} />
             </span>
           ) : (
             DASH

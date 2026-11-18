@@ -153,7 +153,7 @@ describe('Priority move preview dialog (ADR 0026)', () => {
 
     const moved = within(dialog).getByTestId('preview-moved');
     expect(moved).toHaveTextContent('Coffee Combo');
-    expect(moved).toHaveTextContent('W52'); // 70 → "After W52" (framed on the 52-week year)
+    expect(moved).toHaveTextContent("W18 '27"); // 70 → week 18 of the next year (owner rule 2026-11-18)
     expect(moved).toHaveTextContent('W38');
     expect(moved).toHaveTextContent('Past W52');
     expect(moved).toHaveTextContent('Within year');
@@ -173,7 +173,10 @@ describe('Priority move preview dialog (ADR 0026)', () => {
     expect(rows[0]).toHaveTextContent('Bar 250 R290');
     expect(rows[0]).toHaveTextContent('PD-India');
     expect(rows[0]).toHaveTextContent('W50');
-    expect(rows[0]).toHaveTextContent('W52');
+    // Owner rule 2026-11-18: 55 prints as week 3 of the next year, with the year on hover.
+    expect(rows[0]).toHaveTextContent("W3 '27");
+    expect(within(rows[0]!).getByTitle('Week 3 of 2027')).toBeInTheDocument();
+    expect(rows[0]!.textContent).not.toMatch(/W5[3-9]/);
     expect(rows[0]).toHaveAttribute('data-pushed-out', 'true');
     expect(within(rows[0]!).getByTestId('pushed-out-chip')).toHaveTextContent('Pushed out of year');
     expect(rows[1]).not.toHaveAttribute('data-pushed-out');

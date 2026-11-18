@@ -63,6 +63,7 @@ export function WorkspaceHeader({
               <BandOutcomeChip
                 outcome={band}
                 label={data.schedule.outcome_label}
+                projectedEndWeek={data.schedule.projected_end_week}
                 className="text-xs font-semibold"
               />
             ) : null}

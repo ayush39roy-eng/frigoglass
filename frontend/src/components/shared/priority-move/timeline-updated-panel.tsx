@@ -3,8 +3,9 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowRight, EyeOff } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { WeekText } from '@/components/shared/week-text';
 import type { ScheduleRunChangeRow, ScheduleRunChanges } from '@/lib/api/priority-move';
-import { formatPlanWeek, formatWeek } from '@/lib/format';
+import { formatWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { ProjectPriority } from '@/types/enums';
 
@@ -23,10 +24,10 @@ import { BAND_EFFECT_COPY, bandEffectOfChange, MOVE_COPY, type BandEffect } from
 const VIRTUALIZE_OVER = 100;
 const ROW_HEIGHT = 60;
 
-/** Framed on the 52-week year: a finish past W52 prints "After W52" (client ask
- *  2026-10-13), never W53+. */
-function week(value: number | null): string {
-  return value === null ? '—' : formatPlanWeek(value);
+/** A served finish week: W47, or W5 '27 past W52 with the year on hover
+ *  (owner rule 2026-11-18), never W53+. */
+function week(value: number | null): React.ReactNode {
+  return value === null ? '—' : <WeekText week={value} />;
 }
 
 function DeltaChip({ delta }: { delta: number | null }): React.JSX.Element | null {

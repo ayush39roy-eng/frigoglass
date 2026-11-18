@@ -22,8 +22,9 @@ import { GANTT_MARKER_TEST_IDS, expectedLabel, slipLabel } from '../lib/completi
  * `−N wk` early), tinted by sign — text carries the sign too.
  *
  * The axis ends at W52 (ADR 0024): a completion week past it is not drawn as a
- * line (the row's "Spillover → 2027" marker stands for it) and is described as
- * "after W52"; a slip bracket reaching past W52 is clipped at the axis edge.
+ * line (the row's "Spillover → 2027" marker stands for it) and is described by
+ * its week of the next year ("W5 '27", owner rule 2026-11-18); a slip bracket
+ * reaching past W52 is clipped at the axis edge.
  *
  * Every x here is `completionMarkerX(week)` of a server week number. Nothing
  * is computed from durations, and the slip label is never `projected −

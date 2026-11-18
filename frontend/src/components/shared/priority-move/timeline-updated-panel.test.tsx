@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 
 import type { ScheduleRunChangeRow, ScheduleRunChanges } from '@/lib/api/priority-move';
+import { seedSession } from '@/test/session';
 
 // jsdom has no layout, so a real virtualizer would render zero rows. Stub it
 // to "render the first N" so the virtualized branch is still observable.
@@ -46,6 +47,7 @@ function changes(rows: ScheduleRunChangeRow[], hidden = 0): ScheduleRunChanges {
 }
 
 function renderPanel(data: ScheduleRunChanges) {
+  seedSession({});
   return render(
     <TimelineUpdatedPanel changes={data} projectId="p1" projectName="Cooler One" priorityBefore="P1" priorityAfter="P2" />,
   );
@@ -63,8 +65,9 @@ describe('TimelineUpdatedPanel', () => {
     const rows = screen.getAllByTestId('timeline-change-row');
     expect(rows).toHaveLength(3);
     expect(rows[0]).toHaveTextContent('W50');
-    // ADR 0024: a week past W52 prints "After W52", never W54.
-    expect(rows[0]).toHaveTextContent('After W52');
+    // Owner rule 2026-11-18: a week past W52 prints its next-year week (54 → W2 '27), never W54.
+    expect(rows[0]).toHaveTextContent("W2 '27");
+    expect(within(rows[0]!).getByTitle('Week 2 of 2027')).toBeInTheDocument();
     expect(rows[0]).not.toHaveTextContent('W54');
     expect(rows[0]).toHaveTextContent('+4 wk');
     expect(rows[0]).toHaveTextContent('Within year');

@@ -2,8 +2,8 @@ import * as React from 'react';
 import { Ban, CalendarCheck, CalendarX, CircleCheck, CirclePause, CircleX, TriangleAlert } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
-import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
-import { formatWeek } from '@/lib/format';
+import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { formatWeek, formatWeekTitle, weekTitleIfNextYear } from '@/lib/format';
 import { usePlanYearLabels } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
 import { HEALTH_META } from '@/surfaces/project-workspace/lib/health-meta';
@@ -46,33 +46,57 @@ export function HealthChip({ health, className }: { health: ServedHealth | null;
   );
 }
 
+/** The served R42-4 text for a queued project finishing past W52. */
+const QUEUED_AFTER_YEAR = 'Queued — after W52';
+
+/**
+ * Owner rule 2026-11-18: the served "Queued — after W52" names the actual
+ * finish when the served `projected_end_week` is past W52 — "Queued — fits by
+ * W5 '27" (week 5 of the next year). Every other served label is returned
+ * verbatim. Display only: both parts are served fields (I9).
+ */
+export function outcomeLabelForDisplay(
+  label: string | null | undefined,
+  projectedEndWeek: number | null | undefined,
+): string | null | undefined {
+  if (label === QUEUED_AFTER_YEAR && projectedEndWeek != null && projectedEndWeek > WITHIN_YEAR_WEEK) {
+    return `Queued — fits by ${formatWeek(projectedEndWeek)}`;
+  }
+  return label;
+}
+
 /**
  * P42 (ADR 0056): a project that does not count toward the year — a queued P3
  * or a P4 / Q that is never planned. The text is the SERVED `outcome_label`
  * verbatim ("Queued — fits by W40", "Not scheduled (P4)"); the bucket only
- * picks the tone and icon. Never composed here.
+ * picks the tone and icon. A queued finish past W52 names its next-year week
+ * ({@link outcomeLabelForDisplay}).
  */
 export function BandOutcomeChip({
   outcome,
   label,
+  projectedEndWeek = null,
   className,
 }: {
   outcome: NonCountingOutcome;
   /** The served `outcome_label`; falls back to the bucket's short name. */
   label: string | null | undefined;
+  /** The served `projected_end_week`, used only to name a next-year finish. */
+  projectedEndWeek?: number | null | undefined;
   className?: string;
 }): React.JSX.Element {
   const meta = BAND_OUTCOME_META[outcome];
+  const yearTitle = label === QUEUED_AFTER_YEAR ? weekTitleIfNextYear(projectedEndWeek) : undefined;
   return (
     <Badge
       tone={meta.tone}
       className={cn('whitespace-nowrap', className)}
-      title={meta.description}
+      title={yearTitle === undefined ? meta.description : `${meta.description} Fits by ${yearTitle.replace(/^Week/, 'week')}.`}
       data-testid="band-outcome-chip"
       data-outcome={outcome}
     >
       <meta.Icon aria-hidden="true" />
-      {label ?? meta.label}
+      {outcomeLabelForDisplay(label, projectedEndWeek) ?? meta.label}
     </Badge>
   );
 }
@@ -99,7 +123,7 @@ export function ProjectedFinishChip({
 }): React.JSX.Element {
   const { spilloverYear } = usePlanYearLabels();
   if (outcome !== null) {
-    return <BandOutcomeChip outcome={outcome} label={outcomeLabel} {...(className !== undefined ? { className } : {})} />;
+    return <BandOutcomeChip outcome={outcome} label={outcomeLabel} projectedEndWeek={projectedEndWeek} {...(className !== undefined ? { className } : {})} />;
   }
   if (projectedEndWeek === null || withinYear === null) {
     return (
@@ -118,20 +142,16 @@ export function ProjectedFinishChip({
       title={
         withinYear
           ? 'Projected to finish inside the plan year'
-          : `Projected to finish after week 52 — spillover to ${spilloverYear}`
+          : `Projected to finish ${formatWeekTitle(projectedEndWeek).replace(/^Week/, 'in week')} — after week 52, spillover to ${spilloverYear}`
       }
     >
       <Icon aria-hidden="true" />
-      {/* Client ask 2026-10-13: the UI frames the 52-week year only, so a finish
-          past W52 is not printed as W53+; the served flag says "Past W52". */}
-      {withinYear || projectedEndWeek <= DISPLAY_HORIZON_WEEKS ? (
-        <>
-          <span className="font-mono tabular-nums" data-numeric="">
-            {formatWeek(projectedEndWeek)}
-          </span>
-          <span aria-hidden="true">·</span>
-        </>
-      ) : null}
+      {/* Owner rule 2026-11-18: a finish past W52 shows as the week of the next
+          year ("W5 '27"), never W53+; the served flag still says "Past W52". */}
+      <span className="font-mono tabular-nums" data-numeric="">
+        {formatWeek(projectedEndWeek)}
+      </span>
+      <span aria-hidden="true">·</span>
       {withinYear ? 'Within year' : `Past W52 → ${spilloverYear}`}
     </Badge>
   );

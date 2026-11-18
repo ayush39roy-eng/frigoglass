@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { CalendarCheck, FolderKanban } from 'lucide-react';
 
+import { WeekText } from '@/components/shared/week-text';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -10,7 +11,7 @@ import { EntityCell } from '@/components/ui/table-cells';
 import { ErrorState } from '@/components/shared/error-state';
 import { useHubs } from '@/lib/api/reference';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
-import { formatInteger, formatPlanWeek } from '@/lib/format';
+import { formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { toHubFilterParams, type HubSelection } from '@/stores/hub-filter';
 import type { HubName, ProjectCategory, ProjectPriority, ProjectStatus, ProjectType } from '@/types/enums';
@@ -193,7 +194,7 @@ function columns(source: DrillSource): VirtualColumn<DrillRow>[] {
       cell: (row) =>
         row.finishWeek !== null ? (
           <span className="text-xs font-semibold tabular-nums text-text" data-numeric="">
-            {formatPlanWeek(row.finishWeek)}
+            <WeekText week={row.finishWeek} />
           </span>
         ) : (
           DASH

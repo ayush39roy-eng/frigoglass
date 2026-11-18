@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { ChevronDown, RotateCcw, TriangleAlert } from 'lucide-react';
 
+import { WeekText } from '@/components/shared/week-text';
 import { Checkbox } from '@/components/ui/checkbox';
 import { isStatusOptionLocked, statusOptionLabel, useIsSuperAdmin } from '@/lib/auth/super-admin';
 import type { Hub } from '@/lib/api/reference';
-import { formatPlanWeek } from '@/lib/format';
+import { SCHEDULER_HORIZON_WEEKS } from '@/lib/domain-constants';
+import { formatPlanWeek, formatWeek, weekTitleIfNextYear } from '@/lib/format';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { usePlanYear } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
@@ -349,8 +351,12 @@ export function WeekValue({ week }: { week: number | null }): React.JSX.Element 
   return week === null ? (
     <span className="text-text-subtle">—</span>
   ) : (
-    <span className="text-xs font-semibold tabular-nums text-text" data-numeric="" title={(planYear === null ? '' : planWeekToDateInput(week, planYear)) || undefined}>
-      {formatPlanWeek(week)}
+    <span
+      className="text-xs font-semibold tabular-nums text-text"
+      data-numeric=""
+      title={[weekTitleIfNextYear(week, planYear), planYear === null ? '' : planWeekToDateInput(week, planYear)].filter(Boolean).join(' · ') || undefined}
+    >
+      {formatPlanWeek(week, planYear)}
     </span>
   );
 }
@@ -400,7 +406,7 @@ export function WeekDateInput({
           onChange={(e) => {
             const next = dateInputToPlanWeek(e.currentTarget.value, planYear);
             if (next === undefined) {
-              setError(`No plan week for this date (${String(planYear)} W1 to W78)`);
+              setError(`No plan week for this date (${String(planYear)} W1 to ${formatWeek(SCHEDULER_HORIZON_WEEKS, planYear)})`);
               return;
             }
             setError(null);
@@ -409,7 +415,7 @@ export function WeekDateInput({
         />
         {week !== null ? (
           <span className="text-2xs font-semibold tabular-nums text-text-muted" data-numeric="">
-            {formatPlanWeek(week)}
+            <WeekText week={week} />
           </span>
         ) : null}
       </span>

@@ -6,7 +6,8 @@ export type Id = string;
 
 /** 1-indexed absolute week number (DOMAIN_RULES.md). The UI presents the 52-week plan
  *  year (W1–W52, `DISPLAY_HORIZON_WEEKS`); a served week past 52 is spillover and is
- *  shown as "After W52" (`formatPlanWeek`), never as W53+. */
+ *  shown as the week of its own year — 57 → "W5 '27", "Week 5 of 2027" on hover
+ *  (`formatWeek` / `formatWeekTitle`, owner rule 2026-11-18), never as W53+. */
 export type WeekNumber = number;
 
 export interface Paginated<T> {

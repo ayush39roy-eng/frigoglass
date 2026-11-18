@@ -3,7 +3,8 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 
 import { NotInCapacityRosterBadge } from '@/components/shared/capacity-roster-markers';
 import { cn } from '@/lib/utils';
-import { formatDecimal, formatPercent, formatWeek } from '@/lib/format';
+import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { formatDecimal, formatPercent, formatWeek, formatWeekTitle, weekOfYear } from '@/lib/format';
 
 import type { EngineerUtilizationResponse, EngineerUtilizationRow } from '../api/types';
 
@@ -177,10 +178,11 @@ export function EngineerUtilizationHeatmap({ data }: { data: EngineerUtilization
                   'py-1.5 text-center font-medium tabular-nums text-text-muted',
                   w === data.current_week && 'font-bold text-primary underline',
                 )}
-                title={w === data.current_week ? `${formatWeek(w)} (current week)` : formatWeek(w)}
+                title={`${formatWeek(w)}${w === data.current_week ? ' (current week)' : ''}${w > WITHIN_YEAR_WEEK ? ` · ${formatWeekTitle(w)}` : ''}`}
                 aria-current={w === data.current_week ? 'date' : undefined}
               >
-                {w}
+                {/* Owner rule 2026-11-18: a week past W52 shows as its next-year week. */}
+                {weekOfYear(w).week}
               </div>
             ))}
             <div role="columnheader" className="px-1 py-1.5 text-center font-semibold text-text-muted">

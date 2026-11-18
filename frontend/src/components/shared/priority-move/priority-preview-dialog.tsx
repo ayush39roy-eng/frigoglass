@@ -3,6 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowRight, CircleCheck, EyeOff, Info, TriangleAlert } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { WeekText } from '@/components/shared/week-text';
 import { Button } from '@/components/ui/button';
 import {
   Sheet,
@@ -19,7 +20,7 @@ import type {
   PriorityPreviewMoved,
   PriorityPreviewSummary,
 } from '@/lib/api/priority-move';
-import { formatInteger, formatPlanWeek } from '@/lib/format';
+import { formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import { PriorityBandPill } from '../priority-band-pill';
@@ -64,8 +65,10 @@ function isDialogFlow(flow: MoveFlowState): flow is DialogFlow {
 const VIRTUALIZE_OVER = 100;
 const ROW_HEIGHT = 44;
 
-function week(value: number | null): string {
-  return value === null ? '—' : formatPlanWeek(value);
+/** A served finish week: W47, or W5 '27 past W52 with the year on hover
+ *  (owner rule 2026-11-18), never W53+. */
+function week(value: number | null): React.ReactNode {
+  return value === null ? '—' : <WeekText week={value} />;
 }
 
 function WeekMove({ before, after }: { before: number | null; after: number | null }): React.JSX.Element {

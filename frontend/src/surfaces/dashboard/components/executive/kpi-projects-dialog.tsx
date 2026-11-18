@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
 
+import { WeekText } from '@/components/shared/week-text';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { formatInteger, formatPlanWeek } from '@/lib/format';
+import { formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import type { CompletingWithinYearRow } from '../../api/types';
@@ -74,7 +75,7 @@ export function KpiProjectsDialog({
         align: 'right',
         cell: (row) => (
           <span className="text-xs tabular-nums text-text" data-numeric="">
-            {row.last_step_end_week === null ? '—' : formatPlanWeek(row.last_step_end_week)}
+            {row.last_step_end_week === null ? '—' : <WeekText week={row.last_step_end_week} />}
           </span>
         ),
       },

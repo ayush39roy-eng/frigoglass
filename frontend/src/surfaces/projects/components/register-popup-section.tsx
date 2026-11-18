@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Lock, RotateCw, TriangleAlert } from 'lucide-react';
 
+import { WeekText } from '@/components/shared/week-text';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
@@ -8,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import type { Hub } from '@/lib/api/reference';
 import { isStatusOptionLocked, statusOptionLabel, useIsSuperAdmin } from '@/lib/auth/super-admin';
-import { formatPlanWeek } from '@/lib/format';
+
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { cn } from '@/lib/utils';
 import { UI_PROJECT_STATUSES, type ProjectStatus } from '@/types/enums';
@@ -260,7 +261,7 @@ export function RegisterPopupSection({
             title="Set by the scheduler; read-only"
           >
             <Lock className="size-3 text-text-subtle" aria-hidden="true" />
-            {endWeek === null ? '—' : formatPlanWeek(endWeek)}
+            {endWeek === null ? '—' : <WeekText week={endWeek} />}
             <span className="sr-only"> (read-only, set by the scheduler)</span>
           </span>
         </PopupField>

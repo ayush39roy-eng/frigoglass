@@ -1,8 +1,9 @@
 import * as React from 'react';
 
+import { WeekText } from '@/components/shared/week-text';
 import { DISPLAY_HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { useCurrentWeek } from '@/lib/plan-clock';
-import { formatPlanWeek, formatWeek } from '@/lib/format';
+import { formatWeek } from '@/lib/format';
 import { GanttCompletionMarkers } from '@/surfaces/gantt/components/gantt-completion-markers';
 import { expectedLabel, slipLabel } from '@/surfaces/gantt/lib/completion-labels';
 import { weekEndToX, weekToX, type WeekScale } from '@/surfaces/gantt/lib/gantt-coordinates';
@@ -63,7 +64,7 @@ export function CompletionStrip({
           <span className="inline-block h-3 w-0.5 bg-gantt-expected" aria-hidden="true" />
           <dt>{expectedLabel(targetEndWeek)}</dt>
           <dd className="font-mono font-semibold text-text" data-testid="strip-expected">
-            {schedule.expected_end_week === null ? '—' : formatPlanWeek(schedule.expected_end_week)}
+            {schedule.expected_end_week === null ? '—' : <WeekText week={schedule.expected_end_week} />}
           </dd>
         </div>
         <div className="flex items-center gap-1">
@@ -73,7 +74,7 @@ export function CompletionStrip({
             {/* P42: a queued / not-scheduled project reads the served outcome text. */}
             {schedule.projected_end_week === null
               ? (schedule.outcome_label ?? (schedule.left_out ? 'Spillover · unplaced' : '—'))
-              : formatPlanWeek(schedule.projected_end_week)}
+              : <WeekText week={schedule.projected_end_week} />}
           </dd>
         </div>
         <div className="flex items-center gap-1">

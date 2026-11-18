@@ -218,12 +218,12 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     expect(within(labels[1]!).queryByTestId('no-leader-left-out')).not.toBeInTheDocument();
   });
 
-  it('prints a finish past W52 as "After W52" (ADR 0024) and a missing week as a dash', () => {
+  it('prints a finish past W52 as its next-year week (owner rule 2026-11-18) and a missing week as a dash', () => {
     useDashboardProjects.mockReturnValue(
       ok([row({ project_id: 'a', end_week: 60 }), row({ project_id: 'b', project_name: 'B', end_week: null })]),
     );
     renderWithProviders(<ProjectBreakdown />);
-    expect(screen.getByText('After W52')).toBeInTheDocument();
+    expect(screen.getByText("W8 '27")).toHaveAttribute('title', 'Week 8 of 2027');
   });
 
   it('Open always links to the workspace; Edit only with Registration write', () => {
