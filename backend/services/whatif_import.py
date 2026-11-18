@@ -26,6 +26,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 from collections.abc import Callable, Sequence
+from datetime import date
 from typing import Any
 
 from sqlalchemy import select
@@ -88,6 +89,7 @@ from schemas.whatif_import import (
     LeaderNew,
     LeadTimeRowOut,
     PlanProjectOut,
+    PlanWeekChoiceOut,
     RosterEntryOut,
     SimIssueOut,
     StepMetaOut,
@@ -120,6 +122,169 @@ INVALID_IMPORT = "INVALID_IMPORT"
 
 def invalid_import(message: str) -> CodedHTTPException:
     return CodedHTTPException(HTTP_422, INVALID_IMPORT, message)
+
+
+# --- the plan window: "Plan from" f and "Plan until" u (ADR 0061, R49-7, R49-15) ------------
+
+#: The last week a plan window may reach (base year + 1, W52; R49-15).
+MAX_PLAN_WEEK = 2 * dc.WEEKS_IN_YEAR
+PLAN_FROM_LATER = "PLAN_FROM_LATER"
+PLAN_FROM_RAISED = "PLAN_FROM_RAISED"
+PLAN_UNTIL_RAISED = "PLAN_UNTIL_RAISED"
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def week_year(week: int) -> tuple[int, int]:
+    """(calendar year, week 1..52) of an absolute week (53 = base year + 1, W1)."""
+
+    offset, in_year = divmod(week - 1, dc.WEEKS_IN_YEAR)
+    return BASE_YEAR + offset, in_year + 1
+
+
+def week_monday(week: int) -> date:
+    """The Monday of an absolute week: ISO week `w` of its year (so 53 is
+    Monday 4 Jan 2027; the ISO 2026-W53 is read as 52 by the app, R49-7)."""
+
+    year, w = week_year(week)
+    return date.fromisocalendar(year, w, 1)
+
+
+def plan_week_short(week: int) -> str:
+    year, w = week_year(week)
+    return f"W{w} {year}"
+
+
+def plan_week_label(week: int) -> str:
+    """The label "W1 2027 (4 Jan 2027)": the server-made label of an absolute week (I40)."""
+
+    d = week_monday(week)
+    return f"{plan_week_short(week)} ({d.day} {_MONTHS[d.month - 1]} {d.year})"
+
+
+def plan_week_choices(current_week: int) -> list[PlanWeekChoiceOut]:
+    """Every week a "Plan from" / "Plan until" picker may offer: cw..104."""
+
+    return [
+        PlanWeekChoiceOut(week=w, label=plan_week_label(w))
+        for w in range(current_week, MAX_PLAN_WEEK + 1)
+    ]
+
+
+@dataclasses.dataclass(frozen=True)
+class PlanWindow:
+    """The resolved window of one import simulation (R49-7, R49-15)."""
+
+    current_week: int
+    #: f: file projects start from it.
+    from_week: int
+    #: u: the cut-off of every "within" figure.
+    until_week: int
+    #: The request gave a `plan_until_week` other than the preset (R49-18:
+    #: the window label is served).
+    until_given: bool
+    #: R49-13 / R49-19: re-run raised a stored week (the week asked for).
+    from_raised_from: int | None = None
+    until_raised_from: int | None = None
+
+
+def resolve_plan_window(ctx: WhatIfContext, body: ImportSimulateRequest) -> PlanWindow:
+    """`cw <= f <= u <= 104`, else 422 `INVALID_IMPORT` (no clamping). On a
+    re-run (`plan_window_rerun`) f := max(f, cw), then u := max(u, f)."""
+
+    cw = ctx.baseline.schedule.current_week
+    f = cw if body.plan_from_week is None else body.plan_from_week
+    u = body.plan_year_end_week if body.plan_until_week is None else body.plan_until_week
+    from_raised = until_raised = None
+    if f < cw:
+        if not body.plan_window_rerun:
+            raise invalid_import(
+                f"plan_from_week {f} is before the current week {cw}; file projects can start "
+                f"from week {cw} ({plan_week_label(cw)}) at the earliest."
+            )
+        from_raised, f = f, cw
+    if u < f:
+        if not body.plan_window_rerun:
+            raise invalid_import(
+                f"the plan window must end on or after the week file projects start from "
+                f"(plan_until_week {u} < plan_from_week {f})."
+            )
+        until_raised, u = u, f
+    if u > MAX_PLAN_WEEK:  # pragma: no cover - the schema bounds it
+        raise invalid_import(f"plan_until_week must be at most {MAX_PLAN_WEEK}.")
+    return PlanWindow(
+        current_week=cw,
+        from_week=f,
+        until_week=u,
+        # R49-18: u equal to the preset reads as the plan year (so a saved
+        # request, which stores the resolved u, re-simulates identically).
+        until_given=body.plan_until_week is not None and u != body.plan_year_end_week,
+        from_raised_from=from_raised,
+        until_raised_from=until_raised,
+    )
+
+
+def plan_window_issues(w: PlanWindow) -> list[SimIssueOut]:
+    """File-level info issues (R49-12, R49-13, R49-19); none when f = cw and
+    nothing was raised (so the response stays as before)."""
+
+    out: list[SimIssueOut] = []
+    if w.from_raised_from is not None:
+        out.append(
+            SimIssueOut(
+                ref=None,
+                severity="info",
+                code=PLAN_FROM_RAISED,
+                message=(
+                    f"The saved scenario started file projects from "
+                    f"{plan_week_short(w.from_raised_from)}, which has passed; they start from "
+                    f"{plan_week_label(w.from_week)}."
+                ),
+            )
+        )
+    if w.until_raised_from is not None:
+        out.append(
+            SimIssueOut(
+                ref=None,
+                severity="info",
+                code=PLAN_UNTIL_RAISED,
+                message=(
+                    f"The saved scenario's plan window ended {plan_week_short(w.until_raised_from)}"
+                    f", before file projects now start; it ends {plan_week_label(w.until_week)}."
+                ),
+            )
+        )
+    if w.from_week != w.current_week:
+        out.append(
+            SimIssueOut(
+                ref=None,
+                severity="info",
+                code=PLAN_FROM_LATER,
+                message=(
+                    f"Simulated from W{w.current_week}; file projects start from "
+                    f"{plan_week_label(w.from_week)}. Live plan projects are unchanged."
+                ),
+            )
+        )
+    return out
+
+
+def plan_window_label(w: PlanWindow) -> str | None:
+    """The window label "W48 2026 – W20 2027" when the request set `plan_until_week` (R49-18)."""
+
+    if not w.until_given:
+        return None
+    return f"{plan_week_short(w.from_week)} – {plan_week_short(w.until_week)}"
+
+
+def apply_plan_window(result: ImportSimulateResponse, w: PlanWindow) -> None:
+    """Serve the window fields of `result` (R49-7, R49-15, R49-18)."""
+
+    result.plan_from_week = w.from_week
+    result.plan_from_min_week = w.current_week
+    result.plan_from_label = plan_week_label(w.from_week)
+    result.plan_until_week = w.until_week
+    result.plan_window_label = plan_window_label(w)
+    result.plan_week_choices = plan_week_choices(w.current_week)
 
 
 def import_format_error(message: str) -> CodedHTTPException:
@@ -316,6 +481,7 @@ def parse_response(
                     "certification_testing_required": r.certification_testing_required,
                     "step_weeks": dict(r.step_weeks),
                     "include": r.include,
+                    "file_band": r.file_band,
                 }
             )
         )
@@ -353,6 +519,8 @@ def parse_response(
             for i in res.issues
         ],
         counts=ImportCounts(**vars(res.counts)),
+        plan_from_min_week=pctx.current_week,
+        plan_week_choices=plan_week_choices(pctx.current_week),
     )
 
 
@@ -393,19 +561,25 @@ class EngineRequest:
     file_keys: frozenset[str]
     #: new designer key -> name
     new_names: dict[str, str]
+    #: The resolved plan window (R49-7, R49-15).
+    window: PlanWindow | None = None
 
 
 def _norm_name(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
-def to_engine_request(ctx: WhatIfContext, body: ImportSimulateRequest) -> EngineRequest:
+def to_engine_request(
+    ctx: WhatIfContext, body: ImportSimulateRequest, window: PlanWindow | None = None
+) -> EngineRequest:
     """Validate the reviewed rows against the plan and the caller's scope and
     build the engine request. Anything wrong is 422 `INVALID_IMPORT`; a
     project or engineer id the caller may not see is answered exactly like
     an unknown one (no existence leak)."""
 
     scope = ctx.scope
+    if window is None:
+        window = resolve_plan_window(ctx, body)
     wf_steps: dict[str, set[str]] = {}
     for t in ctx.baseline.schedule.workflow_steps:
         wf_steps.setdefault(t.workflow_id, set()).add(t.step_id)
@@ -515,9 +689,13 @@ def to_engine_request(ctx: WhatIfContext, body: ImportSimulateRequest) -> Engine
             edits=tuple(edits),
             mode=body.mode,
             plan_year_end_week=body.plan_year_end_week,
+            # ADR 0061: f and u, resolved (the engine re-validates them).
+            plan_from_week=window.from_week,
+            plan_until_week=window.until_week,
         ),
         file_keys=file_keys,
         new_names={ne.key: ne.name for ne in new_engs},
+        window=window,
     )
 
 
@@ -992,8 +1170,13 @@ def scope_import_result(
                 if merge
                 else " scheduled alone on the live designers and chambers."
             ),
-            f"Plan year ends week {raw.plan_year_end_week}; search horizon week "
-            f"{raw.horizon_weeks}; today is week {raw.current_week}.",
+            (
+                f"Plan year ends week {raw.plan_year_end_week}; search horizon week "
+                f"{raw.horizon_weeks}; today is week {raw.current_week}."
+                if er.window is None or not er.window.until_given
+                else f"Plan window ends week {er.window.until_week}; search horizon week "
+                f"{raw.horizon_weeks}; today is week {raw.current_week}."
+            ),
             f"Finishing within the plan year (your hubs and your file): {kpis.within_plan_year} "
             f"(file {kpis.file_within_plan_year} of {kpis.file_scheduled} scheduled)"
             + (
@@ -1003,6 +1186,10 @@ def scope_import_result(
                 else "."
             ),
         ]
+        if er.window is not None and er.window.from_week != er.window.current_week:
+            # R49-12 (the engine's own workings already say it for an
+            # all-hubs caller): "Simulated from W{cw}" keeps meaning cw.
+            workings.append(f"File projects start from {plan_week_label(er.window.from_week)}.")
     served = [_project_out(p, eng_name, ch_code) for p in rows]
     return ImportSimulateResponse(
         base_year=BASE_YEAR,
@@ -1185,7 +1372,8 @@ async def do_import_simulate(
     ctx = without_projects(ctx, removed)
     pickable = plan_projects_out(ctx, body.mode)
     ctx = without_projects(ctx, excluded)
-    er = to_engine_request(ctx, body)
+    window = resolve_plan_window(ctx, body)
+    er = to_engine_request(ctx, body, window)
     raw = await run_capped(
         lambda: _run_or_error(ctx, er.request), WHATIF_TIME_CAP_SECONDS, user_key=ctx.user_key
     )
@@ -1195,7 +1383,24 @@ async def do_import_simulate(
     result.issues.extend(pin_dropped_issues(ctx, body, result.issues))
     result.kpis.plan_excluded = len(excluded)
     result.plan_projects = pickable
+    result.issues[:0] = plan_window_issues(window)
+    apply_plan_window(result, window)
     return result
+
+
+def request_digest_body(body: ImportSimulateRequest) -> dict[str, Any]:
+    """The request as digested: the P49 window keys only when set, so a
+    request without them digests as before."""
+
+    out = body.model_dump(mode="json")
+    for key, default in (
+        ("plan_from_week", None),
+        ("plan_until_week", None),
+        ("plan_window_rerun", False),
+    ):
+        if out.get(key) == default:
+            out.pop(key, None)
+    return out
 
 
 async def audit_import_simulate(
@@ -1226,7 +1431,10 @@ async def audit_import_simulate(
         "edits": len(body.edits),
         # P41-R01 addendum (workflow A3): the served count, not the ids sent.
         "plan_excluded": result.kpis.plan_excluded,
-        "request_digest": digest_of(body.model_dump(mode="json")),
+        # ADR 0061 (R49-13, R49-19): the resolved window.
+        "plan_from_week": result.plan_from_week,
+        "plan_until_week": result.plan_until_week,
+        "request_digest": digest_of(request_digest_body(body)),
     }
     k = result.kpis
     await audit_whatif(

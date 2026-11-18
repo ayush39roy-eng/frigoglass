@@ -95,7 +95,8 @@ class ImportRow(_Strict):
     #: 1..9999 from PRIORITY; 0 = "Running" (scheduled first, P32-R06).
     rank: int | None = Field(default=None, ge=0, le=9999)
     priority: PriorityLiteral
-    priority_source: Literal["rank", "running", "matched", "default"] = "default"
+    #: ADR 0061 (R49-3): "band" = from the band columns ("Must Do" …).
+    priority_source: Literal["band", "rank", "running", "matched", "default"] = "default"
     engineer_raw: _Raw | None = None
     leader: Leader
     matched_project_id: _Id | None = None
@@ -109,6 +110,9 @@ class ImportRow(_Strict):
     certification_testing_required: bool = True
     step_weeks: dict[_StepId, _Weeks] = Field(max_length=14)
     include: bool = True
+    #: ADR 0061 (R49-2, R49-6): the most urgent band column saying Yes, for
+    #: display and audit only. Simulate never re-derives `priority` from it.
+    file_band: Literal["P1", "P2", "P3", "P4"] | None = None
 
 
 class ImportIssue(BaseModel):
@@ -161,6 +165,14 @@ class ImportCounts(BaseModel):
     not_a_project: int
 
 
+class PlanWeekChoiceOut(BaseModel):
+    """ADR 0061 (R49-7, I40): an absolute week the "Plan from" / "Plan until"
+    pickers may offer, with its server-made label ("W1 2027 (4 Jan 2027)")."""
+
+    week: int
+    label: str
+
+
 class ImportParseResponse(BaseModel):
     file_name: str
     projects_sheet: str
@@ -173,6 +185,11 @@ class ImportParseResponse(BaseModel):
     rows: list[ImportRow]
     issues: list[ImportIssue]
     counts: ImportCounts
+    #: ADR 0061 (R49-7): the earliest "Plan from" week (= `current_week`, the
+    #: default) and every week the pickers may offer (`current_week`..104),
+    #: labelled by the server (the browser derives no dates, I40).
+    plan_from_min_week: int
+    plan_week_choices: list[PlanWeekChoiceOut]
 
 
 # --- simulate ---------------------------------------------------------------------------------
@@ -200,6 +217,17 @@ class ImportSimulateRequest(_Strict):
     exclude_plan_project_ids: list[_Id] = Field(
         default_factory=list, max_length=MAX_EXCLUDED_PLAN_PROJECTS
     )
+    #: ADR 0061 (R49-7): the week the file projects start from (absolute; 53 =
+    #: W1 of the next year). None = the calendar week. Valid
+    #: `current_week <= f <= plan_until_week`, else 422 `INVALID_IMPORT`.
+    plan_from_week: int | None = Field(default=None, ge=1, le=104)
+    #: ADR 0061 amendment (R49-15): the plan window's last week u. None = the
+    #: `plan_year_end_week` preset. Valid `f <= u <= 104`, else 422.
+    plan_until_week: int | None = Field(default=None, ge=1, le=104)
+    #: R49-13 / R49-19 "Re-run on today's plan": raise a stored f below
+    #: today's week to it (`PLAN_FROM_RAISED`), then u to f when below it
+    #: (`PLAN_UNTIL_RAISED`), instead of answering 422.
+    plan_window_rerun: bool = False
 
 
 class ImportKpisOut(BaseModel):
@@ -467,3 +495,18 @@ class ImportSimulateResponse(BaseModel):
     breakdowns: ImportBreakdownsOut
     #: ADR 0055 D2: merge mode only, before exclusion; `[]` in file_only.
     plan_projects: list[PlanProjectOut] = Field(default_factory=list)
+    # --- ADR 0061 (R49-7, R49-15). None only in a snapshot saved before
+    # P49 (the saved-scenario read fills them from the stored weeks). ---
+    #: The resolved "Plan from" week f (file projects start from it).
+    plan_from_week: int | None = None
+    #: The earliest allowed f (= `current_week`).
+    plan_from_min_week: int | None = None
+    #: f as a server-made label, e.g. "W1 2027 (4 Jan 2027)".
+    plan_from_label: str | None = None
+    #: The resolved plan window end u: the cut-off of every "within" figure.
+    plan_until_week: int | None = None
+    #: "W48 2026 – W20 2027" when the request set `plan_until_week`, else None
+    #: (the plan-year wording stays, R49-18).
+    plan_window_label: str | None = None
+    #: The weeks the pickers may offer (`current_week`..104), labelled.
+    plan_week_choices: list[PlanWeekChoiceOut] = Field(default_factory=list)

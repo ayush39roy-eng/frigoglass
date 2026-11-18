@@ -42,7 +42,12 @@ from scheduling import (
 from scheduling._selftest_common import SELFTEST_WEEK, load_seed_schedule_input
 from scheduling.greedy import _sort_key, prepare_run
 from scheduling.monte_carlo import forecast_delivery
-from scheduling.plan_import import ImportProject, PlanImportRequest, run_plan_import
+from scheduling.plan_import import (
+    ImportProject,
+    PlanImportRequest,
+    PlanImportResult,
+    run_plan_import,
+)
 from scheduling.whatif import (
     AddEngineer,
     AddProject,
@@ -535,6 +540,18 @@ def _h(x) -> str:
     return hashlib.sha256(json.dumps(_strip(x), sort_keys=True, default=str).encode()).hexdigest()
 
 
+def _without_r49_fields(res: PlanImportResult, pyew: int) -> object:
+    """P49 (ADR 0061, I54 / I56): the result gained `plan_from_week` and
+    `plan_until_week`; unset they are (current_week, plan_year_end_week) and
+    the rest of the response is unchanged, so the pre-R49 hash still holds."""
+
+    d = to_jsonable(res)
+    assert isinstance(d, dict)
+    assert d.pop("plan_from_week") == res.current_week
+    assert d.pop("plan_until_week") == pyew
+    return d
+
+
 def _neutral(p: ProjectInput) -> ProjectInput:
     if p.status in dc.SCHEDULABLE_STATUS_ORDER and not dc.counts_toward_year(p.priority, p.status):
         return dataclasses.replace(p, priority="P2")
@@ -595,7 +612,9 @@ def test_neutral_inputs_are_byte_identical_to_pre_p42() -> None:
     )
     for y in (52, 104):
         got[f"plan_import_{y}"] = _h(
-            to_jsonable(run_plan_import(b, PlanImportRequest(projects=rows, plan_year_end_week=y)))
+            _without_r49_fields(
+                run_plan_import(b, PlanImportRequest(projects=rows, plan_year_end_week=y)), y
+            )
         )
     assert got == _PRE_P42_NEUTRAL
 

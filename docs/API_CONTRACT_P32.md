@@ -496,3 +496,51 @@ Bucket = { "key": "A+", "total": 0, "within_year": 0, "spillover": 0, "not_place
   subtitle; move detail into info tooltips / "How this works" disclosure), consistent feature cards
   (same card component, header with icon + title + one-line hint, consistent spacing), a clear stepper,
   sticky action bar (Compute / Save as scenario), and the existing design tokens only.
+
+## Part D — Band columns and the plan window (P50-T01, ADR 0061, R49-1..R49-21, I54..I56)
+
+### D1. `POST /whatif/import/parse`
+
+- New parser fields (import format keys, Admin-editable like the others; a stored format from before
+  P50 reads the built-in aliases for them): `band_p1` ("must do (p1)"), `band_p2` ("good to have
+  (p2)", "good to have"), `band_p3` ("in queue (p3)"), `band_p4` ("not approved, on hold, no priority
+  (p4)", "not approved"). Exact header matches are assigned before prefix matches, so "Must Do"
+  (`must_do`) and "Must Do (P1)" (`band_p1`) are two columns.
+- `ImportRow.file_band: "P1" | "P2" | "P3" | "P4" | null` — the most urgent band whose column says Yes
+  (`must_do` or `band_p1` → P1). Display / audit only.
+- `ImportRow.priority_source` gains `"band"`. Priority, first match: band → `"Running"` (P1, rank 0) →
+  rank (P1) → matched plan band → P3. A rank under a band is kept (`rank`) as the order within the
+  band. Status is applied first (On Hold / Cancelled / Commercialized stay `include: false`).
+- Issue codes: `BAND_VALUE_INVALID` (warning; text other than Yes/No in one of the four new band
+  columns, ignored; "Must Do" keeps its pre-P50 reading), `PRIORITY_BAND_CONFLICT` (warning; distinct
+  bands say Yes, the most urgent wins; Must Do + Must Do (P1) is not a conflict),
+  `PRIORITY_BAND_OVER_RANK` (warning; a P2–P4 band over a rank / Running row), `PRIORITY_BAND_OVER_PLAN`
+  (info; the band differs from the matched plan project's).
+- I55: a file whose band columns are absent, blank or No parses exactly as before (only
+  `file_band: null` is added).
+- Response gains `plan_from_min_week` (= `current_week`, the default f) and `plan_week_choices:
+  [{week, label}]` for weeks `current_week..104`, labels made by the server ("W1 2027 (4 Jan 2027)";
+  absolute weeks, 53 = W1 of the next year). The browser derives no dates (I40).
+
+### D2. `POST /whatif/import/simulate`
+
+- Request gains (all optional; strict ints):
+  - `plan_from_week` f: `null` = `current_week`.
+  - `plan_until_week` u: `null` = the `plan_year_end_week` preset (52 / 104 stays as the preset).
+  - `plan_window_rerun: bool = false`: "Re-run on today's plan" — f := max(f, cw) with info
+    `PLAN_FROM_RAISED`, then u := max(u, f) with info `PLAN_UNTIL_RAISED`, instead of a 422.
+  - Valid `current_week ≤ f ≤ u ≤ 104`, else 422 `INVALID_IMPORT` (no clamping).
+- f applies to file rows only: their In Progress step starts at f and nothing books before f; live
+  plan projects, `current_week`, gates and capacity supply are unchanged. u is the single cut-off of
+  every "within" figure; `horizon_weeks = u + 26`; weekly series `cw..u`, windows clipped to u.
+- Response gains `plan_from_week` (resolved f), `plan_from_min_week` (= cw), `plan_from_label`
+  ("W1 2027 (4 Jan 2027)"), `plan_until_week` (resolved u; every reader of the cut-off reads this, not
+  `plan_year_end_week`), `plan_window_label` ("W48 2026 – W20 2027" only when the request set a u
+  other than the preset, else `null`: plan-year wording) and `plan_week_choices` (as D1).
+- Issues (file-level, `ref: null`, info, first in `issues`): `PLAN_FROM_LATER` once when f ≠ cw;
+  `PLAN_FROM_RAISED` / `PLAN_UNTIL_RAISED` on a raised re-run. `workings` add "file projects start
+  from …" when f ≠ cw.
+- With f and u unset (or f = cw, u = preset) every pre-P50 field is unchanged (I54/I56); the new
+  fields are added.
+- Audit `whatif.import_simulate` gains `plan_from_week` and `plan_until_week` (resolved). The request
+  digest omits the three new keys when they hold their defaults.

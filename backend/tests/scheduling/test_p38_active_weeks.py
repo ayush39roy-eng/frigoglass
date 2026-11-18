@@ -36,7 +36,12 @@ from scheduling import (
     covered_plan_weeks,
 )
 from scheduling.greedy import run_greedy_sgs
-from scheduling.plan_import import ImportProject, PlanImportRequest, run_plan_import
+from scheduling.plan_import import (
+    ImportProject,
+    PlanImportRequest,
+    PlanImportResult,
+    run_plan_import,
+)
 from scheduling.whatif import (
     AddEngineer,
     AddProject,
@@ -278,6 +283,18 @@ def _h(x: object) -> str:
     return hashlib.sha256(json.dumps(to_jsonable(x), sort_keys=True).encode()).hexdigest()
 
 
+def _without_r49_fields(res: PlanImportResult, pyew: int) -> object:
+    """P49 (ADR 0061, I54 / I56): the result gained `plan_from_week` and
+    `plan_until_week`; unset they are (current_week, plan_year_end_week) and
+    the rest of the response is unchanged, so the pre-R49 hash still holds."""
+
+    d = to_jsonable(res)
+    assert isinstance(d, dict)
+    assert d.pop("plan_from_week") == res.current_week
+    assert d.pop("plan_until_week") == pyew
+    return d
+
+
 def test_empty_field_is_byte_identical_to_pre_p38() -> None:
     b = portfolio_baseline()
     assert b.engineer_active_weeks == ()
@@ -313,7 +330,10 @@ def test_empty_field_is_byte_identical_to_pre_p38() -> None:
     )
     for y in (52, 104):
         got[f"plan_import_{y}"] = _h(
-            run_plan_import(b, PlanImportRequest(projects=rows, plan_year_end_week=y))
+            _without_r49_fields(
+                run_plan_import(b, PlanImportRequest(projects=rows, plan_year_end_week=y)),
+                y,
+            )
         )
     assert got == _PRE_P38_HASHES
 

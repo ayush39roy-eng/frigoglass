@@ -164,3 +164,22 @@ They only use served fields.
 4. TanStack Query keys: `['whatif-import-format']` and `['whatif-import-scenarios', sha?]`. A
    mutation invalidates them. No `dangerouslySetInnerHTML`. The download goes through the existing
    authenticated fetch and a blob.
+
+## F. Plan window in saved scenarios (P50-T01, ADR 0061 R49-13, R49-19)
+
+- `POST /whatif/import/scenarios` stores the request with the resolved `plan_from_week` and
+  `plan_until_week` (never null) and `plan_window_rerun: false`. No migration: both live in the
+  `request` JSONB.
+- `SavedScenarioSummary` / `SavedScenarioOut` gain `plan_from_week` and `plan_until_week`. A row saved
+  before P50 reads f = `simulated_week` and u = `plan_year_end_week`; its served `request` and
+  `result` are filled the same way (`result.plan_from_label`, `plan_week_choices` from the stored
+  week). The list reads the two weeks from the JSONB by key, never the whole request.
+- "Re-run on today's plan": send the stored `request` with `plan_window_rerun: true` (see
+  API_CONTRACT_P32 D2).
+- Compare: the frontend banner also fires when `plan_from_week` differs ("file projects start from
+  different weeks") or `plan_until_week` differs ("plan windows differ — within counts are not like
+  for like"). `compare.xlsx` gains `Plan from week` / `Plan until week` KPI rows and the same two
+  lines in its context.
+- Export Summary (saved and current result) gains `plan_from_week`, `plan_from` (label),
+  `plan_until_week`, `plan_window`; the Gantt context names a later start and the window.
+- Audit `whatif_scenario.saved` gains `plan_from_week` and `plan_until_week`.

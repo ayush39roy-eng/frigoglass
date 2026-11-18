@@ -144,6 +144,21 @@ What is assertable at the pure-function level (2026-09-27 revision):
     I52 (P42, R42-5) `check_band_neutrality(schedule_input, solver)`: the
         outcomes of counting work are identical with and without the
         non-frozen non-counting projects (run with I8 for greedy)
+    I54 (P49, ADR 0061 R49-7..R49-11) plan-import "Plan from" week:
+        `check_plan_from_floor(baseline, request, result)` — every file
+        project's In Progress anchor starts at f and no placed step of a file
+        project starts before f; the served `start_not_before_week` of a file
+        step is the planner's edit (never f); plan projects' solver input (and
+        engineers, chambers, current week, horizon) equal the f = cw input;
+        f = cw gives the pre-R49 input exactly; `current_week = cw`,
+        `plan_from_week = f`
+    I56 (P49, ADR 0061 amendment R49-15..R49-17) plan window:
+        `check_plan_window(baseline, request, result)` — `cw <= f <= u <= 104`;
+        the import run input has `horizon_weeks = u + 26` and
+        `within_year_week = u`; every served outcome (and merge-mode before
+        outcome) is within / spillover by its finish against u; capacity weekly
+        series is `cw..u` and windows are calendar years clipped to u; served
+        `plan_until_week = u`
     I13 (health badge), I14 (run immutability) and I17 (capacity supply) are
     API/DB-side invariants with nothing to assert on a `ScheduleOutput`; they
     are the workflow-auditor's to check against the live API (P9-T06).
@@ -182,6 +197,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 import domain_constants as dc
 from scheduling import hubs
@@ -220,6 +236,10 @@ from scheduling.workflow import (
     step_gate,
     unconstrained_end_week,
 )
+
+if TYPE_CHECKING:  # annotations only: plan_import is imported lazily below
+    from scheduling.plan_import import PlanImportRequest, PlanImportResult
+    from scheduling.whatif import WhatIfBaseline
 
 # --- Violation record --------------------------------------------------------
 
@@ -2907,3 +2927,181 @@ def check_band_neutrality(
                 )
             )
     return tuple(violations)
+
+
+# --- I54: plan-import "Plan from" week (P49, ADR 0061, R49-7..R49-11) -------------------
+
+
+def check_plan_from_floor(
+    baseline: WhatIfBaseline,
+    request: PlanImportRequest,
+    result: PlanImportResult,
+) -> tuple[InvariantViolation, ...]:
+    """I54 (plan-from floor). Pure; rebuilds the run input twice (f and
+    f = cw), never runs a solver.
+
+    With f = `request.plan_from_week` resolved against the baseline's
+    `current_week` (cw):
+
+    - `result.current_week == cw`, `result.plan_from_week == f` and
+      `cw <= f <= u` (u = the resolved `plan_until_week`, I56);
+    - every In Progress anchor of a file project in the run input has
+      `actual_start_week == f`, and in the result every placed In Progress
+      step of a file project starts at f and every placed non-skipped step
+      of a file project starts at or after f (so nothing, design or lab, is
+      booked before f);
+    - every file step's served `start_not_before_week` is the planner's edit
+      floor for that step (None without one): f is never reported as an edit;
+    - the run input's plan projects, engineers, chambers, `current_week`,
+      `horizon_weeks` and `within_year_week` equal those of the same request
+      at f = cw; with f = cw the whole run input equals the f = cw input."""
+
+    from scheduling import plan_import as pi  # local: plan_import imports this module's peers
+
+    cw = baseline.schedule.current_week
+    f = pi.resolve_plan_from_week(request, cw)
+    out: list[InvariantViolation] = []
+
+    def bad(description: str, **where: object) -> None:
+        out.append(InvariantViolation(invariant="I54", description=description, **where))  # type: ignore[arg-type]
+
+    if result.current_week != cw:
+        bad(f"served current_week {result.current_week} is not the input week {cw}")
+    if result.plan_from_week != f:
+        bad(f"served plan_from_week {result.plan_from_week} is not the resolved week {f}")
+    u = pi.resolve_plan_until_week(request)
+    if not cw <= f <= u:
+        bad(f"plan_from_week {f} is outside {cw}..{u} (plan_until_week)")
+        return tuple(out)
+
+    run_si = pi.build_plan_import_input(baseline, request)
+    ref_si = pi.build_plan_import_input(baseline, replace(request, plan_from_week=None))
+    file_ids = set(pi._file_project_ids(request.projects))
+
+    for name in ("engineers", "chambers", "current_week", "horizon_weeks", "within_year_week"):
+        if getattr(run_si, name) != getattr(ref_si, name):
+            bad(f"run input {name} differs from the plan_from_week = current_week input")
+    if f == cw and run_si != ref_si:
+        bad("plan_from_week = current_week does not give the pre-R49 run input")
+    run_plan = {p.project_id: p for p in run_si.projects if p.project_id not in file_ids}
+    ref_plan = {p.project_id: p for p in ref_si.projects if p.project_id not in file_ids}
+    for pid in sorted(set(run_plan) | set(ref_plan)):
+        if run_plan.get(pid) != ref_plan.get(pid):
+            bad("plan project's solver input differs from the f = cw input", project_id=pid)
+
+    for p in sorted(run_si.projects, key=lambda p: p.project_id):
+        if p.project_id not in file_ids:
+            continue
+        for sp in sorted(p.step_progress, key=lambda r: r.step_id):
+            if sp.status == STATUS_IN_PROGRESS and sp.actual_start_week != f:
+                bad(
+                    f"file project's In Progress anchor starts at {sp.actual_start_week}, not {f}",
+                    project_id=p.project_id,
+                    step_id=sp.step_id,
+                    week=sp.actual_start_week,
+                )
+
+    edit_floor = {(e.project_ref, e.step_id): e.start_not_before_week for e in request.edits}
+    for row in result.projects:
+        if row.source != "file":
+            continue
+        for st in row.steps:
+            served = edit_floor.get((row.ref, st.step_id))
+            if not st.skipped and st.start_not_before_week != served:
+                bad(
+                    f"served start_not_before_week {st.start_not_before_week} is not the "
+                    f"planner's edit ({served})",
+                    project_id=row.project_id,
+                    step_id=st.step_id,
+                )
+            if st.skipped or st.start_week is None or st.status == STATUS_DONE:
+                continue
+            if st.status == STATUS_IN_PROGRESS and st.start_week != f:
+                bad(
+                    f"In Progress step starts at {st.start_week}, not the plan-from week {f}",
+                    project_id=row.project_id,
+                    step_id=st.step_id,
+                    week=st.start_week,
+                )
+            elif st.start_week < f:
+                bad(
+                    f"{st.kind} step starts at {st.start_week}, before the plan-from week {f}",
+                    project_id=row.project_id,
+                    step_id=st.step_id,
+                    week=st.start_week,
+                )
+    return tuple(out)
+
+
+# --- I56: plan-import "Plan until" week (P49, ADR 0061 amendment R49-15..R49-17) ---------
+
+
+def check_plan_window(
+    baseline: WhatIfBaseline,
+    request: PlanImportRequest,
+    result: PlanImportResult,
+) -> tuple[InvariantViolation, ...]:
+    """I56 (plan window). Pure; rebuilds the run input once, never runs a solver.
+
+    With u = the resolved `plan_until_week` (default `plan_year_end_week`)
+    and f the resolved `plan_from_week`: `cw <= f <= u <= 104`; served
+    `plan_until_week == u` and `horizon_weeks == u + 26`; the import run
+    input has `horizon_weeks = u + 26` and `within_year_week = u`; every
+    served outcome and merge-mode before outcome classed `within_year` /
+    `spillover` finishes by u / after u respectively (the baseline run's
+    cut-off is u too, so before and after compare like with like); the weekly
+    capacity series covers exactly `cw..u` and the windows are y0 =
+    `cw..min(52, u)` plus y1 = `53..u` iff `u >= 53`. The byte identity with
+    u unset is asserted by the test suite (it needs the pre-amendment code)."""
+
+    from scheduling import plan_import as pi  # local: plan_import imports this module's peers
+
+    cw = baseline.schedule.current_week
+    u = pi.resolve_plan_until_week(request)
+    f = pi.resolve_plan_from_week(request, cw)
+    out: list[InvariantViolation] = []
+
+    def bad(description: str, **where: object) -> None:
+        out.append(InvariantViolation(invariant="I56", description=description, **where))  # type: ignore[arg-type]
+
+    if not cw <= f <= u <= pi.PLAN_UNTIL_MAX_WEEK:
+        bad(f"plan window violates cw <= f <= u <= 104 (cw {cw}, f {f}, u {u})")
+        return tuple(out)
+    if result.plan_until_week != u:
+        bad(f"served plan_until_week {result.plan_until_week} is not the resolved week {u}")
+    if result.horizon_weeks != u + pi.SPILLOVER_MARGIN_WEEKS:
+        bad(f"served horizon_weeks {result.horizon_weeks} is not u + 26 = {u + 26}")
+    run_si = pi.build_plan_import_input(baseline, request)
+    if run_si.horizon_weeks != u + pi.SPILLOVER_MARGIN_WEEKS:
+        bad(f"run input horizon_weeks {run_si.horizon_weeks} is not u + 26 = {u + 26}")
+    if run_si.within_year_week != u:
+        bad(f"run input within_year_week {run_si.within_year_week} is not u = {u}")
+
+    def classed(outcome: str | None, finish: int | None, pid: str, which: str) -> None:
+        if outcome == "within_year" and (finish is None or finish > u):
+            bad(
+                f"{which} outcome within_year but finishes in week {finish} > u {u}", project_id=pid
+            )
+        if outcome == "spillover" and finish is not None and finish <= u:
+            bad(f"{which} outcome spillover but finishes in week {finish} <= u {u}", project_id=pid)
+
+    for row in result.projects:
+        classed(row.outcome, row.finish_week, row.project_id, "served")
+        classed(row.before_outcome, row.before_finish_week, row.project_id, "before")
+        if row.within_plan_year != (row.outcome == "within_year"):
+            bad("within_plan_year disagrees with the outcome", project_id=row.project_id)
+
+    cap = result.capacity
+    if cap.weekly.weeks != tuple(range(cw, u + 1)):
+        bad(f"weekly capacity series does not cover exactly weeks {cw}..{u}")
+    n = u - cw + 1
+    for key, series in sorted([*cap.weekly.hubs.items(), *cap.weekly.lab_regions.items()]):
+        if len(series.load) != n or len(series.capacity) != n:
+            bad(f"weekly series {key!r} does not have {n} weeks")
+    want = [("y0", cw, min(dc.WITHIN_YEAR_WEEK, u))]
+    if u > dc.WITHIN_YEAR_WEEK:
+        want.append(("y1", dc.WITHIN_YEAR_WEEK + 1, u))
+    got = [(w.key, w.from_week, w.to_week) for w in cap.windows]
+    if got != want:
+        bad(f"capacity windows {got} are not the calendar years clipped to u: {want}")
+    return tuple(out)

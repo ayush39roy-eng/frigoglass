@@ -7,11 +7,12 @@ simulated plan: per project and per step schedule, capacity per window and per
 week, KPIs, the diff against the live plan and the issues found.
 
 Two greedy runs at most (`run_greedy_sgs`, never CP-SAT): the baseline (merge
-mode only) and the import. Both run with `within_year_week =
-plan_year_end_week` and `horizon_weeks = plan_year_end_week + 26`, so "within
-year" in every outcome means "finishes by the plan year end" and spillover is
-still told apart from `LEFT_OUT` (ADR 0044 §7). Weeks are absolute (53 = the
-first week of the year after the base year).
+mode only) and the import. Both run with `within_year_week = u` and
+`horizon_weeks = u + 26`, u = `plan_until_week` (default `plan_year_end_week`,
+ADR 0061 amendment R49-15/16), so "within year" in every outcome means
+"finishes by u" and spillover is still told apart from `LEFT_OUT` (ADR 0044
+§7). File projects start no earlier than `plan_from_week` (ADR 0061 R49-8).
+Weeks are absolute (53 = the first week of the year after the base year).
 
 Pure and deterministic (I8): no I/O, no clock unless a `deadline_s` is given
 (cooperative budget, `WhatIfBudgetExceeded`), no randomness, sorted iteration
@@ -110,7 +111,7 @@ PLAN_BASE_YEAR: int = 2026
 IMPORT_MODES: tuple[str, ...] = ("merge", "file_only")
 
 #: Rows in these statuses start their first remaining step In Progress at
-#: CURRENT_WEEK (ADR 0044 §5 "Stage").
+#: the "Plan from" week (CURRENT_WEEK by default; ADR 0044 §5 "Stage", ADR 0061 R49-8).
 IN_PROGRESS_ON_IMPORT: frozenset[str] = frozenset({"In Development", "Under Industrialization"})
 #: Every status an imported row may carry; only the schedulable ones are scheduled.
 KNOWN_STATUSES: frozenset[str] = frozenset(
@@ -169,6 +170,15 @@ class PlanImportRequest:
     edits: tuple[StepEdit, ...] = ()
     mode: str = "merge"  # "merge" | "file_only"
     plan_year_end_week: int = 104  # 52 or 104
+    # ADR 0061 (R49-7..R49-11): the week the file projects start from; None =
+    # the input's `current_week`. Valid `current_week <= f <= u` (absolute
+    # weeks), else `ValueError` (HTTP 422 `INVALID_IMPORT`).
+    plan_from_week: int | None = None
+    # ADR 0061 amendment (R49-15..R49-17): the plan window's last week u, the
+    # one cut-off of the run (`within_year_week = u`, `horizon_weeks = u + 26`,
+    # capacity windows clipped to u). None = `plan_year_end_week` (the preset).
+    # Valid `f <= u <= 104`.
+    plan_until_week: int | None = None
 
 
 # =====================================================================================
@@ -214,7 +224,7 @@ class PlanImportProject:
     frozen: bool
     leader_ref: str | None
     leader_auto_assigned: bool
-    outcome: str  # whatif.OUTCOME_CLASSES; within_year = finishes by plan_year_end_week
+    outcome: str  # whatif.OUTCOME_CLASSES; within_year = finishes by plan_until_week
     within_plan_year: bool
     start_week: int | None
     end_week: int | None
@@ -273,7 +283,7 @@ class WeeklySeries:
 
 @dataclass(frozen=True)
 class WeeklyCapacity:
-    weeks: tuple[int, ...]  # current_week .. plan_year_end_week
+    weeks: tuple[int, ...]  # current_week .. plan_until_week (R49-17)
     hubs: Mapping[str, WeeklySeries]
     lab_regions: Mapping[str, WeeklySeries]
 
@@ -372,11 +382,27 @@ class PlanImportResult:
     issues: tuple[PlanImportIssue, ...]
     workings: tuple[str, ...]
     scheduling_order: tuple[str, ...]  # refs, in the import run's greedy order
+    # ADR 0061 (R49-7): the resolved "Plan from" week (`current_week` when the
+    # request gave none). `current_week` stays the run's input week.
+    plan_from_week: int
+    # R49-15/16: the resolved "Plan until" week u (`plan_year_end_week` when the
+    # request gave none); every cut-off of the result is u. `plan_year_end_week`
+    # above is only the preset echo.
+    plan_until_week: int
 
 
 # =====================================================================================
 # Small helpers
 # =====================================================================================
+
+
+def plan_from_label(week: int) -> str:
+    """R49-12 label of an absolute week: `W{w}` in the base year, `{year+1}
+    W{w-52}` after it (53 = the first week of the next year)."""
+
+    if week <= _YEAR_WEEKS:
+        return f"W{week}"
+    return f"{PLAN_BASE_YEAR + 1} W{week - _YEAR_WEEKS}"
 
 
 def _cap_hub(hub: str) -> str:
@@ -490,6 +516,24 @@ def _design_weeks(
 # =====================================================================================
 
 
+def resolve_plan_from_week(req: PlanImportRequest, current_week: int) -> int:
+    """ADR 0061 (R49-7): the request's "Plan from" week, `current_week` when
+    absent. Not validated here (`_validate_request` does that)."""
+
+    return current_week if req.plan_from_week is None else req.plan_from_week
+
+
+def resolve_plan_until_week(req: PlanImportRequest) -> int:
+    """ADR 0061 amendment (R49-15): the request's "Plan until" week,
+    `plan_year_end_week` when absent. Not validated here."""
+
+    return req.plan_year_end_week if req.plan_until_week is None else req.plan_until_week
+
+
+#: R49-15: the latest "Plan until" week (base year + 1).
+PLAN_UNTIL_MAX_WEEK: int = 2 * _YEAR_WEEKS
+
+
 def validate_plan_import_limits(req: PlanImportRequest) -> None:
     """ADR 0044 §11 caps; `ValueError`. Cheap and independent of the baseline."""
 
@@ -521,6 +565,27 @@ def _validate_request(
     if req.plan_year_end_week not in PLAN_YEAR_END_WEEKS:
         raise ValueError(f"plan_year_end_week must be one of {PLAN_YEAR_END_WEEKS}")
     si = baseline.schedule
+    u = req.plan_until_week
+    if u is not None and (
+        isinstance(u, bool)
+        or not isinstance(u, int)
+        or not si.current_week <= u <= PLAN_UNTIL_MAX_WEEK
+    ):
+        # R49-15: no clamping.
+        raise ValueError(
+            f"plan_until_week must be an integer from the current week ({si.current_week}) "
+            f"to {PLAN_UNTIL_MAX_WEEK}"
+        )
+    u = resolve_plan_until_week(req)
+    f = req.plan_from_week
+    if f is not None and (
+        isinstance(f, bool) or not isinstance(f, int) or not si.current_week <= f <= u
+    ):
+        # R49-7 (bound u per R49-15): no clamping.
+        raise ValueError(
+            f"plan_from_week must be an integer from the current week ({si.current_week}) "
+            f"to the plan window end ({u})"
+        )
     eng_ids = {e.engineer_id for e in si.engineers}
     new_keys: set[str] = set()
     cap_hubs = set(capacity_hubs())
@@ -573,7 +638,7 @@ def _validate_request(
             and fp.replaces_project_id not in base_ids
         ):
             raise ValueError(f"{where}: replaces an unknown project")
-    horizon = req.plan_year_end_week + SPILLOVER_MARGIN_WEEKS
+    horizon = resolve_plan_until_week(req) + SPILLOVER_MARGIN_WEEKS
     pairs: set[tuple[str, str]] = set()
     for ed in req.edits:
         pair = (ed.project_ref, ed.step_id)
@@ -656,6 +721,10 @@ class _FileMeta:
     done_before: frozenset[str]
     not_in_category: tuple[str, ...]
     auto: bool
+    # ADR 0061 (R49-9): the planner's own floor of every step whose solver
+    # floor was raised to the "Plan from" week; the served
+    # `start_not_before_week` stays this value (f is not an edit).
+    served_floors: tuple[tuple[str, int | None], ...] = ()
 
 
 def _file_project_ids(projects: Sequence[ImportProject]) -> list[str]:
@@ -700,7 +769,7 @@ def run_plan_import(
     built = _build(baseline, req, budget)
     run_si = built.run_si
     si0 = baseline.schedule
-    pyew = req.plan_year_end_week
+    pyew = resolve_plan_until_week(req)  # R49-16: the one cut-off
 
     before: Mapping[str, ProjectScheduleOutcome] = {}
     if req.mode == "merge":
@@ -738,9 +807,10 @@ def _build(baseline: WhatIfBaseline, req: PlanImportRequest, budget: _Budget) ->
     _validate_request(baseline, req, workflows, lead_pairs, categories)
     budget.check()
 
-    pyew = req.plan_year_end_week
+    pyew = resolve_plan_until_week(req)  # R49-16: the one cut-off
     horizon = pyew + SPILLOVER_MARGIN_WEEKS
     cw = si0.current_week
+    plan_from = resolve_plan_from_week(req, cw)
     merge = req.mode == "merge"
 
     # --- engineers -------------------------------------------------------------------
@@ -797,7 +867,7 @@ def _build(baseline: WhatIfBaseline, req: PlanImportRequest, budget: _Budget) ->
     for idx, (fp, pid) in enumerate(zip(req.projects, ids, strict=True)):
         budget.check()
         p, meta = _build_file_project(
-            fp, pid, idx, workflows, table, edits_by_ref.get(fp.key, []), cw
+            fp, pid, idx, workflows, table, edits_by_ref.get(fp.key, []), cw, plan_from
         )
         file_inputs[pid] = p
         metas.append(meta)
@@ -905,6 +975,7 @@ def _build_file_project(
     table: Mapping[tuple[str, str, str], int],
     eds: Sequence[StepEdit],
     cw: int,
+    plan_from: int,
 ) -> tuple[ProjectInput, _FileMeta]:
     wf_id = _workflow_of(fp.hub)
     wf = workflows[wf_id]
@@ -958,9 +1029,24 @@ def _build_file_project(
             done_before_import=ed.step_id in done_before,
         )
 
+    # ADR 0061 (R49-8 / R49-9): from a "Plan from" week f > cw, every non-skipped
+    # Not Started step gets the search floor max(planner floor, f) (a
+    # `start_not_before_week` term; gates and the frontier are unchanged). f = cw
+    # adds nothing, so the input is the pre-R49 one.
+    served_floors: list[tuple[str, int | None]] = []
+    if schedulable and plan_from > cw:
+        for step in wf.steps:
+            sid = step.step_id
+            if sid == in_progress or skipped(sid):
+                continue
+            t = triples.setdefault(sid, _Triple(None, None, 0))
+            served_floors.append((sid, t.floor))
+            t.floor = plan_from if t.floor is None else max(t.floor, plan_from)
+
     progress: tuple[StepProgressInput, ...] = ()
     if in_progress is not None:
-        progress = (StepProgressInput(in_progress, STATUS_IN_PROGRESS, 0, cw, None, None),)
+        # R49-8: the In Progress anchor starts at the "Plan from" week (was cw).
+        progress = (StepProgressInput(in_progress, STATUS_IN_PROGRESS, 0, plan_from, None, None),)
 
     p = ProjectInput(
         project_id=pid,
@@ -985,6 +1071,7 @@ def _build_file_project(
         done_before=done_before,
         not_in_category=tuple(not_in_cat),
         auto=fp.leader is None and schedulable,
+        served_floors=tuple(served_floors),
     )
     return p, meta
 
@@ -1026,8 +1113,14 @@ def _windows(cw: int, pyew: int) -> tuple[CapacityWindow, ...]:
             min(_YEAR_WEEKS, pyew),
         )
     ]
-    if pyew == 2 * _YEAR_WEEKS:
-        out.append(CapacityWindow("y1", f"{PLAN_BASE_YEAR + 1}", _YEAR_WEEKS + 1, pyew))
+    if pyew > _YEAR_WEEKS:
+        # R49-17: the next calendar year clipped to the cut-off.
+        label = (
+            f"{PLAN_BASE_YEAR + 1}"
+            if pyew == 2 * _YEAR_WEEKS
+            else f"{PLAN_BASE_YEAR + 1} W1–W{pyew - _YEAR_WEEKS}"
+        )
+        out.append(CapacityWindow("y1", label, _YEAR_WEEKS + 1, pyew))
     return tuple(out)
 
 
@@ -1214,8 +1307,10 @@ def _steps(
     plan: ProjectPlan | None,
     wf: Workflow,
     done_before: frozenset[str],
+    served_floors: Mapping[str, int | None] | None = None,
 ) -> tuple[PlanImportStep, ...]:
     rows = {r.step_id: r for r in o.steps}
+    served_floors = served_floors or {}
     timing = {r.step_id: r for r in sorted(p.step_timing, key=lambda r: r.step_id)}
     progress = {r.step_id: r.status for r in p.step_progress}
     project_editable = (
@@ -1266,7 +1361,11 @@ def _steps(
                 engineer_id=None if row is None else row.assigned_engineer_id,
                 chamber_id=None if row is None else row.assigned_chamber_id,
                 duration_override_weeks=None if t is None else t.duration_override_weeks,
-                start_not_before_week=None if t is None else t.start_not_before_week,
+                start_not_before_week=(
+                    served_floors[sid]
+                    if sid in served_floors
+                    else (None if t is None else t.start_not_before_week)
+                ),
                 overlap_weeks=ov or None,
                 editable=editable,
             )
@@ -1316,14 +1415,21 @@ def _project_row(
         no_leader=o.no_leader,
         no_chamber_step_id=o.no_chamber_step_id,
         data_error=o.data_error,
-        steps=_steps(p, o, plan, wf, frozenset() if meta is None else meta.done_before),
+        steps=_steps(
+            p,
+            o,
+            plan,
+            wf,
+            frozenset() if meta is None else meta.done_before,
+            None if meta is None else dict(meta.served_floors),
+        ),
         counts_toward_year=o.counts_toward_year,
         not_scheduled_priority=o.not_scheduled_priority,
     )
 
 
 def _project_issues(
-    row: PlanImportProject, meta: _FileMeta | None, pyew: int
+    row: PlanImportProject, meta: _FileMeta | None, pyew: int, period: str = "plan year"
 ) -> list[PlanImportIssue]:
     ref = row.ref
     out: list[PlanImportIssue] = []
@@ -1415,7 +1521,7 @@ def _project_issues(
                 "warning",
                 "UNREACHABLE_IN_YEAR",
                 f"Even with unlimited capacity it ends in week {row.unconstrained_end_week}, "
-                f"after the plan year (week {pyew}).",
+                f"after the {period} (week {pyew}).",
             )
         )
     return out
@@ -1434,7 +1540,10 @@ def _assemble(
     new_eng_ids: set[str],
     edited_plan_ids: frozenset[str],
 ) -> PlanImportResult:
-    pyew = req.plan_year_end_week
+    pyew = resolve_plan_until_week(req)  # R49-16: the one cut-off
+    # R49-18: the pre-amendment wording unless u differs from the preset.
+    period = "plan year" if pyew == req.plan_year_end_week else "plan window"
+    plan_from = resolve_plan_from_week(req, run_si.current_week)
     merge = req.mode == "merge"
     workflows = build_workflows(run_si.workflow_steps)
     proj = {p.project_id: p for p in run_si.projects}
@@ -1468,7 +1577,7 @@ def _assemble(
                     "Led by a new What-if designer (not on the roster).",
                 )
             )
-        issues.extend(_project_issues(row, m, pyew))
+        issues.extend(_project_issues(row, m, pyew, period))
 
     plan_rows: list[PlanImportProject] = []
     for pid in sorted(proj):
@@ -1493,7 +1602,7 @@ def _assemble(
     plan_rows.sort(key=lambda r: (r.finish_week is None, r.finish_week or 0, r.name, r.project_id))
     for row in plan_rows:
         if row.project_id in edited_plan_ids:
-            issues.extend(_project_issues(row, None, pyew))
+            issues.extend(_project_issues(row, None, pyew, period))
 
     # --- changes ------------------------------------------------------------------------
     slipping: list[PlanImportChange] = []
@@ -1583,8 +1692,15 @@ def _assemble(
             if merge
             else " scheduled alone on the live designers and chambers."
         ),
-        f"Plan year ends week {pyew}; search horizon week {pyew + SPILLOVER_MARGIN_WEEKS}; "
-        f"today is week {run_si.current_week}.",
+        f"{period.capitalize()} ends week {pyew}; "
+        f"search horizon week {pyew + SPILLOVER_MARGIN_WEEKS}; "
+        f"today is week {run_si.current_week}"
+        + (
+            # R49-12: only when f differs, so f = cw keeps the pre-R49 text.
+            f"; file projects start from {plan_from_label(plan_from)}."
+            if plan_from != run_si.current_week
+            else "."
+        ),
         f"Greedy SGS: {len(run_si.projects)} project(s), {len(run_si.engineers)} designer(s) "
         f"({len(new_eng_ids)} new), {len(run_si.chambers)} chamber(s); "
         f"{n_auto} leader(s) auto-assigned.",
@@ -1599,7 +1715,7 @@ def _assemble(
 
     return PlanImportResult(
         current_week=run_si.current_week,
-        plan_year_end_week=pyew,
+        plan_year_end_week=req.plan_year_end_week,
         horizon_weeks=pyew + SPILLOVER_MARGIN_WEEKS,
         mode=req.mode,
         projects=tuple(file_rows + plan_rows),
@@ -1609,6 +1725,8 @@ def _assemble(
         issues=tuple(issues),
         workings=workings,
         scheduling_order=tuple(ref_of[pid] for pid in out.scheduling_order),
+        plan_from_week=plan_from,
+        plan_until_week=pyew,
     )
 
 
@@ -1616,6 +1734,7 @@ __all__ = (
     "MAX_IMPORT_EDITS",
     "MAX_IMPORT_NEW_ENGINEERS",
     "MAX_IMPORT_PROJECTS",
+    "PLAN_UNTIL_MAX_WEEK",
     "PLAN_YEAR_END_WEEKS",
     "SPILLOVER_MARGIN_WEEKS",
     "CapacityWindow",
@@ -1640,6 +1759,9 @@ __all__ = (
     "WeeklySeries",
     "build_plan_import_input",
     "capacity_hubs",
+    "plan_from_label",
+    "resolve_plan_from_week",
+    "resolve_plan_until_week",
     "run_plan_import",
     "validate_plan_import_limits",
 )

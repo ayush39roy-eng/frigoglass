@@ -53,6 +53,11 @@ FIELD_LABELS: dict[str, str] = {
     "must_do": "Must do",
     "complexity": "Complexity",
     "est_duration": "Estimated duration (months)",
+    # ADR 0061 (R49-1): the band columns set the row's priority.
+    "band_p1": "Must do (P1)",
+    "band_p2": "Good to have (P2)",
+    "band_p3": "In queue (P3)",
+    "band_p4": "Not approved / on hold / no priority (P4)",
 }
 assert tuple(FIELD_LABELS) == FIELD_KEYS
 

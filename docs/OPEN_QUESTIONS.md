@@ -1350,3 +1350,19 @@ overwriting the first person's change. Should the app also show a live "Maria is
 project" marker, so people find out before they start typing?
 **Assuming until answered:** no. The conflict check is enough for v1.
 **Who must answer:** owner and client.
+
+### 115
+**How far past the year end should the planner look before calling a project "cannot be done"?**
+(2026-11-19.) Today: plan-year end + 26 weeks (live plan to W26 of next year; a 2027 What-if import
+to W26 of 2028). The 26 weeks came from the prototype's 78-week limit, not from Frigoglass. A
+project finishing inside the window is "spillover"; one that does not fit is "not placed".
+Options: 6 months (today), 12 months, or only the year end.
+**Assuming until answered:** 26 weeks.
+**Who must answer:** client.
+
+### 116
+**After 4 Jan 2027 the 2026 plan year is closed; what should "today" be for a What-if "Plan from"?**
+(R49-14.) Until P37-F01 lands the earliest/default Plan-from week reads 52. Proposed: 52 + ISO week
+of 2027. P37-F01 must be planned before 28 Dec 2026.
+**Assuming until answered:** 52.
+**Who must answer:** owner.

@@ -105,6 +105,12 @@ class SavedScenarioSummary(BaseModel):
     mode: Literal["merge", "file_only"]
     plan_year_end_week: int
     simulated_week: int
+    #: ADR 0061 (R49-13): the stored "Plan from" week (rows saved before P49:
+    #: the simulated week).
+    plan_from_week: int
+    #: ADR 0061 amendment (R49-19): the stored plan window end (rows saved
+    #: before P49: `plan_year_end_week`).
+    plan_until_week: int
     plan_version: int | None
     hub_codes: list[str]
     kpis: ImportKpisOut

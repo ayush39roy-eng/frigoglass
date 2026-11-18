@@ -166,7 +166,7 @@ class ParsedRow:
     stage_raw: str | None
     rank: int | None
     priority: str
-    priority_source: str  # "rank" | "running" | "matched" | "default"
+    priority_source: str  # "band" | "rank" | "running" | "matched" | "default"
     engineer_raw: str | None
     leader: Leader
     matched_project_id: str | None
@@ -180,6 +180,9 @@ class ParsedRow:
     certification_testing_required: bool
     step_weeks: dict[str, int]
     include: bool = True
+    #: ADR 0061 (R49-2): the most urgent band whose column(s) say Yes ("P1"
+    #: from "Must Do" / "Must Do (P1)", then "P2", "P3", "P4"); None if none.
+    file_band: str | None = None
 
 
 @dataclass(frozen=True)
@@ -244,12 +247,36 @@ _FIELDS: dict[str, tuple[str, ...]] = {
     "must_do": ("must do",),
     "complexity": ("complexity",),
     "est_duration": ("est. dur", "est dur", "estimated duration"),
+    # ADR 0061 (R49-1): the band columns. Exact matches are assigned before
+    # prefix matches, so "Must Do" (must_do) and "Must Do (P1)" (band_p1)
+    # stay two columns.
+    "band_p1": ("must do (p1)",),
+    "band_p2": ("good to have (p2)", "good to have"),
+    "band_p3": ("in queue (p3)",),
+    "band_p4": ("not approved, on hold, no priority (p4)", "not approved"),
+}
+#: ADR 0061 (R49-2): band field -> priority, most urgent first. `must_do`
+#: also states P1.
+BAND_FIELDS: tuple[tuple[str, str], ...] = (
+    ("must_do", "P1"),
+    ("band_p1", "P1"),
+    ("band_p2", "P2"),
+    ("band_p3", "P3"),
+    ("band_p4", "P4"),
+)
+_BAND_LABELS: dict[str, str] = {
+    "must_do": "Must Do",
+    "band_p1": "Must Do (P1)",
+    "band_p2": "Good to Have (P2)",
+    "band_p3": "In Queue (P3)",
+    "band_p4": "Not Approved, on HOLD, NO Priority (P4)",
 }
 _EXPECTED_HEADERS = (
     "S/N, Project code, Plant, Expenses, PRIORITY, Project description, RPD HUB, "
     "Project Category, PDD Project Stage, Status, Recommended Design Engineer, "
     "Spillover from 2026, Num of Projects (or Num of Models), Must Do, Complexity, "
-    "Est. Dur. (Months)"
+    "Est. Dur. (Months), Must Do (P1), Good to Have (P2), In Queue (P3), "
+    "Not Approved, on HOLD, NO Priority (P4)"
 )
 
 
@@ -1250,7 +1277,59 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                     "PRIORITY is not a whole rank from 1; it is ignored.",
                 )
                 rank = None
-        if running:
+        # ADR 0061 (R49-2): the band columns. Only a Yes states a band; No /
+        # blank say nothing; any other text in a new band column is ignored
+        # with a warning ("Must Do" keeps its pre-R49 reading, I55).
+        yes_bands: list[str] = []
+        for fld, band in BAND_FIELDS:
+            cell = v.get(fld)
+            yn = _yes_no(cell)
+            if yn is True:
+                if band not in yes_bands:
+                    yes_bands.append(band)
+            elif yn is None and fld != "must_do" and _norm(cell):
+                issue(
+                    fld,
+                    SEV_WARNING,
+                    "BAND_VALUE_INVALID",
+                    f"{_BAND_LABELS[fld]} {_text(cell, 40)!r} is not Yes or No; it is ignored.",
+                )
+        file_band = min(yes_bands, key=dc.PRIORITY_ORDER.index) if yes_bands else None
+        if len(yes_bands) > 1:
+            issue(
+                "priority",
+                SEV_WARNING,
+                "PRIORITY_BAND_CONFLICT",
+                f"More than one priority band says Yes ({', '.join(sorted(yes_bands))}); the "
+                f"most urgent, {file_band}, is used.",
+            )
+
+        # R49-3, first match wins: band, Running, rank, matched plan band, P3.
+        if file_band is not None:
+            priority, psrc = file_band, "band"
+            if rank is not None and file_band != "P1":
+                issue(
+                    "priority",
+                    SEV_WARNING,
+                    "PRIORITY_BAND_OVER_RANK",
+                    f"The band column says {file_band}, which is used over PRIORITY "
+                    f"{'Running' if running else rank}; the "
+                    + ("Running row is first" if running else "rank orders the row")
+                    + f" within {file_band}.",
+                )
+            if (
+                matched is not None
+                and matched.priority in dc.PRIORITY_ORDER
+                and matched.priority != file_band
+            ):
+                issue(
+                    "priority",
+                    SEV_INFO,
+                    "PRIORITY_BAND_OVER_PLAN",
+                    f"The band column says {file_band}; the matched plan project is "
+                    f"{matched.priority}. The file's band is used.",
+                )
+        elif running:
             priority, psrc = "P1", "running"
         elif rank is not None:
             priority, psrc = "P1", "rank"
@@ -1348,6 +1427,7 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                 # Owner rule 2026-11-04: On Hold / Cancelled / Commercialized
                 # rows are not mapped.
                 include=status in _SCHEDULABLE and not budget,
+                file_band=file_band,
             )
         )
 

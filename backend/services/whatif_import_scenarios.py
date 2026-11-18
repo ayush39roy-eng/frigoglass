@@ -63,7 +63,13 @@ from services.edit_conflict import AuditRef, check_base, listed_change
 from services.export_builder import ExportSheets, xlsx_bytes
 from services.outcome_buckets import priority_label
 from services.whatif_baseline import Scope, WhatIfContext, principal_audit_hub_id, resolve_scope
-from services.whatif_import import do_import_simulate, safe_file_name
+from services.whatif_import import (
+    do_import_simulate,
+    plan_week_choices,
+    plan_week_label,
+    plan_week_short,
+    safe_file_name,
+)
 from services.xlsx_writer import (
     SECTION,
     GanttChart,
@@ -213,6 +219,59 @@ async def _creator_name(db: AsyncSession, user_id: uuid.UUID | None) -> str | No
     return (await db.execute(select(User.full_name).where(User.id == user_id))).scalar_one_or_none()
 
 
+# --- the plan window of a stored row (ADR 0061 R49-13, R49-19) ---------------------------------
+
+
+def _stored_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def stored_plan_from_week(
+    request: dict[str, Any] | None, simulated_week: int, value: Any = None
+) -> int:
+    """The stored f; a row saved before P49 reads f = its simulated week."""
+
+    v = _stored_int(value if request is None else request.get("plan_from_week"))
+    return simulated_week if v is None else v
+
+
+def stored_plan_until_week(
+    request: dict[str, Any] | None, plan_year_end_week: int, value: Any = None
+) -> int:
+    """The stored u; a row saved before P49 reads u = its `plan_year_end_week`."""
+
+    v = _stored_int(value if request is None else request.get("plan_until_week"))
+    return plan_year_end_week if v is None else v
+
+
+def stored_request(row: WhatifImportScenario) -> ImportSimulateRequest:
+    """The stored request with f and u always set (older rows: R49-13/19)."""
+
+    req = ImportSimulateRequest.model_validate(row.request)
+    return req.model_copy(
+        update={
+            "plan_from_week": stored_plan_from_week(row.request, row.simulated_week),
+            "plan_until_week": stored_plan_until_week(row.request, row.plan_year_end_week),
+        }
+    )
+
+
+def stored_result(row: WhatifImportScenario) -> ImportSimulateResponse:
+    """The stored response; a snapshot from before P49 gets its window fields
+    from the stored weeks (f = simulated week, u = plan_year_end_week)."""
+
+    res = ImportSimulateResponse.model_validate(row.result)
+    if res.plan_from_week is None:
+        f = stored_plan_from_week(row.request, row.simulated_week)
+        res.plan_from_week = f
+        res.plan_from_min_week = res.current_week
+        res.plan_from_label = plan_week_label(f)
+        res.plan_week_choices = plan_week_choices(res.current_week)
+    if res.plan_until_week is None:
+        res.plan_until_week = stored_plan_until_week(row.request, row.plan_year_end_week)
+    return res
+
+
 def _summary(
     principal: Principal, row: WhatifImportScenario, kpis: Any, creator: str | None
 ) -> dict[str, Any]:
@@ -230,6 +289,8 @@ def _summary(
         "mode": row.mode,
         "plan_year_end_week": row.plan_year_end_week,
         "simulated_week": row.simulated_week,
+        "plan_from_week": stored_plan_from_week(row.request, row.simulated_week),
+        "plan_until_week": stored_plan_until_week(row.request, row.plan_year_end_week),
         "plan_version": row.plan_version,
         "hub_codes": list(row.hub_codes),
         "kpis": ImportKpisOut.model_validate(kpis),
@@ -242,8 +303,8 @@ async def scenario_out(
     creator = await _creator_name(db, row.created_by)
     return SavedScenarioOut(
         **_summary(principal, row, row.kpis, creator),
-        request=ImportSimulateRequest.model_validate(row.request),
-        result=ImportSimulateResponse.model_validate(row.result),
+        request=stored_request(row),
+        result=stored_result(row),
     )
 
 
@@ -318,7 +379,15 @@ async def save_scenario(
         )
     # ADR 0055 D3: recompute; a browser-supplied result is never stored.
     result = await do_import_simulate(ctx, body.request)
-    request_json = body.request.model_dump(mode="json")
+    # ADR 0061 (R49-13, R49-19): the stored request carries the resolved f
+    # and u (never null); the re-run flag is spent.
+    request_json = body.request.model_copy(
+        update={
+            "plan_from_week": result.plan_from_week,
+            "plan_until_week": result.plan_until_week,
+            "plan_window_rerun": False,
+        }
+    ).model_dump(mode="json")
     result_json = result.model_dump(mode="json")
     if _json_size(request_json) + _json_size(result_json) > MAX_SNAPSHOT_BYTES:
         raise CodedHTTPException(
@@ -355,7 +424,13 @@ async def save_scenario(
         principal,
         "saved",
         str(row.id),
-        {"id": str(row.id), "name": row.name, "counts": _counts(result)},
+        {
+            "id": str(row.id),
+            "name": row.name,
+            "counts": _counts(result),
+            "plan_from_week": result.plan_from_week,
+            "plan_until_week": result.plan_until_week,
+        },
     )
     return await scenario_out(db, principal, row)
 
@@ -389,6 +464,9 @@ async def list_scenarios(
             s.plan_version,
             s.hub_codes,
             s.kpis,
+            # ADR 0061: the two weeks only, never the whole request JSONB.
+            s.request["plan_from_week"].label("stored_plan_from_week"),
+            s.request["plan_until_week"].label("stored_plan_until_week"),
             User.full_name,
         )
         .outerjoin(User, User.id == s.created_by)
@@ -421,6 +499,12 @@ async def list_scenarios(
                 mode=r.mode,
                 plan_year_end_week=r.plan_year_end_week,
                 simulated_week=r.simulated_week,
+                plan_from_week=stored_plan_from_week(
+                    None, r.simulated_week, r.stored_plan_from_week
+                ),
+                plan_until_week=stored_plan_until_week(
+                    None, r.plan_year_end_week, r.stored_plan_until_week
+                ),
                 plan_version=r.plan_version,
                 hub_codes=list(r.hub_codes),
                 kpis=ImportKpisOut.model_validate(r.kpis),
@@ -623,6 +707,10 @@ def scenario_sheets(
             ("mode", result.mode),
             ("plan_year_end_week", result.plan_year_end_week),
             ("simulated_week", result.current_week),
+            ("plan_from_week", result.plan_from_week),
+            ("plan_from", None if result.plan_from_week is None else result.plan_from_label),
+            ("plan_until_week", result.plan_until_week),
+            ("plan_window", result.plan_window_label),
             ("horizon_weeks", result.horizon_weeks),
             ("base_year", result.base_year),
             ("Results", SECTION),
@@ -698,6 +786,10 @@ def scenario_sheets(
         f"Simulated at W{result.current_week} of {result.base_year}",
         f"{len(result.projects)} project(s)",
     ]
+    if result.plan_from_week is not None and result.plan_from_week != result.current_week:
+        context.append(f"File projects start from {plan_week_short(result.plan_from_week)}")
+    if result.plan_window_label is not None:
+        context.append(f"Plan window {result.plan_window_label}")
     chart = import_gantt_chart(
         result, title=f"What-if import — {shown_name} — Gantt", context=context
     )
@@ -729,7 +821,7 @@ def _source_of(row: WhatifImportScenario) -> dict[str, Any]:
 
 
 def saved_scenario_xlsx(row: WhatifImportScenario) -> bytes:
-    result = ImportSimulateResponse.model_validate(row.result)
+    result = stored_result(row)
     return xlsx_bytes(scenario_sheets(result, name=row.name, source=_source_of(row)))
 
 
@@ -741,7 +833,7 @@ def compare_sheets(rows: Sequence[WhatifImportScenario]) -> ExportSheets:
     """KPIs (one column per scenario plus a delta against the first) and
     Outcome changes (a project whose outcome differs, matched by `ref`)."""
 
-    results = [ImportSimulateResponse.model_validate(r.result) for r in rows]
+    results = [stored_result(r) for r in rows]
     # Column headers carry user-typed names: numbered so they are unique, and
     # neutralised like any text cell.
     cols = [neutralise_formula(f"S{i + 1}: {r.name}") for i, r in enumerate(rows)]
@@ -756,6 +848,9 @@ def compare_sheets(rows: Sequence[WhatifImportScenario]) -> ExportSheets:
             "plan_version": r.plan_version,
             "mode": r.mode,
             "plan_year_end_week": r.plan_year_end_week,
+            # ADR 0061 (R49-13, R49-19): the plan window of each scenario.
+            "plan_from_week": stored_plan_from_week(r.request, r.simulated_week),
+            "plan_until_week": stored_plan_until_week(r.request, r.plan_year_end_week),
         }
         for r in rows
     ]
@@ -835,10 +930,16 @@ def compare_sheets(rows: Sequence[WhatifImportScenario]) -> ExportSheets:
                 f"{len(res.projects)} project(s)",
             ],
         )
+    compare_context = [" vs ".join(cols)]
+    if len({m["plan_from_week"] for m in metas}) > 1:
+        compare_context.append("File projects start from different weeks")
+    if len({m["plan_until_week"] for m in metas}) > 1:
+        # R49-19: the compare banner when u differs.
+        compare_context.append("Plan windows differ — within counts are not like for like")
     return SheetBook(
         {"KPIs": (kpi_headers, meta_rows), "Outcome changes": (change_headers, changes)},
         title="What-if scenario comparison",
-        context=[" vs ".join(cols)],
+        context=compare_context,
         charts=charts,
         order=["KPIs", "Outcome changes", *charts],
     )

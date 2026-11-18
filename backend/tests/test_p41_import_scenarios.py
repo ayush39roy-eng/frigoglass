@@ -458,7 +458,10 @@ async def test_save_recomputes_and_stores_a_frozen_record(db_session):
 
     (audit,) = await audit_rows(db_session, "whatif_scenario.saved")
     assert audit.entity_id == saved["id"]
-    assert set(audit.after_state) == {"id", "name", "counts"}
+    # ADR 0061 (R49-13, R49-19): the saved audit row gains the plan window.
+    assert set(audit.after_state) == {"id", "name", "counts", "plan_from_week", "plan_until_week"}
+    assert audit.after_state["plan_from_week"] == saved["result"]["current_week"]
+    assert audit.after_state["plan_until_week"] == 104
     dumped = json.dumps(audit.after_state)
     for leak in ("Fresh", "Kanarios", "rows", "Alpha", "plan.xlsx"):
         assert leak not in dumped

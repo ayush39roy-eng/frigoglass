@@ -2723,3 +2723,15 @@ Owner: "make sure capacity planning is working properly; also the What-if scenar
 | P49-T02 | Frontend: L1 sessionStorage-only login + BroadcastChannel tab handshake + remove Remember me + purge old localStorage key; L2 30-min idle logout with 2-min warning across tabs, notice on login page, full page load on sign-in; R1 `version.json` build id, 5-min / on-visible check, reload when not editing else banner, chunk-load-failure reload with loop guard; tests | frontend-builder | T01 | tsc/eslint/vitest; vite build emits version.json; MEMORY | DONE (MEMORY 2026-11-18 P49-T02) |
 | P49-T03 | Gate: qa, workflow, security | three gatekeepers | T02 | three PASSes | DONE (MEMORY 2026-11-19 P49-T03 gate closed) |
 | P49-R01 | Workflow W49-1: auto reload waits for all pending work. `isSafeToReload` also requires no pending mutation, no followed run, no what-if request pending; register inline drafts / Save-then-recalc, priority-move panel running/updated, What-if planner scenario/request, Matrix scenario staged edits register with the edit session; tests per state. Also A2 (idle sign-out reaches login with the inactivity notice even with a leave guard) and S49-L1 (remove the dead "Remembered" row in profile.tsx) | frontend-builder | T03 (workflow) | targeted vitest; tsc/eslint; MEMORY | DONE (MEMORY 2026-11-19 P49-R01) |
+
+## P50 — What-if plan import for the client's 2027 project list: band columns → priority, "Plan from" / "Plan until" weeks (ADR 0061; ruling R49-1..R49-21, I54–I56; owner 2026-11-19)
+
+The ruling is labelled R49 (written before the phase number was assigned; P49 is ADR 0060).
+
+| ID | Task | Owner | Depends on | Status |
+|---|---|---|---|---|
+| P50-T01 | Parser band columns (R49-1..6, I55); schema/service `plan_from_week` / `plan_until_week`, served labels, `PLAN_FROM_LATER` (service-emitted), saved scenarios / compare / export / audit (R49-13, R49-19) | backend-builder | — | in progress |
+| P50-T02 | Engine: plan-from floor and anchor (I54), plan-until cut-off / horizon / windows (I56) | algorithm-engineer | — | done (MEMORY 2026-11-19) |
+| P50-T03 | What-if import: "Plan from" / "Plan until" pickers, server labels, "band" source, banners, cut-off reads served `plan_until_week` | frontend-builder | T01, T02 | todo |
+| P50-T04 | Display: no week ≥ 53 on any surface — next-year weeks read W1.. with the year on hover (owner 2026-11-18) | frontend-builder | — | in progress |
+| P50-T05 | Gate: qa-inspector, workflow-auditor, security-auditor | — | T01–T04 | todo |
