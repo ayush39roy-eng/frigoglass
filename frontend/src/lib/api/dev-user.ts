@@ -2,41 +2,46 @@
  * Dev-mode acting-user selection (ADR 0010 §4).
  *
  * Only when the backend runs with `RPD_DEV_MODE=true` does `X-Dev-User-Email`
- * select which seeded user an unauthenticated request runs as. The header
- * switcher in the app header (`components/session/dev-role-switcher.tsx`)
- * writes the choice here; `lib/api/client.ts` reads it on every request. The
- * value lives in `sessionStorage` (per-tab) or, with "Remember me" (on by
- * default since P31-R01), in `localStorage`. It is not a credential; sign-out
- * clears both stores.
+ * select which seeded user an unauthenticated request runs as. The login page
+ * and the header switcher (`components/session/dev-role-switcher.tsx`) write
+ * the choice here; `lib/api/client.ts` reads it on every request. It is not a
+ * credential; sign-out clears it.
+ *
+ * ADR 0060 L1 (P49): the value lives in `sessionStorage` ONLY, so closing the
+ * browser (every tab) ends the session. "Remember me" (P31-R01, which kept it
+ * in `localStorage`) is removed, and `purgeLegacyDevUserEmail()` deletes any
+ * old `localStorage` copy on startup. A new tab gets the session from an open
+ * tab through the BroadcastChannel handshake (`lib/auth/session-channel.ts`).
  *
  * Kept as its own tiny module so the API client never has to import the
  * session store (which imports the API client — a cycle).
  */
 
-const STORAGE_KEY = 'rpd-dev-user-email';
+export const DEV_USER_STORAGE_KEY = 'rpd-dev-user-email';
 
-/**
- * 2026-10-01 (test-login sign-in): "Remember me" on the login page keeps the
- * choice in `localStorage` so it survives closing the tab; otherwise it stays
- * per-tab in `sessionStorage` as before. Still not a credential — it only
- * selects a seeded user on a backend that runs with RPD_DEV_MODE on.
- */
 export function getDevUserEmail(): string | null {
   try {
-    return window.sessionStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(STORAGE_KEY);
+    return window.sessionStorage.getItem(DEV_USER_STORAGE_KEY);
   } catch {
     return null;
   }
 }
 
-export function setDevUserEmail(email: string | null, options: { remember?: boolean } = {}): void {
+export function setDevUserEmail(email: string | null): void {
   try {
-    window.sessionStorage.removeItem(STORAGE_KEY);
-    window.localStorage.removeItem(STORAGE_KEY);
+    window.sessionStorage.removeItem(DEV_USER_STORAGE_KEY);
     if (email === null) return;
-    if (options.remember) window.localStorage.setItem(STORAGE_KEY, email);
-    else window.sessionStorage.setItem(STORAGE_KEY, email);
+    window.sessionStorage.setItem(DEV_USER_STORAGE_KEY, email);
   } catch {
     // storage unavailable (privacy mode) — the switch just does not persist
+  }
+}
+
+/** ADR 0060 L1: delete the pre-P49 "Remember me" copy, so a remembered login ends at the next load. */
+export function purgeLegacyDevUserEmail(): void {
+  try {
+    window.localStorage.removeItem(DEV_USER_STORAGE_KEY);
+  } catch {
+    // storage unavailable — nothing to purge
   }
 }

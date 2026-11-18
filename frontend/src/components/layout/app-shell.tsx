@@ -4,6 +4,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { SURFACES } from '@/app/nav';
 import { SessionGate } from '@/components/session/session-gate';
 import { PlanClockSync } from '@/components/session/plan-clock-sync';
+import { SessionLifecycle } from '@/components/session/session-lifecycle';
 import { EditConflictHost } from '@/components/shared/edit-conflict-host';
 import { useCategories } from '@/lib/api/categories';
 import { GlowOverlay } from '@/components/ui/background-components';
@@ -72,6 +73,8 @@ export function AppShell(): React.JSX.Element {
         <PlanClockSync />
         {/* P47 (ADR 0059): the app-wide edit-conflict dialog (shared write hooks). */}
         <EditConflictHost />
+        {/* P49 (ADR 0060): 30-min idle logout with a warning; follows a sign-out in another tab. */}
+        <SessionLifecycle />
         {/*
          * Boltshift layout (spec §4), 2026-10-01: a grey PAGE (reusing the
          * EXISTING `bg-canvas` token — it already matches the spec's `--page`

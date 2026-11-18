@@ -12,6 +12,7 @@ vi.mock('@/lib/api/client', async () => {
 import { ApiError, apiGet, apiSend } from '@/lib/api/client';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { seriousAxeViolations } from '@/test/axe';
+import { autoReloadAllowed, editSessionHeld } from '@/test/reload-safety';
 
 import type { ScoringRubric, ScoringRubricPreview, ScoringRubricUpdateRequest } from '../api/types';
 import { INITIAL_TEST_DIMENSIONS, testRubric } from '../test-fixtures';
@@ -553,6 +554,23 @@ describe('Scoring scale and dimensions card (P26-T03)', { timeout: 30_000 }, () 
     // Editing again starts from the served rubric.
     c = await enterEdit(user);
     expect(within(c).getByRole('spinbutton', { name: 'Weight of ROI' })).not.toHaveValue(45);
+  });
+
+  it('P49-R01 (Q49-1): unsaved rubric changes hold an auto reload; editing without changes does not', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    let c = await enterEdit(user);
+    expect(editSessionHeld()).toBe(false);
+    const w = within(c).getByRole('spinbutton', { name: 'Weight of ROI' });
+    await user.clear(w);
+    await user.type(w, '45');
+    expect(editSessionHeld()).toBe(true);
+    expect(autoReloadAllowed()).toBe(false);
+    await user.click(within(c).getByRole('button', { name: 'Cancel' }));
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Discard changes' }));
+    c = await screen.findByTestId('rubric-card-notice');
+    expect(c).toBeInTheDocument();
+    expect(editSessionHeld()).toBe(false);
   });
 
   it('warns before unloading the page only while there are unsaved changes', async () => {

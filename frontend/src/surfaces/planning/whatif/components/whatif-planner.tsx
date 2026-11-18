@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { RunFollowState } from '@/lib/use-schedule-run-follow';
+import { useEditSession } from '@/stores/edit-session';
 
 import type { ChamberRead } from '../../api/types';
 import type {
@@ -143,6 +144,8 @@ export function WhatIfPlanner({ chambers }: WhatIfPlannerProps): React.JSX.Eleme
 
   const busy = estimate.isPending || simulate.isPending || solve.isPending;
   const noChanges = validation.empty;
+  // P49-R01 (ADR 0060 R1, W49-1d): a built scenario or a pending request holds an auto reload.
+  useEditSession(!noChanges || busy);
 
   const run = (kind: ResultKind): void => {
     setTab(kind);

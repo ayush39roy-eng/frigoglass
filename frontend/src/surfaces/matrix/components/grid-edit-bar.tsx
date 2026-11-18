@@ -2,6 +2,7 @@ import * as React from 'react';
 import { UNSAFE_DataRouterContext, useBlocker } from 'react-router-dom';
 import { Save, X } from 'lucide-react';
 
+import { shouldBlockLeave } from '@/lib/auth/leave-guard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatInteger } from '@/lib/format';
@@ -96,7 +97,7 @@ export function GridLeaveGuard({ when }: { when: boolean }): React.JSX.Element |
 }
 
 function RouterLeaveGuard({ when }: { when: boolean }): React.JSX.Element {
-  const blocker = useBlocker(({ currentLocation, nextLocation }) => when && currentLocation.pathname !== nextLocation.pathname);
+  const blocker = useBlocker((args) => shouldBlockLeave(when, args));
   return (
     <DiscardDialog
       open={blocker.state === 'blocked'}

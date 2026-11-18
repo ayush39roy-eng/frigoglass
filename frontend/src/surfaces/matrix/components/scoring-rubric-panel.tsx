@@ -2,6 +2,7 @@ import * as React from 'react';
 import { BookOpenText, History, Lock, Pencil } from 'lucide-react';
 import { UNSAFE_DataRouterContext, useBlocker } from 'react-router-dom';
 
+import { shouldBlockLeave } from '@/lib/auth/leave-guard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +17,7 @@ import {
 } from '@/components/ui/dialog';
 import { SCORING_SCALE, scoringAnchor } from '@/lib/domain-constants';
 import { formatTimestamp } from '@/lib/format';
+import { useEditSession } from '@/stores/edit-session';
 
 import { POINTS_RULE_COPY } from '../api/types';
 import { useScoringRubric } from '../hooks/use-matrix';
@@ -116,6 +118,8 @@ export function ScoringRubricPanel(): React.JSX.Element {
   };
 
   const unsaved = editing && dirty;
+  // P49-R01 (ADR 0060 R1, Q49-1): unsaved rubric changes hold an auto reload.
+  useEditSession(unsaved);
   // Reload / closing the tab with unsaved rubric changes asks first.
   React.useEffect(() => {
     if (!unsaved) return;
@@ -277,7 +281,7 @@ export function ScoringRubricPanel(): React.JSX.Element {
 
 /** Blocks in-app navigation while the rubric has unsaved changes, and asks. */
 function LeaveGuard({ when }: { when: boolean }): React.JSX.Element {
-  const blocker = useBlocker(({ currentLocation, nextLocation }) => when && currentLocation.pathname !== nextLocation.pathname);
+  const blocker = useBlocker((args) => shouldBlockLeave(when, args));
   return (
     <DiscardDialog
       open={blocker.state === 'blocked'}

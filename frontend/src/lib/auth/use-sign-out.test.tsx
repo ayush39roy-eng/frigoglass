@@ -6,6 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createQueryClient } from '@/lib/query-client';
 
+import { FakeBroadcastChannel } from '@/test/fake-broadcast-channel';
+
+import { SESSION_CHANNEL_NAME } from './session-channel';
 import { SIGNED_OUT_EVENT, clearAppSessionStorage, useSignOut } from './use-sign-out';
 
 function wrapper({ children }: { children: React.ReactNode }): React.JSX.Element {
@@ -22,8 +25,8 @@ function wrapper({ children }: { children: React.ReactNode }): React.JSX.Element
 
 afterEach(() => {
   window.sessionStorage.clear();
-  window.localStorage.removeItem('rpd-dev-user-email');
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('useSignOut (P21-R01, security S21-L2)', () => {
@@ -45,15 +48,29 @@ describe('useSignOut (P21-R01, security S21-L2)', () => {
     expect(window.sessionStorage.getItem('unrelated-key')).toBe('kept');
   });
 
-  it('P31-R01: clears a remembered (localStorage) test user as well as the per-tab one', () => {
-    window.localStorage.setItem('rpd-dev-user-email', 'planner@example.test');
+  it('ADR 0060 L1: clears the per-tab test user and tells the other tabs', () => {
+    FakeBroadcastChannel.reset();
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
+    const otherTab = new FakeBroadcastChannel(SESSION_CHANNEL_NAME);
+    const received: unknown[] = [];
+    otherTab.onmessage = (event) => received.push(event.data);
     window.sessionStorage.setItem('rpd-dev-user-email', 'planner@example.test');
 
     const { result } = renderHook(() => useSignOut(), { wrapper });
     act(() => result.current());
 
-    expect(window.localStorage.getItem('rpd-dev-user-email')).toBeNull();
     expect(window.sessionStorage.getItem('rpd-dev-user-email')).toBeNull();
+    expect(window.localStorage.getItem('rpd-dev-user-email')).toBeNull();
+    const posted = FakeBroadcastChannel.instances.flatMap((c) => c.sent);
+    expect(posted).toEqual([{ type: 'signed-out' }]);
+  });
+
+  it('ADR 0060 L1: a sign-out that came from another tab is not broadcast again', () => {
+    FakeBroadcastChannel.reset();
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
+    const { result } = renderHook(() => useSignOut(), { wrapper });
+    act(() => result.current({ broadcast: false }));
+    expect(FakeBroadcastChannel.instances.flatMap((c) => c.sent)).toEqual([]);
   });
 
   it('dispatches the signed-out event after sessionStorage is cleared', () => {

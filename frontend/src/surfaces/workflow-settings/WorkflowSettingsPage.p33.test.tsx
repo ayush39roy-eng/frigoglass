@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 
 import { renderWithProviders } from '@/test/render';
+import { autoReloadAllowed, editSessionHeld } from '@/test/reload-safety';
 import { ROLE_MATRIX } from '@/test/roles';
 import { permissionsFrom } from '@/test/session';
 import { seriousAxeViolations } from '@/test/axe';
@@ -210,6 +211,18 @@ describe('P33-T16 — category timeline editor', () => {
     await user.click(screen.getByRole('button', { name: 'Move PDD-H one week later' }));
     await user.click(within(card()).getByRole('button', { name: 'Discard' }));
     expect(within(within(card()).getByTestId('step-PDD-H')).getByTestId('gap-badge')).toHaveTextContent('0w');
+  });
+
+  it('P49-R01 (Q49-1a): unsaved timeline drafts hold an auto reload until discarded', async () => {
+    const user = userEvent.setup();
+    await openTimelines(user);
+    expect(editSessionHeld()).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Lengthen PDD-E by one week' }));
+    expect(editSessionHeld()).toBe(true);
+    expect(autoReloadAllowed()).toBe(false);
+    await user.click(within(card()).getByRole('button', { name: 'Discard' }));
+    expect(editSessionHeld()).toBe(false);
+    expect(autoReloadAllowed()).toBe(true);
   });
 
   it('a viewer sees the timeline and gaps read-only, a notice, and never calls the preview', async () => {

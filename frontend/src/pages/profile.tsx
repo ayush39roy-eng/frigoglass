@@ -24,7 +24,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useHubs } from '@/lib/api/reference';
-import { getDevUserEmail } from '@/lib/api/dev-user';
 import { useSignOut } from '@/lib/auth/use-sign-out';
 import { cn } from '@/lib/utils';
 import { usePreferencesStore, type StartPage } from '@/stores/preferences';
@@ -131,13 +130,7 @@ export default function ProfilePage(): React.JSX.Element {
             </CardHeader>
             <CardContent className="space-y-s3 text-sm">
               <Row label="Signed in with" value={me.dev_mode ? 'Test login (dev mode)' : 'Single sign-on'} />
-              {me.dev_mode ? (
-                <Row
-                  label="Remembered"
-                  value={safeLocalHas() ? 'Yes — on this browser' : 'This tab only'}
-                />
-              ) : null}
-              <Button variant="danger" className="w-full rounded-xl font-bold" onClick={signOut}>
+              <Button variant="danger" className="w-full rounded-xl font-bold" onClick={() => signOut()}>
                 <LogOut />
                 Sign out
               </Button>
@@ -153,14 +146,6 @@ export default function ProfilePage(): React.JSX.Element {
       </div>
     </>
   );
-}
-
-function safeLocalHas(): boolean {
-  try {
-    return window.localStorage.getItem('rpd-dev-user-email') !== null && getDevUserEmail() !== null;
-  } catch {
-    return false;
-  }
 }
 
 function Row({ label, value }: { label: string; value: React.ReactNode }): React.JSX.Element {

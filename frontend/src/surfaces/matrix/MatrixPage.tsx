@@ -301,6 +301,9 @@ function MatrixSurface(): React.JSX.Element {
   const scenarioActive = useScenarioStore((s) => s.active);
   const scenarioPending = useScenarioStore((s) => s.pending);
   const stageScenarioEdit = useScenarioStore((s) => s.stageEdit);
+  // P49-R01 (ADR 0060 R1, W49-1e): staged scenario edits waiting for Apply hold
+  // an auto reload, even outside grid edit mode.
+  useEditSession(scenarioActive && Object.keys(scenarioPending).length > 0);
   const scenarioStagedProjectIds = React.useMemo(
     () => new Set(effectivePendingEdits(scenarioPending).map((e) => e.projectId)),
     [scenarioPending],

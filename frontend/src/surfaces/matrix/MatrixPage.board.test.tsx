@@ -41,6 +41,7 @@ import { createQueryClient } from '@/lib/query-client';
 import { useHubFilterStore } from '@/stores/hub-filter';
 import { useScenarioStore } from '@/stores/scenario';
 import { seriousAxeViolations } from '@/test/axe';
+import { autoReloadAllowed, editSessionHeld } from '@/test/reload-safety';
 import { ROLE_MATRIX } from '@/test/roles';
 import { seedSession } from '@/test/session';
 import type { HubName, ProjectCategory, ProjectPriority, ProjectStatus, ProjectType } from '@/types/enums';
@@ -398,6 +399,24 @@ describe('P21-T05 Matrix tabs', () => {
     await user.click(screen.getByRole('tab', { name: 'Scoring grid' }));
     expect(useScenarioStore.getState().pending).toEqual({});
     expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it('P49-R01 (W49-1e): staged scenario edits hold an auto reload outside grid edit mode; Discard releases it', async () => {
+    const user = userEvent.setup();
+    renderMatrix('/matrix');
+    await user.click(await screen.findByRole('checkbox', { name: 'Scenario mode' }));
+    expect(editSessionHeld()).toBe(false);
+    await user.click(await screen.findByRole('button', { name: 'Edit scores' }));
+    await user.click(screen.getByRole('textbox', { name: /^Strategic Project for Alpha Cooler/ }));
+    await user.keyboard('1');
+    await user.click(screen.getByRole('button', { name: 'Stage in scenario' }));
+    // Grid edit mode is over; the staged edit is what holds the reload now.
+    expect(await screen.findByRole('button', { name: 'Edit scores' })).toBeInTheDocument();
+    expect(editSessionHeld()).toBe(true);
+    expect(autoReloadAllowed()).toBe(false);
+
+    await user.click(within(screen.getByTestId('scenario-panel')).getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(editSessionHeld()).toBe(false));
   });
 
   it('d: the View panel filters apply to both views; for schedulable statuses the board total equals the grid count', async () => {

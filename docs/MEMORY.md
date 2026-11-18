@@ -44695,3 +44695,339 @@ All 4 were confirmed to fail with the fix temporarily reverted (restored from a 
 ## 2026-11-18 — Timeline step Start/End hints: next-year weeks restart at 1 (owner correction)
 
 - Owner: show plan week 53 as week 1, with the year (2027) on hover — not "›52". `step-pin-cell.tsx` placeholder now shows `week − 52` for a planned week past W52; tooltip "week N of {next year} (spillover)". Supersedes the "›52" form of the entry above. vitest `src/surfaces/gantt` 252 passed.
+
+## [2026-11-18] P49-T02 — Frontend: auto logout on close / after 30 min idle, auto reload on a new version (ADR 0060) — frontend-builder: DONE (not committed)
+
+**L1 — session ends with the browser** (`lib/api/dev-user.ts`, `lib/auth/session-channel.ts`, `lib/auth/session-bootstrap.ts`, `main.tsx`):
+- The dev user (`rpd-dev-user-email`) is read and written in `sessionStorage` only. `purgeLegacyDevUserEmail()` deletes the old `localStorage` key on every startup. "Remember me" is removed from `pages/login.tsx`, and `setDevUserEmail` no longer takes a `remember` option.
+- `main.tsx` awaits `bootstrapSession()` before the first render. It purges the old key. If the tab has no user, it posts `{type:'session-request', id}` on BroadcastChannel `rpd-session` and adopts the first matching `{type:'session-offer', id, email}` within `HANDSHAKE_TIMEOUT_MS` (300 ms). It then joins the channel to answer requests and to follow sign-outs. A tab answers only when it has a user and the shared session is not idle.
+- `parseSessionMessage` accepts exactly three shapes, with exact keys only. The id must match `[A-Za-z0-9-]{8,64}` and the email is shape-checked. Roles, tokens and extra keys are rejected. A message with a non-empty `event.origin` other than `location.origin` is rejected.
+- `useSignOut()` now takes `(options?: {reason?: 'idle'; broadcast?: boolean})`. It broadcasts `{type:'signed-out'}` unless `broadcast: false`. With `reason: 'idle'` it navigates to `/login` with state `{signedOut:'idle'}`. A received sign-out clears the tab's user at once and dispatches `rpd:remote-signed-out`. In the shell, `SessionLifecycle` then runs `useSignOut({broadcast:false})` and shows the idle notice if the shared time is within 5 s of the deadline. Call sites in `app-header.tsx` and `profile.tsx` now use `() => signOut()`.
+
+**L2 — idle logout** (`lib/auth/idle.ts`, `components/session/session-lifecycle.tsx`, mounted in `app-shell.tsx` inside `SessionGate`, so there is no timer on `/login`):
+- `IDLE_TIMEOUT_MS = 30 min` and `IDLE_WARNING_BEFORE_MS = 2 min` are the only constants.
+- Activity is pointerdown, pointermove, keydown, wheel, touchstart and scroll (window capture, passive).
+- The shared `localStorage` key `rpd-last-activity` (a timestamp, no identity) is written at most every 15 s, with a trailing write. A write never moves the time backwards. Mounting is not activity: an auto reload does not extend the session, and a stale time signs out at once.
+- The warning dialog reads "Are you still there? You will be signed out in m:ss for inactivity." It counts down each second. While it is open, only "Stay signed in" or closing the dialog counts as activity in that tab, and activity in another tab closes it through the `storage` event.
+- At 30 min, `onIdle` runs once, then `useSignOut({reason:'idle'})`. The login page shows "You were signed out after 30 minutes of inactivity."
+- Sign-in writes the activity time, then `await load()`, then `browserNavigation.assign(startPage)` for a full page load. `lib/browser-navigation.ts` exists so tests can spy on it.
+
+**R1 — auto reload** (`vite.config.ts`, `lib/app-version.ts`, `components/shared/version-watcher.tsx` mounted in `App.tsx`, `pages/not-found.tsx`):
+- The build id is `RENDER_GIT_COMMIT[:12]` (or `local`) plus `-` plus the build time in base36. It is injected as the define `__APP_BUILD_ID__` (declared in `vite-env.d.ts`), and a build-only plugin emits `dist/version.json` `{"buildId": …}`. Verified: `dist/version.json` exists, and the entry chunk has the same id.
+- The watcher fetches `version.json` with `cache:'no-store'` every 5 min and on `visibilitychange` to visible. A missing, non-JSON or malformed file is ignored, which covers the dev server.
+- On a different id it reloads at once if the edit-session store is empty and no `[role=dialog|alertdialog]` is open. Otherwise it shows a non-blocking `role=status` bar, "A new version is available" with a "Reload" button, and reloads by itself once that clears (store subscription plus a 2 s check).
+- Loop guard: sessionStorage `rpd-version-reloaded-for`. A second mismatch for the same id shows only the bar.
+- Chunk failures (`vite:preloadError`, an unhandled dynamic-import rejection, or a chunk error reaching `RouteErrorBoundary`) reload once. sessionStorage `rpd-chunk-reload-at` blocks a second reload within 60 s, and the app does not reload at all if that key cannot be written.
+- **Hosting:** `render.yaml` and the CSP are unchanged. No inline script changed, so the hash stays the same; `version.json` is same-origin, so `connect-src 'self'` covers it. Render serves existing files before the `/*` rewrite, and the container `nginx.conf` serves it through `try_files $uri` (not caught by the immutable-asset rule). I added no Cache-Control header for `/version.json`, because `test_p27_render_csp` asserts every header has path `/*`, and the fetch is `no-store` anyway.
+- A reload or a logout never saves anything or starts a run.
+
+**Tests:**
+- New: `lib/auth/session-channel.test.ts` (26: sessionStorage only, purge, adopt, timeout to login, reject malformed / foreign-origin / wrong-id offers, the responder sends only the email and stays silent when idle or signed out, broadcast, remote sign-out); `components/session/session-lifecycle.test.tsx` (12, fake timers: warning at 28:00 showing "2:00", logout once at 30, each activity type resets, throttle and trailing write, Stay signed in, another tab's activity closes the warning, stale time, mount is not activity, idle notice and broadcast through the real sign-out path, remote sign-out without re-broadcast); `components/shared/version-watcher.test.tsx` (16: 5-min no-store poll, on-visible check, reload when idle, bar while editing then auto reload, dialog open, Reload button, no-loop, bad files, chunk guard window, preloadError, unhandledrejection, no storage means no reload).
+- Fake channel helper: `src/test/fake-broadcast-channel.ts`.
+- Updated: `pages/login.test.tsx` (the two Remember-me tests are replaced by: no Remember me and sessionStorage only; full page load and activity write; idle notice) and `lib/auth/use-sign-out.test.tsx` (the remembered-user test is replaced by a broadcast test and a no-re-broadcast test).
+
+**Checks:**
+- `tsc -b`: clean. `eslint .`: 0 errors (9 warnings, none from this task).
+- `vite build`: OK, initial bundle 203.3 KB gzip of 400 KB.
+- Full vitest (`--maxWorkers=2`): 2365 tests, 17 failed. The box was badly contended and the run took about 3 h of wall time; the failures were timeouts and one worker start timeout.
+- I reran the 15 failing files: 255/256 pass. The only failure is the known `app.test.tsx` "navigates to the Project Execution Timeline" (pre-existing, also listed in P46-T03).
+
+**Assumptions:**
+- The production SSO path also waits up to 300 ms for the handshake at startup.
+- Popovers (Radix `role=dialog`) also hold an auto reload.
+- The build id changes on every build, even for the same commit.
+
+## [2026-11-19] P49-T03 — security gate — security-auditor
+
+**Verdict: PASS** (no Critical, High or Medium finding). Read-only review of the uncommitted P49-T02 frontend change against ADR 0060 / ADR 0058.
+
+Verified:
+- **No identity in localStorage:** `dev-user.ts` reads and writes `sessionStorage` only. `purgeLegacyDevUserEmail()` runs first in `bootstrapSession()` before any render. The only new `localStorage` key is `rpd-last-activity`, a timestamp checked against `^\d{1,16}$`.
+- **Channel validation:** `parseSessionMessage` requires a plain-object prototype, exact keys, an id matching `^[A-Za-z0-9-]{8,64}$` and a shape-checked email. Roles, tokens and extra keys are rejected. The requester accepts only an offer that echoes its own random UUID. Origin is checked and the channel is same-origin by spec. The responder stays silent when signed out or idle. Spoofing needs same-origin script (that is XSS already), and the email is the same dev-mode header already trusted (OQ #113, pre-existing).
+- **Sign-out and idle sign-out:** both run the existing `useSignOut`, which clears the dev email, the query cache, the session store and every `rpd-` sessionStorage key, then broadcasts. A receiving tab clears its email at once, and the shell then runs the full path without re-broadcasting. A stale shared time signs the tab out on mount, and a new tab is not offered an idle session.
+- **Reload loop:** the version check runs only on the 5-min interval and on visibility, never on mount. `rpd-version-reloaded-for` allows one auto reload per served id, after which only the bar is shown. Chunk reloads are guarded to one per 60 s, with no reload when the guard key cannot be written. `version.json` is regex-checked (`^[A-Za-z0-9._-]{1,100}$`), compared as a string, stored only in sessionStorage and never rendered.
+- **Open redirect:** none. `browserNavigation.assign` gets only `resolveStartPage(...)`, which returns one of six fixed paths or `/`. A tampered `rpd-preferences` value, including prototype keys, falls back to `/`.
+- **CSP and hosting:** `render.yaml`, `index.html` (inline-script hash), `nginx.conf` and `vercel.json` are unchanged. `version.json` is same-origin, so `connect-src 'self'` covers it. `dist/version.json` is emitted.
+- **Production SSO path:** the handshake can never adopt anything, because no tab holds a dev email. The cost is at most 300 ms at startup. Idle and broadcast sign-out clear client state only, and there is no server session yet; ADR 0060 records this as a convenience, not a security control.
+- **Tests:** targeted vitest (`--maxWorkers=2`): session-channel, session-lifecycle, version-watcher, use-sign-out and login, 5 files, 73/73 pass.
+
+Findings (non-blocking):
+
+| ID | Sev | Finding |
+|---|---|---|
+| S49-L1 | Low | `pages/profile.tsx` `safeLocalHas()` still reads the legacy `localStorage` `rpd-dev-user-email`. The "Remembered" row is now dead and always shows "This tab only". Remove the row and the read in a later cleanup. |
+| S49-I1 | Info | Browser session restore ("continue where you left off") brings back `sessionStorage`, so L1 is not guaranteed on every browser. The idle rule still signs out a restored tab once 30 min have passed. |
+| S49-I2 | Info | Sign-out clears the `rpd-` reload-guard keys. This is bounded: no check runs on mount, so it cannot loop. |
+| S49-I3 | Info | A missing chunk that is hit again more than 60 s later reloads again. This needs a user action each time, so it is not a loop. |
+
+## [2026-11-19] P49-T03 — workflow gate — workflow-auditor: FAIL
+
+Scope: the uncommitted frontend diff for ADR 0060 (P49-T02). This was a read-only review, with no stash or checkout. The P49 test files pass: version-watcher, session-lifecycle, session-channel and use-sign-out, 59/59. No solver or schedule code changed, so I10/I9 reconciliation does not apply.
+
+**PASS: a logout or a reload never fires a write.**
+- `useSignOut` only does these things: clears the dev user, `queryClient.clear()`, `reset()`, clears `rpd-` sessionStorage, broadcasts, dispatches `rpd:signed-out` and navigates. Its only listener is the Matrix compare-selection reset.
+- The idle path and the remote-tab path both go through `useSignOut`.
+- `reloadForNewVersion` and `reloadForChunkError` call only `location.reload()`.
+- Bootstrap and `SessionLifecycle` mount do no writes, and mount is not counted as activity.
+- When a surface unmounts, `useEditConflict` and `askEditConflict` resolve `null`, which means nothing is saved, so a logout during an open ADR 0059 conflict dialog never resends "Keep mine".
+- None of these paths fires a save, recalc, schedule run, scenario apply or priority move.
+
+**PASS: ADR 0059 / P47 still work.**
+- `use-edit-freshness` and the conflict hooks are untouched.
+- An open conflict dialog (`role=dialog`) holds an auto reload.
+- The 60 s polling does not count as activity, so it never extends the idle clock.
+
+**PASS: priority-move preview and apply.**
+- The preview, applying and applied states are a Radix Sheet (`role=dialog`), so `isSafeToReload()` holds a reload during them.
+
+**FAIL W49-1 (blocking): an auto reload is not held while work is pending outside the edit-session store or while a recalc or simulate is running.**
+`isSafeToReload()` (`frontend/src/lib/app-version.ts`) checks only `editors.size === 0` and that no dialog is open. These states are invisible to it:
+- (a) The Projects register inline drafts (`ProjectsPage.tsx`, `editingIds`/`drafts`) never call `useEditSession`. With drafts present, `RegisterLeaveGuard`'s `beforeunload` makes the auto reload show the browser's native "Leave site?" prompt, not the ADR R1 bar. A row that is in edit without a draft reloads silently.
+- (b) The register Save-then-recalc. During `saving` (POST in flight) and `running` (the panel follows the server run over SSE), `RegisterSavePanel` is not a dialog, and the drafts are already cleared at `running`. The reload drops the "Timeline updated" result. The run continues on the server, and nothing fires twice.
+- (c) A priority-move `running`/`updated` in the non-dialog `MoveFlowPanel`, same as (b).
+- (d) The What-if planner (`PlanningPage` → `WhatIfPlanner`, inline). `simulate`/`solve`/`estimate` `isPending` and the in-memory scenario are not registered, so a reload silently discards them.
+- (e) Matrix scenario mode: staged `useScenarioStore.pending` edits waiting for Apply are registered only while grid `editMode` is on, and there is no `beforeunload`. A reload silently discards them.
+
+This contradicts ADR 0060 R1 ("reloads if nothing is being edited") and the gate brief ("never while a recalc or preview is in progress"). There are no tests for in-flight mutations or for these surfaces.
+
+Remediation P49-R01 (frontend-builder):
+1. Make `isSafeToReload` also require `queryClient.isMutating() === 0`, no run being followed (the register and move flows in `running`), and no what-if request pending.
+2. Register `useEditSession` for:
+   - register `sessionActive || drawer !== null`;
+   - Matrix `scenarioActive && pending non-empty`;
+   - the What-if planner while it holds a built scenario or a request is pending.
+3. Add version-watcher tests for each of these states.
+
+**Advisories (not blocking):**
+- A1: If the idle warning opens while a Priority-board rank input holds a typed draft, the focus trap blurs the input and `commit('blur')` opens a priority-move preview. That is a read, not a write, and it still needs a confirm, but it is a side effect of the warning. Consider not committing on blur when focus moves into the idle dialog.
+- A2: An idle sign-out on a surface with a `useBlocker` leave guard (register, matrix grid, gantt pins, overview, rubric) is blocked at `navigate('/login')`. The shell then unmounts, and SessionGate's `<Navigate>` reaches `/login` without the `{signedOut:'idle'}` state, so the idle notice is not shown. I inferred this from reading the code and did not run it.
+- A3 (for security-auditor): `handleRemoteSignOut` clears the dev user before the shell runs the sign-out. Any request in that window, or one made while a leave guard holds the page, carries no `X-Dev-User-Email`, and the dev-mode backend treats it as the default seeded Admin (SessionGate comment; OQ #113). This was already true for a manual sign-out.
+
+Verdict: **FAIL** (W49-1). This blocks P49 until P49-R01 lands and the workflow-auditor re-checks it.
+
+## [2026-11-19] P49-T03 — qa gate — qa-inspector
+
+**Verdict: FAIL** (Q49-1). Scope: the uncommitted P49-T02 frontend diff, checked against ADR 0060. Read-only for feature code. No stash or checkout. Every temporary probe file was deleted afterwards.
+
+**ADR rule → test coverage (all rules are covered):**
+- L1:
+  - sessionStorage only, and the old key purged: `session-channel.test.ts` "keeps … sessionStorage only" and "never reads an old localStorage login, and startup purges it".
+  - Handshake adopt: "a new tab adopts…".
+  - Handshake reject: "malformed / other-request / other-origin offer", plus the timeout test for the login page.
+  - Broadcast to every tab: "a sign-out in one tab reaches every other tab", plus `use-sign-out.test` broadcast and no re-broadcast.
+  - Remember me removed: `login.test` "no Remember me; … this browser session only".
+- L2 (`session-lifecycle.test.tsx`, fake timers):
+  - Warning at 28:00 showing "2:00", and sign-out exactly once at 30.
+  - Each of the five activity types resets the clock.
+  - Another tab's activity, through the `storage` event, closes the warning.
+  - Stay signed in.
+  - Login notice: `login.test` plus the SessionLifecycle real-sign-out path.
+  - Full page load on sign-in: `login.test`, where `browserNavigation.assign('/')` is called once and the activity time is written.
+  - No timer on `/login`: structural only (`SessionLifecycle` is mounted in `AppShell` inside `SessionGate`). No test asserts it. This is a minor test gap.
+- R1 (`version-watcher.test.tsx`):
+  - 5-min `no-store` poll.
+  - Check on `visibilitychange`.
+  - Reload when idle.
+  - Bar while editing, then auto reload when the editor clears.
+  - Dialog hold.
+  - Reload button.
+  - No loop for the same id.
+  - Bad files are ignored.
+  - Chunk guard: one reload, blocked inside the 60 s window, allowed after it; `vite:preloadError` is prevented; an `unhandledrejection` reloads; no reload without storage.
+
+**Edge-case probes (temporary tests, now deleted):**
+- *A version.json failure must not reload:* PASS. Probed at component level, over 4 polls plus a visibility check, with:
+  - a 404;
+  - a 500;
+  - a network error;
+  - an HTML fallback;
+  - a `null` body;
+  - an array body;
+  - an empty id;
+  - a numeric id;
+  - a fetch that never resolves.
+
+  In every case there was no reload and no bar. A failed fetch after a new id was already detected neither cancels the waiting reload nor triggers it early: it reloads once the editor clears. The existing tests only tested `fetchServedBuildId` directly; the component-level path is now confirmed.
+- *Idle logout while a dialog is open:* PASS.
+  - The warning opens on top of an open Radix edit dialog, which is aria-hidden underneath it. Stay signed in closes only the warning, and the edit dialog survives.
+  - Typing in the dialog before the warning counts as activity.
+  - With no response, `onIdle` fires exactly once at 30 min, and the dialog's Save is never called.
+  - The idle warning is itself a `role=dialog`, so it also holds an auto reload.
+- *A reload must never discard unsaved edits:* **FAIL.** `isSafeToReload()` returned `true`, with `editors=0` and no dialog, in both of these states:
+  - **Q49-1a (silent loss):** Workflow Settings → Timeline previews, after "Lengthen PDD-E by one week", with the draft shown as 7w. The `use-template-editor.ts` drafts never call `useEditSession`, and the page has no `beforeunload` guard, so an auto reload throws away the unsaved category-timeline drafts (P33) without warning. This is **new; it is not in W49-1.**
+  - **Q49-1b:** the Projects register with a row in inline edit and a typed Design time. This confirms W49-1(a): only `RegisterLeaveGuard`'s native `beforeunload` prompt stands between the user and the loss, and the ADR R1 bar is not shown.
+  - Also unregistered, found by reading the code: the Matrix `scoring-rubric-panel.tsx` `editing && dirty` is not registered. It has a `beforeunload` guard, so the user gets a native prompt rather than the bar.
+  - The chunk-error reload ignores the edit-session store by design. It is low risk, because a route-level chunk failure is a navigation that the leave guards already handle, but an unhandled rejection from a lazy import inside an editing page would reload.
+
+**Checks:**
+- `tsc -b`: exit 0.
+- `eslint .`: 0 errors and 9 warnings, all pre-existing (`incompatible-library` and similar). None is in a P49 file.
+- Targeted vitest (`--maxWorkers=2`): the `src/lib/auth`, `src/components/session`, `src/components/layout` and `src/app` directories, plus `version-watcher.test`, `login.test` and `profile.theme.test`. 16 files, **133/134 pass.** The only failure is the known `app.test.tsx` "navigates to the Project Execution Timeline surface on nav click". No test renders `AppShell` directly; `src/app/*.test` covers it through the router.
+- Coverage of the P49 source files, from the P49 tests alone: **96.94 % lines, 86.32 % branches, 92.47 % funcs**. The 70 % bar is met. Per file, in lines:
+
+  | File | Lines | Branches |
+  |---|---|---|
+  | `session-lifecycle.tsx` | 97.6 % | 76.2 % |
+  | `version-watcher.tsx` | 100 % | — |
+  | `app-version.ts` | 97.7 % | — |
+  | `session-channel.ts` | 96 % | — |
+  | `idle.ts` | 95 % | — |
+  | `dev-user.ts` | 90 % | — |
+  | `login.tsx` | 98.4 % | — |
+  | `browser-navigation.ts` | 33 % | — |
+
+  `browser-navigation.ts` is low by design: it is the spied wrapper around `window.location`.
+- `vite build`: OK. `dist/version.json` = `{"buildId":"local-mwmm6fco"}`, and the same id is embedded in `dist/assets/index-*.js`.
+- Full suite: not run (the machine is loaded; this was a targeted run).
+
+**Remediation, appended to P49-R01 (frontend-builder):**
+1. Register `useEditSession(Object.keys(editor.drafts).length > 0)` in the Workflow Settings template editor.
+2. Register `useEditSession(unsaved)` in `scoring-rubric-panel.tsx`.
+3. Apply W49-1 items 1–3, including the register `useEditSession`.
+4. Add a regression test per surface asserting that `isSafeToReload()` is `false` while a draft is held. Both probes above can be turned into these tests.
+5. Optional: add a test that `/login` mounts no `idle-warning` timer.
+6. S49-L1 cleanup: remove the `profile.tsx` `safeLocalHas` "Remembered" row.
+
+Verdict: **FAIL** (Q49-1). P49 stays blocked until P49-R01 lands and qa re-runs the probes.
+
+## [2026-11-19] P49-R01 — W49-1, Q49-1, A2 and S49-L1: auto reload waits for all pending work; forced sign-out passes the leave guards — frontend-builder: DONE (not committed)
+
+**Auto reload waits for all pending work (W49-1):**
+- `isSafeToReload(queryClient)` in `lib/app-version.ts` now requires three things: the edit-session store is empty, `queryClient.isMutating() === 0`, and no dialog is open. The mutation check covers What-if estimate, simulate and solve, the import simulate, and every save.
+- `VersionWatcher` passes `useQueryClient()` to it. It also re-tries the reload when the mutation cache changes, and asks for a reload only once.
+
+**Registered with `useEditSession`:**
+- **Any followed run:** `useScheduleRunFollow` while `busy` (dispatching or running). This covers the register, priority move, check-in, Workspace recalc, Gantt pins, template apply and deactivation, so "no schedule run being followed" holds on every surface.
+- **(a) Projects register:** `sessionActive || drawer !== null` (`ProjectsPage.tsx`).
+- **(b) Register Save-then-recalc:** `flow.kind` is `saving` or `running` (`use-register-save.ts`). It is released once the result shows.
+- **(c) Priority move:** the `MoveFlowPanel` in `running` or `updated` (`move-flow-panel.tsx`).
+- **(d) What-if:**
+  - the planner while the scenario is non-empty or a request is pending (`whatif-planner.tsx`);
+  - the Import plan view while a workbook is loaded (`import-plan-view.tsx`, `parsed !== null`).
+- **(e) Matrix:** `scenarioActive && pending` non-empty (`MatrixPage.tsx`), even outside grid edit mode.
+- **Q49-1:**
+  - the Workflow Settings template editor while it has timeline draft overrides (`use-template-editor.ts`);
+  - the Matrix scoring rubric while `editing && dirty` (`scoring-rubric-panel.tsx`).
+- **Side effect:** P47 focus/60 s refresh pauses on surfaces that read `useAnyEditInProgress` while these are registered. Explicit invalidation after a run still refetches.
+
+**A2 — a forced sign-out passes the leave guards:**
+- New `lib/auth/leave-guard.ts` holds `LoginLocationState {signedOut?: 'idle' | 'remote'}`, `isForcedSignOutNavigation` and `shouldBlockLeave(when, args)`. All five `useBlocker` guards use it: register edit bar, Overview, Gantt step pins, Matrix grid and rubric.
+- `useSignOut` navigates to `/login` with state `{signedOut:'idle'}` for an idle sign-out and `{signedOut:'remote'}` for one from another tab (`broadcast:false`). The guards let these through, so the idle notice shows. Unsaved edits are lost after the 2-min warning, as ADR 0060 says.
+- A manual sign-out and ordinary navigation are still guarded as before.
+- `beforeunload` guards are untouched; a reload is held off by the edit session, so the browser's "Leave site?" prompt is not reached on an auto reload.
+
+**S49-L1:** removed the dead "Remembered" row and `safeLocalHas()` (its `localStorage` read) from `pages/profile.tsx`.
+
+**Tests** (helper `src/test/reload-safety.ts`: `editSessionHeld()` and `autoReloadAllowed()` = `isSafeToReload(new QueryClient())`):
+- `version-watcher.test.tsx` (now in a QueryClientProvider): a mutation in flight holds the reload, then reload happens once it settles; `useScheduleRunFollow` holds it from `begin` to `reset`.
+- Per surface, each test checks the reload is held while the draft or work exists and released after it ends:
+  - `ProjectsPage.register-edit.test` (row in edit or draft; Save-then-recalc while saving and running, released at "updated");
+  - `ProjectsPage.test` (drawer);
+  - `move-flow-panel.p49.test` (running, updated, notice not held);
+  - `whatif-planner.test` (scenario);
+  - `import-plan-view.test` (workbook);
+  - `MatrixPage.board.test` (staged scenario outside edit mode, Discard);
+  - `WorkflowSettingsPage.p33.test` (timeline draft, Discard);
+  - `scoring-rubric-panel.test` (dirty rubric, Discard).
+- `session-lifecycle.test` A2 (data router with a `useBlocker` guard): an ordinary navigation is still blocked; an idle sign-out reaches `/login` with the notice; a remote sign-out passes too.
+- `login.test`: the `/login` route runs no idle timer (no activity record, no 1 s tick, no warning).
+
+**Checks:**
+- `tsc -b`: clean. `eslint .`: 0 errors (9 warnings, all from earlier work).
+- Targeted vitest (`--maxWorkers=2`), 31 files: 464/465 pass. The only failure is the known `app.test.tsx` Gantt-nav one.
+- The run-follow consumers (check-in, project-workspace, gantt, planning hooks and page, workflow-settings, `src/lib`), 70 files: 684/684 pass.
+- The full suite was not run, because the machine is loaded.
+
+## [2026-11-19] P49-T03 — workflow gate re-check — workflow-auditor: PASS
+
+Scope: W49-1 (a)–(e), A2, no-write on reload/logout, and the P47 freshness side effect, judged with P49-R01 applied. This was a read-only review.
+
+**Tests:**
+- Targeted vitest (`--maxWorkers=2`) covered: shared, session, lib/auth, ProjectsPage.register-edit, whatif, MatrixPage.board, scoring-rubric-panel, WorkflowSettingsPage.p33.
+- Run 1: 556/556 tests passed. One of 60 files failed with no failing test, which is the known load flake.
+- Run 2: 59/59 files and 556/556 tests passed.
+
+**W49-1 closed:**
+- `isSafeToReload(queryClient)` now needs three things: the edit-session store is empty, `queryClient.isMutating() === 0`, and no dialog is open.
+- (a) The register holds the reload while `sessionActive || drawer`.
+- (b) The register save holds it while `saving` or `running`.
+- (c) `MoveFlowPanel` holds it while `running` or `updated`.
+- (d) What-if holds it while the scenario is non-empty or a request is pending, and the import view while a workbook is loaded.
+- (e) Matrix holds it while the scenario is active with staged edits.
+- `useScheduleRunFollow` holds it while `busy` on every run surface.
+- Each case has a held/released test.
+
+**A2 closed:**
+- All five `useBlocker` guards use `shouldBlockLeave`, which lets a navigation with state `{signedOut:'idle'|'remote'}` through.
+- A manual sign-out and ordinary navigation are still guarded.
+
+**No write on reload or logout (re-verified):**
+- `useSignOut` changed only the navigation state.
+- The new registrations are state flags only; none of them calls a mutation.
+- An unmounted conflict dialog still resolves `null`, so nothing is resent.
+
+**P47 freshness side effect:**
+- Every run follower invalidates on completion: priority move, register, check-in, Gantt pins, deactivation and template apply call `invalidateRunDerivedQueries`; the workspace calls `invalidateAfterRecalc`.
+- Every failure path either invalidates the write keys or ends `busy`.
+- `invalidateQueries` refetches active queries whatever `refetchInterval` is, and `editFreshness` never sets `enabled:false`. So others' changes show at run end.
+- When the editor is released, the 60 s poll and the focus refetch resume.
+
+**Advisories (not blocking):**
+- B1: Polling also pauses for as long as these stay open, not only for the run:
+  - a "Timeline updated" `MoveFlowPanel` (Gantt and Workspace through `PriorityMoveProvider`, and Projects), until it is closed;
+  - a non-empty What-if scenario (Planning rosters);
+  - a staged Matrix scenario.
+  Data is fresh at run end. Later changes by others wait until the panel is closed or the scenario is applied or discarded. That fits ADR 0059's intent for scenarios; for the panel, consider releasing at `updated` and keeping only the reload hold.
+- B2: `streamSolverProgress` has no client timeout, so a stream that hangs keeps `busy` and pauses freshness until it ends. This was already true for the spinner.
+- A1 (rank input blur opening a read-only preview when the idle warning appears) and A3 (the security leg) are unchanged.
+
+Verdict: **PASS** (workflow leg of P49-T03).
+
+## [2026-11-19] P49-T03 — qa gate re-check — qa-inspector
+
+**Verdict: PASS.** The QA leg was re-checked after P49-R01. Q49-1 is closed. Read-only for feature code, with no stash or checkout. The temporary probe files were deleted, and `find src -name 'zz-qa-probe*'` finds 0.
+
+**Probes re-run** (temporary tests against the new `isSafeToReload(queryClient)`):
+- **Q49-1a, Workflow Settings → Timeline previews:** reload is allowed before the edit, held after "Lengthen PDD-E by one week" (7w draft), and allowed again after Discard. PASS.
+- **Q49-1b, Projects register:**
+  - A row in inline edit with no draft is now held. Before R01 it reloaded silently.
+  - A typed Design time is held.
+
+  PASS.
+- **Register save, What-if, Matrix scenario and rubric:** the R01 surface tests cover these, and all of them pass in the targeted run:
+  - `ProjectsPage.register-edit.test`: edit or draft; Save-then-recalc held while saving and running, released at "updated".
+  - `ProjectsPage.test`: drawer.
+  - `move-flow-panel.p49.test`.
+  - `whatif-planner.test`: scenario.
+  - `import-plan-view.test`: workbook.
+  - `MatrixPage.board.test`: staged scenario outside edit mode, released by Discard.
+  - `scoring-rubric-panel.test`: dirty rubric, released by Discard.
+  - `version-watcher.test`: an in-flight mutation holds the reload until it settles; `useScheduleRunFollow` holds it from begin to reset.
+- **A2 leave-guard bypass, probed with the real `RegisterLeaveGuard` and `GridLeaveGuard`** in a `createMemoryRouter` data router, with the real `SessionLifecycle` and `useSignOut` (8/8 pass):
+  - an ordinary navigation is blocked (the discard dialog opens and the page stays);
+  - a manual sign-out is still guarded;
+  - an idle sign-out reaches `/login` with "You were signed out after 30 minutes of inactivity.";
+  - a remote sign-out reaches `/login` with state `remote` and no idle notice.
+
+  All five `useBlocker` guards (register, overview, gantt pins, matrix grid, rubric) use `shouldBlockLeave`, confirmed by grep. Only `useSignOut` sets `signedOut`.
+- From the first pass, still valid: a failing `version.json` never reloads, and an idle sign-out with a dialog open works (Stay signed in keeps the dialog; no Save fires).
+
+**Checks:**
+- `tsc -b`: exit 0.
+- `eslint .`: 0 errors and 9 warnings. All are pre-existing, in `routes.tsx`, `density-zone.tsx`, `audit-log-table.tsx`, `engineer-utilization-heatmap.tsx`, `project-list-dialog.tsx` and `projects-table.tsx`. None is in a P49 or R01 file.
+- Targeted vitest (`--maxWorkers=2`): `src/lib/auth`, `src/components/session`, `version-watcher.test`, `components/shared/priority-move`, `src/pages`, `components/layout`, `src/app`, `surfaces/projects`, `MatrixPage.board.test`, `matrix/components`, `surfaces/workflow-settings`, `planning/whatif`, `planning/components/overview` and `gantt/components`. 85 files, **829/830 pass.** The only failure is the known `app.test.tsx` "navigates to the Project Execution Timeline surface on nav click".
+- `vite build`: OK. `dist/version.json` = `{"buildId":"local-mwmmv7a0"}`, and the same id is in `dist/assets/index-DUe1d14N.js`.
+- Full suite: not run (the machine is loaded).
+
+**Residual, non-blocking:**
+- The chunk-error reload still ignores the edit-session store by design. An unhandled lazy-import rejection inside an editing page would reload, but the `beforeunload` guards still prompt on the guarded surfaces.
+- The first-pass coverage figures (96.9 % lines on the P49 files) were not re-measured. R01 added tests and no untested branches were seen.
+
+Verdict: **PASS** (the QA leg of P49-T03). The workflow-auditor must still re-check W49-1 before P49 closes.
+
+## [2026-11-19] P49-T03 — gate closed: security PASS, workflow PASS on re-check, qa PASS on re-check — orchestrator
+
+- **Security:** PASS. S49-L1 was fixed in R01. The Info items (a browser that restores sessions also restores sessionStorage, and the chunk-error reload limits) are accepted.
+- **Workflow:** first FAIL, W49-1 (auto reload could happen while work was pending outside the edit-session store). Fixed by P49-R01; the re-check is a PASS. Advisory B1: freshness polling stays paused while a "Timeline updated" panel, a What-if scenario or staged Matrix edits are held. B2: a hung run stream keeps polling paused. Both are open as advisories.
+- **QA:** first FAIL, Q49-1 (Workflow Settings drafts and the register lost on reload). Fixed by P49-R01; the re-check is a PASS (829/830 targeted; the known `app.test` Gantt-nav failure).
+- **Defaults chosen by the orchestrator:** 30 min idle, a 2-min warning, a 5-min version check. The owner can change them.

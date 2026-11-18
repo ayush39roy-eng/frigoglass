@@ -9,6 +9,7 @@ import { renderWithProviders } from '@/test/render';
 import { ROLE_MATRIX } from '@/test/roles';
 import { seedSession } from '@/test/session';
 import { seriousAxeViolations } from '@/test/axe';
+import { autoReloadAllowed, editSessionHeld } from '@/test/reload-safety';
 import { createQueryClient } from '@/lib/query-client';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useHubFilterStore } from '@/stores/hub-filter';
@@ -386,6 +387,20 @@ describe('Projects page — Export menu', () => {
 });
 
 describe('Projects page — registration drawer', () => {
+  it('P49-R01 (W49-1a): the open drawer holds an auto reload until it closes', async () => {
+    const user = userEvent.setup();
+    useDashboardProjects.mockReturnValue(ok([]));
+    renderWithProviders(<ProjectsPage />);
+    expect(editSessionHeld()).toBe(false);
+    await user.click(screen.getAllByRole('button', { name: 'Register project' })[0]!);
+    await screen.findByRole('dialog', { name: 'Register a project' });
+    expect(editSessionHeld()).toBe(true);
+    expect(autoReloadAllowed()).toBe(false);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Register a project' })).not.toBeInTheDocument());
+    expect(editSessionHeld()).toBe(false);
+  });
+
   it('Register project (P23: no Draft step) POSTs /projects with the required fields, then highlights the new row', async () => {
     const user = userEvent.setup();
     const created = { ...project, id: 'new-1', name: 'Cooler B', status: 'In Queue' as const };

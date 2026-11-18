@@ -2714,3 +2714,12 @@ Owner: "make sure capacity planning is working properly; also the What-if scenar
 | P48-T02 | Frontend: "Saved scenarios" panel on the Import plan (Excel) upload step, listing every saved scenario visible to the user (the existing paged list, grouped by source file and date) with Open (read-only stored result, no file needed), Export, Rename / Delete when `can_edit`, and Add to compare; reuse the P41 library; tests | frontend-builder | — | tsc/eslint/vitest; MEMORY | DONE (MEMORY 2026-11-18 P48-T02) |
 | P48-T03 | Gate: qa, workflow, security | three gatekeepers | T01, T02 | three PASSes | DONE (MEMORY 2026-11-18 P48-T03 gate closed) |
 | P48-R01 | QA48-2: opening or comparing a saved scenario from the upload panel while a workbook is parsed but not simulated must not simulate and must show the view (route to results whenever a scenario view or panel compare is open; skip the results effect then); tests incl. the 422 variant | frontend-builder | T03 (qa) | whatif vitest; tsc/eslint; MEMORY | DONE (MEMORY 2026-11-18 P48-R01) |
+
+## P49 — Auto logout on browser close and after 30 min idle; auto reload on a new version (ADR 0060)
+
+| ID | Task | Owner | Depends | Verification | Status |
+|---|---|---|---|---|---|
+| P49-T01 | ADR 0060, plan | orchestrator | — | docs | DONE (MEMORY 2026-11-18 P49-T01) |
+| P49-T02 | Frontend: L1 sessionStorage-only login + BroadcastChannel tab handshake + remove Remember me + purge old localStorage key; L2 30-min idle logout with 2-min warning across tabs, notice on login page, full page load on sign-in; R1 `version.json` build id, 5-min / on-visible check, reload when not editing else banner, chunk-load-failure reload with loop guard; tests | frontend-builder | T01 | tsc/eslint/vitest; vite build emits version.json; MEMORY | DONE (MEMORY 2026-11-18 P49-T02) |
+| P49-T03 | Gate: qa, workflow, security | three gatekeepers | T02 | three PASSes | DONE (MEMORY 2026-11-19 P49-T03 gate closed) |
+| P49-R01 | Workflow W49-1: auto reload waits for all pending work. `isSafeToReload` also requires no pending mutation, no followed run, no what-if request pending; register inline drafts / Save-then-recalc, priority-move panel running/updated, What-if planner scenario/request, Matrix scenario staged edits register with the edit session; tests per state. Also A2 (idle sign-out reaches login with the inactivity notice even with a leave guard) and S49-L1 (remove the dead "Remembered" row in profile.tsx) | frontend-builder | T03 (workflow) | targeted vitest; tsc/eslint; MEMORY | DONE (MEMORY 2026-11-19 P49-R01) |

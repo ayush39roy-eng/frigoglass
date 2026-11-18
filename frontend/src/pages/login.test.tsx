@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ApiError } from '@/lib/api/client';
 import { getDevUserEmail, setDevUserEmail } from '@/lib/api/dev-user';
+import { IDLE_TICK_MS } from '@/components/session/session-lifecycle';
+import { LAST_ACTIVITY_KEY } from '@/lib/auth/idle';
+import { browserNavigation } from '@/lib/browser-navigation';
+import { createQueryClient } from '@/lib/query-client';
 import { seriousAxeViolations } from '@/test/axe';
-import { renderWithProviders } from '@/test/render';
+import { renderApp, renderWithProviders } from '@/test/render';
 import { makeMe } from '@/test/session';
 import { useSessionStore } from '@/stores/session';
 
@@ -22,14 +28,18 @@ const ADMIN = { email: 'admin@example.com', full_name: 'Admin', roles: ['Admin']
 
 import LoginPage from './login';
 
+let assign: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  assign = vi.spyOn(browserNavigation, 'assign').mockImplementation(() => undefined);
   useSessionStore.getState().reset();
   setDevUserEmail(null);
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  assign.mockRestore();
 });
 
 describe('LoginPage (ADR 0013, P46 / ADR 0058)', () => {
@@ -77,37 +87,72 @@ describe('LoginPage (ADR 0013, P46 / ADR 0058)', () => {
     await waitFor(() => expect(getDevUserEmail()).toBe('admin@example.com'));
   });
 
-  it('P31-R01: "Remember me" is on by default, so the test user lands in localStorage (survives reload / new tab)', async () => {
+  it('ADR 0060 L1: no "Remember me"; the test user is kept in this browser session only', async () => {
     const user = userEvent.setup();
     api.fetchDevUsers.mockResolvedValue([SUPER, ADMIN]);
     api.devLogin.mockResolvedValue(SUPER);
     api.fetchMe.mockResolvedValue(makeMe({ email: SUPER.email, dev_mode: true }));
     renderWithProviders(<LoginPage />, { session: null });
 
-    const remember = await screen.findByRole('checkbox', { name: 'Remember me' });
-    expect(remember).toBeChecked();
-    await user.type(screen.getByLabelText('Username or email'), 'superadmin');
-    await user.type(screen.getByLabelText('Password'), 'superadmin');
-    await user.click(screen.getByRole('button', { name: 'Sign in' }));
-
-    await waitFor(() => expect(window.localStorage.getItem('rpd-dev-user-email')).toBe('superadmin@example.com'));
-    expect(window.sessionStorage.getItem('rpd-dev-user-email')).toBeNull();
-  });
-
-  it('P31-R01: unticking "Remember me" keeps the test user in this tab only', async () => {
-    const user = userEvent.setup();
-    api.fetchDevUsers.mockResolvedValue([SUPER, ADMIN]);
-    api.devLogin.mockResolvedValue(SUPER);
-    api.fetchMe.mockResolvedValue(makeMe({ email: SUPER.email, dev_mode: true }));
-    renderWithProviders(<LoginPage />, { session: null });
-
-    await user.click(await screen.findByRole('checkbox', { name: 'Remember me' }));
+    await screen.findByTestId('login-dev-picker');
+    expect(screen.queryByRole('checkbox', { name: /Remember me/i })).toBeNull();
+    expect(screen.queryByText(/Remember me/i)).toBeNull();
     await user.type(screen.getByLabelText('Username or email'), 'superadmin');
     await user.type(screen.getByLabelText('Password'), 'superadmin');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => expect(window.sessionStorage.getItem('rpd-dev-user-email')).toBe('superadmin@example.com'));
     expect(window.localStorage.getItem('rpd-dev-user-email')).toBeNull();
+  });
+
+  it('ADR 0060: sign-in ends with a full page load onto the start page, and counts as activity', async () => {
+    const user = userEvent.setup();
+    api.fetchDevUsers.mockResolvedValue([SUPER, ADMIN]);
+    api.devLogin.mockResolvedValue(SUPER);
+    api.fetchMe.mockResolvedValue(makeMe({ email: SUPER.email, dev_mode: true }));
+    window.localStorage.setItem(LAST_ACTIVITY_KEY, '1');
+    renderWithProviders(<LoginPage />, { session: null });
+
+    await user.type(await screen.findByLabelText('Username or email'), 'superadmin');
+    await user.type(screen.getByLabelText('Password'), 'superadmin');
+    const before = Date.now();
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
+    expect(assign).toHaveBeenCalledWith('/');
+    expect(Number(window.localStorage.getItem(LAST_ACTIVITY_KEY))).toBeGreaterThanOrEqual(before);
+  });
+
+  it('ADR 0060 L2: after an idle sign-out the page shows the inactivity notice; a normal visit does not', async () => {
+    api.fetchDevUsers.mockResolvedValue([SUPER, ADMIN]);
+    const { unmount } = render(
+      <QueryClientProvider client={createQueryClient()}>
+        <MemoryRouter initialEntries={[{ pathname: '/login', state: { signedOut: 'idle' } }]}>
+          <LoginPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByTestId('login-idle-notice')).toHaveTextContent(
+      'You were signed out after 30 minutes of inactivity.',
+    );
+    unmount();
+
+    renderWithProviders(<LoginPage />, { session: null, route: '/login' });
+    await screen.findByTestId('login-dev-picker');
+    expect(screen.queryByTestId('login-idle-notice')).toBeNull();
+  });
+
+  it('ADR 0060 L2 / Q49: the login route runs no idle timer (no activity record, no warning, no sign-out)', async () => {
+    api.fetchDevUsers.mockResolvedValue([SUPER, ADMIN]);
+    window.localStorage.removeItem(LAST_ACTIVITY_KEY);
+    const setInterval = vi.spyOn(window, 'setInterval');
+    renderApp('/login', { session: null });
+    await screen.findByTestId('login-dev-picker');
+    // The idle monitor creates the shared activity time on mount and ticks every second; neither happens here.
+    expect(window.localStorage.getItem(LAST_ACTIVITY_KEY)).toBeNull();
+    expect(setInterval.mock.calls.some(([, ms]) => ms === IDLE_TICK_MS)).toBe(false);
+    expect(screen.queryByTestId('idle-warning')).toBeNull();
+    setInterval.mockRestore();
   });
 
   it('P46: a wrong password (401) is refused with one plain message, without signing in', async () => {

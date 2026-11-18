@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   AlertCircle,
   CalendarRange,
+  Clock,
   Eye,
   EyeOff,
   KeyRound,
@@ -17,14 +18,16 @@ import {
 
 import { CoolerIllustration } from '@/components/brand/cooler-illustration';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ApiError } from '@/lib/api/client';
 import { getDevUserEmail, setDevUserEmail } from '@/lib/api/dev-user';
 import { devLogin, fetchDevUsers } from '@/lib/api/session';
+import { IDLE_SIGNED_OUT_NOTICE, writeSharedLastActivity } from '@/lib/auth/idle';
 import { devLoginErrorMessage, loginFormError } from '@/lib/auth/test-logins';
+import type { LoginLocationState } from '@/lib/auth/use-sign-out';
+import { browserNavigation } from '@/lib/browser-navigation';
 import { useMotionTokens } from '@/lib/motion';
 import { queryKeys } from '@/lib/query-keys';
 import { resolveStartPage, usePreferencesStore } from '@/stores/preferences';
@@ -43,12 +46,21 @@ import { buildAuthorizeUrl, getOidcConfig } from './login-sso';
  *  - PRODUCTION (the probe 404s or fails): the OIDC "Sign in with SSO" card.
  *
  * Left half: brand panel with the bundled cooler illustration (no external image).
+ *
+ * ADR 0060 (P49): no "Remember me" — the session lives in this browser
+ * session only. Sign-in ends with a full page load, so whoever signs in runs
+ * the newest deployed bundle. After an idle sign-out the page shows the
+ * inactivity notice. There is no idle timer on this page.
  */
 
 const GATEWAY_STATUSES = new Set([502, 503, 504]);
 
 export default function LoginPage(): React.JSX.Element {
   const navigate = useNavigate();
+  const location = useLocation();
+  const idleNotice = (location.state as LoginLocationState | null)?.signedOut === 'idle';
+  // Set while the sign-in's full page load is under way, so the SPA redirect below stays out of its way.
+  const leavingRef = React.useRef(false);
   const status = useSessionStore((s) => s.status);
   const me = useSessionStore((s) => s.me);
   const load = useSessionStore((s) => s.load);
@@ -57,7 +69,7 @@ export default function LoginPage(): React.JSX.Element {
   // Already signed in (and, in dev mode, explicitly so) → straight into the app.
   const signedIn = status === 'ready' && (!me?.dev_mode || getDevUserEmail() !== null);
   React.useEffect(() => {
-    if (signedIn) navigate(resolveStartPage(me, startPage), { replace: true });
+    if (signedIn && !leavingRef.current) navigate(resolveStartPage(me, startPage), { replace: true });
   }, [signedIn, navigate, startPage, me]);
 
   const devUsers = useQuery({
@@ -77,10 +89,14 @@ export default function LoginPage(): React.JSX.Element {
 
   if (signedIn) return <></>;
 
-  const handleSignIn = async (email: string, remember: boolean): Promise<void> => {
-    setDevUserEmail(email, { remember });
+  const handleSignIn = async (email: string): Promise<void> => {
+    leavingRef.current = true;
+    setDevUserEmail(email);
+    // ADR 0060 L2: signing in is activity, so a stale shared time cannot sign the new session out.
+    writeSharedLastActivity(Date.now());
     await load();
-    navigate(resolveStartPage(useSessionStore.getState().me, startPage), { replace: true });
+    // ADR 0060: a full page load, so the newest deployed version runs.
+    browserNavigation.assign(resolveStartPage(useSessionStore.getState().me, startPage));
   };
 
   const isDevMode = devUsers.isSuccess;
@@ -101,6 +117,17 @@ export default function LoginPage(): React.JSX.Element {
                 Sign in to the Frigoglass R&amp;D and Product Development portfolio planner.
               </p>
             </div>
+
+            {idleNotice ? (
+              <p
+                role="status"
+                data-testid="login-idle-notice"
+                className="flex items-start gap-2 rounded-xl bg-warning-subtle px-s3 py-s2 text-sm font-medium text-warning-subtle-fg"
+              >
+                <Clock className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                {IDLE_SIGNED_OUT_NOTICE}
+              </p>
+            ) : null}
 
             {devUsers.isPending ? (
               <div className="space-y-3 rounded-card border-2 border-border-strong/60 bg-surface p-card">
@@ -188,14 +215,11 @@ function BrandPanel(): React.JSX.Element {
 function TestLoginForm({
   onSignIn,
 }: {
-  onSignIn: (email: string, remember: boolean) => Promise<void>;
+  onSignIn: (email: string) => Promise<void>;
 }): React.JSX.Element {
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [showPassword, setShowPassword] = React.useState(false);
-  // P31-R01: on by default, so a reload or a new tab keeps the signed-in test
-  // user (localStorage). Sign-out clears both stores (`use-sign-out.ts`).
-  const [remember, setRemember] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
 
@@ -212,7 +236,7 @@ function TestLoginForm({
     try {
       // P46 (ADR 0058 L1): the server checks the password; the browser never does.
       const user = await devLogin({ username: username.trim(), password });
-      await onSignIn(user.email, remember);
+      await onSignIn(user.email);
     } catch (err) {
       setError(devLoginErrorMessage(err));
     } finally {
@@ -276,11 +300,6 @@ function TestLoginForm({
             </button>
           </div>
         </div>
-
-        <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-text-muted">
-          <Checkbox checked={remember} onCheckedChange={(v) => setRemember(v === true)} aria-label="Remember me" />
-          Remember me on this browser
-        </label>
 
         {error ? (
           <p role="alert" className="flex items-start gap-2 rounded-xl bg-danger-subtle px-s3 py-s2 text-sm font-medium text-danger-subtle-fg">

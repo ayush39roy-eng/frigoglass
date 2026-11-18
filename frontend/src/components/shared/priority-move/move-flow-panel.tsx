@@ -7,6 +7,7 @@ import { apiErrorMessage } from '@/lib/api/error-messages';
 import type { ScheduleRunChanges } from '@/lib/api/priority-move';
 import type { RunFollowState } from '@/lib/use-schedule-run-follow';
 import { cn } from '@/lib/utils';
+import { useEditSession } from '@/stores/edit-session';
 
 import { RunProgressStatus } from '../run-progress-status';
 import { MOVE_COPY, rankPositionCopy } from './move-copy';
@@ -89,6 +90,8 @@ export function MoveFlowPanel({
   followUpWatching?: boolean;
 }): React.JSX.Element | null {
   const headingId = React.useId();
+  // P49-R01 (ADR 0060 R1, W49-1c): a followed run and its "updated" result hold an auto reload.
+  useEditSession(flow.kind === 'running' || flow.kind === 'updated');
   if (flow.kind !== 'running' && flow.kind !== 'updated' && flow.kind !== 'notice') return null;
   const closable = flow.kind !== 'running';
   const title =

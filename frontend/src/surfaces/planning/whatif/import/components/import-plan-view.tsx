@@ -3,6 +3,7 @@ import { Check } from 'lucide-react';
 
 import { CardInfo } from '@/components/ui/card-info';
 import { cn } from '@/lib/utils';
+import { useEditSession } from '@/stores/edit-session';
 
 import { buildSimulateRequest } from '../import-rows';
 import { useImportPlan, type ImportStep } from '../import-store';
@@ -98,6 +99,8 @@ export default function ImportPlanView(): React.JSX.Element {
     }
   });
   const { run } = simulation;
+  // P49-R01 (ADR 0060 R1, W49-1d): a loaded workbook (session only) holds an auto reload.
+  useEditSession(parsed !== null);
 
   const body: ImportSimulateRequest = React.useMemo(
     () => buildSimulateRequest(rows, options, edits, excludedPlanIds),

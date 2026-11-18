@@ -6,6 +6,7 @@ import { CONFLICT_COPY, editConflicts, keepMineBase, type EditConflict } from '@
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { fetchScheduleRunChanges } from '@/lib/api/priority-move';
 import { queryKeys } from '@/lib/query-keys';
+import { useEditSession } from '@/stores/edit-session';
 import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
 import { useEditConflict } from '@/lib/use-edit-conflict';
 import { useProjectConflictFormat } from '@/lib/use-project-conflict-format';
@@ -128,6 +129,9 @@ export function useRegisterSave() {
   const watcher = useFollowUpRunWatcher();
   const { start: startWatcher } = watcher;
   const [flow, setFlow] = React.useState<RegisterSaveFlow>({ kind: 'idle' });
+  // P49-R01 (ADR 0060 R1, W49-1b): saving and following the recalculation
+  // hold an auto reload until the result is shown.
+  useEditSession(flow.kind === 'saving' || flow.kind === 'running');
   /** Register popup contract §2.5: the served per-step duration changes of
    *  the last successful Save (shown by the panel, never recomputed). */
   const [effChanges, setEffChanges] = React.useState<readonly RegisterEditEffChange[]>([]);

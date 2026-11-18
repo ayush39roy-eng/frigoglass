@@ -2,6 +2,7 @@ import * as React from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createBrowserRouter } from 'react-router-dom';
 
+import { VersionWatcher } from '@/components/shared/version-watcher';
 import { ThemeProvider } from '@/components/theme/theme-provider';
 import { createQueryClient } from '@/lib/query-client';
 
@@ -15,6 +16,8 @@ export function App(): React.JSX.Element {
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
+        {/* P49 (ADR 0060 R1): reload onto a new deploy when nothing is being edited. */}
+        <VersionWatcher />
       </QueryClientProvider>
     </ThemeProvider>
   );

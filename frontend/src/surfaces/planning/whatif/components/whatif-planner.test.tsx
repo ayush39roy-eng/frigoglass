@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { ApiError } from '@/lib/api/client';
 import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
+import { autoReloadAllowed, editSessionHeld } from '@/test/reload-safety';
 
 import type { ChamberRead } from '../../api/types';
 import { askFixture, estimateFixture, INDIA_SCOPE, simulateFixture, solveFixture } from '../test-fixtures';
@@ -231,6 +232,18 @@ describe('WhatIfPlanner', () => {
     await user.click(screen.getByRole('button', { name: /Clear scenario/ }));
     expect(screen.queryByRole('group', { name: /Added projects/ })).not.toBeInTheDocument();
     expect(useWhatIfScenario.getState().basis).toBe('year');
+  });
+
+  it('P49-R01 (W49-1d): a built scenario holds an auto reload; clearing it releases it', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<WhatIfPlanner chambers={CHAMBERS} />);
+    expect(editSessionHeld()).toBe(false);
+    await addProject(user);
+    expect(editSessionHeld()).toBe(true);
+    expect(autoReloadAllowed()).toBe(false);
+    await user.click(screen.getByRole('button', { name: /Clear scenario/ }));
+    await waitFor(() => expect(editSessionHeld()).toBe(false));
+    expect(autoReloadAllowed()).toBe(true);
   });
 
   it('marks a result stale when the scenario changes after it was calculated', async () => {

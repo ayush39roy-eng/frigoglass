@@ -2,6 +2,7 @@ import * as React from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 
 import { useDebouncedValue } from '@/lib/use-debounced-value';
+import { useEditSession } from '@/stores/edit-session';
 import type { ProjectCategory, WorkflowId } from '@/types/enums';
 
 import { previewTimeline } from '../api/workflow-settings-api';
@@ -61,6 +62,8 @@ export function useTemplateEditor({
     setDrafts((prev) => pruneDrafts(prev, saved));
   }
   const overrides = React.useMemo(() => draftOverrides(drafts), [drafts]);
+  // P49-R01 (ADR 0060 R1, Q49-1a): unsaved timeline drafts hold an auto reload.
+  useEditSession(overrides.length > 0);
   const debounced = useDebouncedValue(overrides, PREVIEW_DEBOUNCE_MS);
 
   const preview = useQuery({

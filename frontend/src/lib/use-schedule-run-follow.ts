@@ -3,6 +3,7 @@ import type { QueryClient } from '@tanstack/react-query';
 
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { streamSolverProgress, type SolverProgressEvent } from '@/lib/api/sse';
+import { useEditSession } from '@/stores/edit-session';
 
 /**
  * Follow one schedule run over the P3-T05 progress stream
@@ -131,5 +132,7 @@ export function useScheduleRunFollow() {
   }, []);
 
   const busy = state.phase === 'dispatching' || state.phase === 'running';
+  // P49-R01 (ADR 0060 R1, W49-1): a run being followed holds an auto reload, on every surface.
+  useEditSession(busy);
   return { state, begin, follow, fail, reset, busy };
 }

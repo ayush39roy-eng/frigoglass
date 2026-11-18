@@ -5,6 +5,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 
 import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
+import { autoReloadAllowed, editSessionHeld } from '@/test/reload-safety';
 import { ROLE_MATRIX } from '@/test/roles';
 import type { ProjectFilterParams, ProjectFilterResult, ProjectFilterRow } from '@/surfaces/dashboard/api/types';
 import { P13_ROW_DEFAULTS } from '@/surfaces/dashboard/test-fixtures';
@@ -410,6 +411,55 @@ describe('Projects register — Edit mode (D35-2)', () => {
     await waitFor(() => expect(panel).toHaveAttribute('data-kind', 'updated'));
     expect(sse.stream).toHaveBeenCalledWith('run-9', expect.any(Function), expect.anything());
     expect(panel).toHaveTextContent('Timeline updated');
+  });
+});
+
+describe('Projects register — P49-R01 auto reload waits (ADR 0060 R1, W49-1a/b)', () => {
+  it('a row in edit and an unsaved draft hold an auto reload; discarding releases it', async () => {
+    const user = userEvent.setup();
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha' })]));
+    renderWithProviders(<ProjectsPage />);
+    expect(editSessionHeld()).toBe(false);
+    await startEdit(user, 'Alpha');
+    expect(editSessionHeld()).toBe(true);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Alpha' }), 'On Hold');
+    expect(autoReloadAllowed()).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(within(await screen.findByTestId('register-discard-dialog')).getByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(editSessionHeld()).toBe(false));
+    expect(autoReloadAllowed()).toBe(true);
+  });
+
+  it('Save-then-recalc holds an auto reload while saving and while the run is followed, until the result shows', async () => {
+    const user = userEvent.setup();
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha' })]));
+    let answerSave: (v: unknown) => void = () => undefined;
+    http.send.mockImplementation(() => new Promise((resolve) => (answerSave = resolve)));
+    let finishRun: (v: unknown) => void = () => undefined;
+    sse.stream.mockImplementation(() => new Promise((resolve) => (finishRun = resolve)));
+    renderWithProviders(<ProjectsPage />);
+    await startEdit(user, 'Alpha');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Alpha' }), 'On Hold');
+    await user.click(screen.getByTestId('register-edit-save'));
+
+    // Saving: the POST is in flight (the panel shows only once it answers).
+    await waitFor(() => expect(http.send).toHaveBeenCalled());
+    expect(editSessionHeld()).toBe(true);
+
+    await act(async () => {
+      answerSave({ ...NOT_NEEDED, recalc_status: 'queued', schedule_run_id: 'run-9', task_id: 't' });
+    });
+    const panel = await screen.findByTestId('register-save-panel');
+    await waitFor(() => expect(panel).toHaveAttribute('data-kind', 'running'));
+    expect(screen.queryByTestId('register-edit-bar')).not.toBeInTheDocument();
+    expect(editSessionHeld()).toBe(true);
+    expect(autoReloadAllowed()).toBe(false);
+
+    await act(async () => {
+      finishRun({ status: 'completed' });
+    });
+    await waitFor(() => expect(panel).toHaveAttribute('data-kind', 'updated'));
+    expect(editSessionHeld()).toBe(false);
   });
 });
 

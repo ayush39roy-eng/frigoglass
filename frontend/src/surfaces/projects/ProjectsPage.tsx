@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { captureBase, forgetBase, type BaseSnapshots } from '@/lib/api/edit-conflict';
 import { editFreshness } from '@/lib/use-edit-freshness';
+import { useEditSession } from '@/stores/edit-session';
 import { useHubFilter } from '@/stores/hub-filter';
 import { usePermission, useSessionStore } from '@/stores/session';
 import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
@@ -457,6 +458,9 @@ export default function ProjectsPage(): React.JSX.Element {
   const changedSet = React.useMemo(() => new Set(changedIds), [changedIds]);
   /** Some row is in edit or holds unsaved changes. */
   const sessionActive = editingIds.size > 0 || changedIds.length > 0;
+  // P49-R01 (ADR 0060 R1, W49-1a): inline edits and the open drawer hold an
+  // auto reload (the "new version" bar shows instead of the browser's prompt).
+  useEditSession(sessionActive || drawer !== null);
   const unsavedEdits = changedIds.length > 0;
 
   const clearRowError = (id: string): void =>

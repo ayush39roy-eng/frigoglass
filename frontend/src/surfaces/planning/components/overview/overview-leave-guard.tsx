@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { UNSAFE_DataRouterContext, useBlocker } from 'react-router-dom';
 
+import { shouldBlockLeave } from '@/lib/auth/leave-guard';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
@@ -29,7 +30,7 @@ export function OverviewLeaveGuard(): React.JSX.Element | null {
 }
 
 function RouterLeaveGuard({ when }: { when: boolean }): React.JSX.Element {
-  const blocker = useBlocker(({ currentLocation, nextLocation }) => when && currentLocation.pathname !== nextLocation.pathname);
+  const blocker = useBlocker((args) => shouldBlockLeave(when, args));
   const open = blocker.state === 'blocked';
   return (
     <Dialog

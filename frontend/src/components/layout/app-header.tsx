@@ -172,13 +172,13 @@ function IdentityStack(): React.JSX.Element {
             </Link>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem className="gap-s3 text-danger focus:text-danger" onSelect={signOut}>
+          <DropdownMenuItem className="gap-s3 text-danger focus:text-danger" onSelect={() => signOut()}>
             <LogOut className="size-4" aria-hidden="true" />
             Sign out
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <Button variant="ghost" size="icon" aria-label="Sign out" className="rounded-full" onClick={signOut}>
+      <Button variant="ghost" size="icon" aria-label="Sign out" className="rounded-full" onClick={() => signOut()}>
         <LogOut />
       </Button>
     </div>

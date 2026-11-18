@@ -3,6 +3,7 @@ import { Link, useRouteError } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/shared/empty-state';
+import { isChunkLoadError, reloadForChunkError } from '@/lib/app-version';
 
 /** 404 route + the router `errorElement` fallback. */
 export function NotFound({ isRouteError = false }: { isRouteError?: boolean }): React.JSX.Element {
@@ -33,5 +34,9 @@ export function NotFound({ isRouteError = false }: { isRouteError?: boolean }): 
 export function RouteErrorBoundary(): React.JSX.Element {
   const error = useRouteError();
   console.error('[route error]', error);
+  // P49 (ADR 0060 R1): a lazy chunk removed by a deploy reloads once (guarded against a loop).
+  React.useEffect(() => {
+    if (isChunkLoadError(error)) reloadForChunkError();
+  }, [error]);
   return <NotFound isRouteError />;
 }

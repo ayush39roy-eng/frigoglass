@@ -1,7 +1,29 @@
 /// <reference types="vitest/config" />
 import { fileURLToPath, URL } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+
+/**
+ * P49 (ADR 0060 R1): one id per build. The bundle knows it (`__APP_BUILD_ID__`)
+ * and the build writes it to `dist/version.json` next to `index.html`; an open
+ * tab polls that file and reloads onto a new deploy (`src/lib/app-version.ts`).
+ * Render sets RENDER_GIT_COMMIT; the time part makes every build distinct.
+ */
+const APP_BUILD_ID = `${(process.env.RENDER_GIT_COMMIT ?? 'local').slice(0, 12)}-${Date.now().toString(36)}`;
+
+function versionJsonPlugin(): Plugin {
+  return {
+    name: 'rpd-version-json',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: `${JSON.stringify({ buildId: APP_BUILD_ID })}\n`,
+      });
+    },
+  };
+}
 
 // P4-T09 (qa-inspector): `/api` -> the real FastAPI backend, dev/preview-server-side
 // only (never applied to `vite build` output). Used exclusively by the Playwright E2E
@@ -14,7 +36,10 @@ const E2E_BACKEND_TARGET = process.env.RPD_E2E_BACKEND_URL ?? 'http://localhost:
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), versionJsonPlugin()],
+  define: {
+    __APP_BUILD_ID__: JSON.stringify(APP_BUILD_ID),
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

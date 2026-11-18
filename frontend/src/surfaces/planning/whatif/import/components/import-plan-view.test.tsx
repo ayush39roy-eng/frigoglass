@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
+import { autoReloadAllowed, editSessionHeld } from '@/test/reload-safety';
 
 import { useImportPlan } from '../import-store';
 import type { ImportSimulateRequest } from '../import-types';
@@ -274,6 +275,17 @@ describe('Import plan (Excel)', () => {
     await user.click(screen.getByRole('button', { name: 'Parse file' }));
     // P48: the saved-scenario panel on this step reads its own list; the parse error is the card's.
     expect(await within(screen.getByTestId('import-upload-card')).findByRole('alert')).toHaveTextContent(text);
+  });
+
+  it('P49-R01 (W49-1d): a loaded workbook holds an auto reload; reset releases it', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ImportPlanView />);
+    expect(editSessionHeld()).toBe(false);
+    await uploadAndParse(user);
+    expect(editSessionHeld()).toBe(true);
+    expect(autoReloadAllowed()).toBe(false);
+    act(() => useImportPlan.getState().reset());
+    await waitFor(() => expect(editSessionHeld()).toBe(false));
   });
 
   it('rejects a non-xlsx or oversized file before sending anything', async () => {
