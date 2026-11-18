@@ -82,16 +82,17 @@ export function StepPinCell({ project, step }: { project: GanttProjectRow; step:
       'aria-invalid': invalid || undefined,
       'aria-describedby': describedBy,
       // ADR 0024: no surface shows a week past W52. A planned week in the
-      // next year reads "›52"; the tooltip names its week of that year.
+      // next year shows as that year's week (plan week 53 → 1, owner
+      // 2026-11-18); the tooltip names the year.
       placeholder:
         placeholderWeek == null
           ? which === 'start' ? 'S' : 'E'
-          : placeholderWeek > WITHIN_YEAR_WEEK ? `›${String(WITHIN_YEAR_WEEK)}` : String(placeholderWeek),
+          : String(placeholderWeek > WITHIN_YEAR_WEEK ? placeholderWeek - WITHIN_YEAR_WEEK : placeholderWeek),
       title:
         reason ??
         `${which === 'start' ? 'Start week (inclusive)' : 'End week (inclusive)'}${
           placeholderWeek != null && placeholderWeek > WITHIN_YEAR_WEEK
-            ? ` — planned past W${String(WITHIN_YEAR_WEEK)}: spillover to ${years.spilloverYear} (week ${String(placeholderWeek - WITHIN_YEAR_WEEK)} of ${years.spilloverYear})`
+            ? ` — week ${String(placeholderWeek - WITHIN_YEAR_WEEK)} of ${years.spilloverYear} (spillover)`
             : ''
         }`,
       className: cn(

@@ -44681,3 +44681,17 @@ All 4 were confirmed to fail with the fix temporarily reverted (restored from a 
 - Owner saw 53/55/56 in the expanded step rows' Start/End boxes. Those were placeholders = served `planned_start_week` / `planned_end_week` (absolute plan weeks; 53 = W1 of the next year), breaking ADR 0024 "no surface shows a week past W52".
 - Fix: `gantt/components/step-pin-cell.tsx` shows "›52" as the placeholder for a planned week > `WITHIN_YEAR_WEEK`; the tooltip says "spillover to {next year} (week N of {next year})". Typed pins are still bounded to current week..W52 (R40-1). tsc/eslint clean, vitest `src/surfaces/gantt` 252 passed.
 - Also told the owner the Timeline axis stops at W52 by design (ADR 0024); offered an opt-in "Show 2027" (W53–W78) toggle — not built, awaiting answer.
+
+## [2026-11-18] P49-T01 — ADR 0060 auto logout and auto reload — orchestrator
+
+- The owner asked for three things: sign-out when the browser closes, sign-out after a long idle, and auto reload. The client saw stale screens because their tabs were never reloaded after today's deploys.
+- Decisions:
+  - the login is kept in `sessionStorage` only, with a BroadcastChannel tab handshake, and "Remember me" is removed;
+  - sign-out after 30 min idle across all tabs, with a 2-min warning;
+  - sign-in does a full page load;
+  - a `version.json` check every 5 min and when the tab becomes visible, reloading when nothing is being edited and otherwise showing a banner.
+- No backend or data change. The timeout and the poll interval are my defaults, not the owner's; both are single constants.
+
+## 2026-11-18 — Timeline step Start/End hints: next-year weeks restart at 1 (owner correction)
+
+- Owner: show plan week 53 as week 1, with the year (2027) on hover — not "›52". `step-pin-cell.tsx` placeholder now shows `week − 52` for a planned week past W52; tooltip "week N of {next year} (spillover)". Supersedes the "›52" form of the entry above. vitest `src/surfaces/gantt` 252 passed.
