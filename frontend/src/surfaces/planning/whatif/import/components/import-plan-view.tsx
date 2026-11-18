@@ -16,6 +16,10 @@ import { ResultsStep } from './results-step';
 import { ReviewStep } from './review-step';
 import { UploadStep } from './upload-step';
 
+function requestKey(body: ImportSimulateRequest, rerunNonce: number): string {
+  return `${String(rerunNonce)}|${JSON.stringify(body)}`;
+}
+
 const STEPS: { key: ImportStep; label: string }[] = [
   { key: 'upload', label: 'Upload' },
   { key: 'review', label: 'Review' },
@@ -91,8 +95,19 @@ export default function ImportPlanView(): React.JSX.Element {
 
   const lastSent = React.useRef<string | null>(null);
   const goToResults = React.useRef(false);
-  const simulation = useImportSimulation((res) => {
+  const settleWindow = useImportPlan((s) => s.settleWindow);
+  const simulation = useImportSimulation((res, sent) => {
     setResult(res);
+    if (sent.plan_window_rerun === true) {
+      // P50 (R49-13 / R49-19): the re-run's served window becomes the options, so a later
+      // Gantt drop sends a valid window. The equivalent body is marked as sent: no re-simulate.
+      settleWindow(res);
+      const st = useImportPlan.getState();
+      lastSent.current = requestKey(
+        buildSimulateRequest(st.rows, st.options, st.edits, st.excludedPlanIds),
+        st.rerunNonce,
+      );
+    }
     if (goToResults.current) {
       goToResults.current = false;
       setStep('results');
@@ -107,7 +122,7 @@ export default function ImportPlanView(): React.JSX.Element {
     [rows, options, edits, excludedPlanIds],
   );
   // P41: "Re-run on today's plan" bumps the nonce so an unchanged body is simulated again.
-  const bodyKey = React.useMemo(() => `${String(rerunNonce)}|${JSON.stringify(body)}`, [body, rerunNonce]);
+  const bodyKey = React.useMemo(() => requestKey(body, rerunNonce), [body, rerunNonce]);
 
   const compute = () => {
     // Stale edits are pruned from the map itself (the body never carries them anyway).

@@ -28,6 +28,7 @@ import {
 } from '../import-rows';
 import { useImportPlan } from '../import-store';
 import type { ImportParseIssue, ImportParseResponse, ImportRow } from '../import-types';
+import { bandHint, PRIORITY_SOURCE_LABEL } from '../plan-window';
 import { EngineerPicker } from './engineer-picker';
 
 const ROW_H = 52;
@@ -38,10 +39,10 @@ const RUNNING_LABEL = 'Running — schedules first';
 
 function priorityHint(row: ImportRow, original: ImportRow | undefined): string {
   if (original && original.priority !== row.priority) return 'edited';
-  if (row.priority_source === 'running') return 'running';
+  // P50 (ADR 0061 R49-3): a Yes in a "Must Do" / band column; a rank under it orders the row in its band.
+  if (row.priority_source === 'band') return bandHint(row.rank);
   if (row.priority_source === 'rank') return row.rank === null ? 'ranked' : `rank ${String(row.rank)}`;
-  if (row.priority_source === 'matched') return 'from plan';
-  return 'default';
+  return PRIORITY_SOURCE_LABEL[row.priority_source];
 }
 
 interface Ctx {

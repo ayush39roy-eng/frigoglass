@@ -74,7 +74,7 @@ export const importRowSchema: z.ZodType<ImportRow> = z.object({
   stage_raw: nstr,
   rank: nint,
   priority: z.enum(PROJECT_PRIORITIES),
-  priority_source: z.enum(['rank', 'running', 'matched', 'default']),
+  priority_source: z.enum(['band', 'rank', 'running', 'matched', 'default']),
   engineer_raw: nstr,
   leader: leaderSchema,
   matched_project_id: nstr,
@@ -88,7 +88,12 @@ export const importRowSchema: z.ZodType<ImportRow> = z.object({
   certification_testing_required: z.boolean(),
   step_weeks: z.record(z.string(), int),
   include: z.boolean(),
+  // P50 (R49-2): kept so the row goes back to /simulate as served (the server accepts it).
+  file_band: z.enum(['P1', 'P2', 'P3', 'P4']).nullable().optional(),
 });
+
+/** P50 (ADR 0061 R49-7, I40): a picker week with its server label. */
+const planWeekChoice = z.object({ week: int, label: z.string() });
 
 const stepMetaSchema = z.object({
   workflow,
@@ -145,6 +150,9 @@ export const importParseResponseSchema: z.ZodType<ImportParseResponse> = z.objec
     derived_status: int,
     not_a_project: int,
   }),
+  // P50 (D1): optional so a server without them still validates (no pickers then).
+  plan_from_min_week: int.optional(),
+  plan_week_choices: z.array(planWeekChoice).optional(),
 });
 
 const windowFigure = z.object({
@@ -357,6 +365,13 @@ export const importSimulateResponseSchema: z.ZodType<ImportSimulateResponse> = z
   workings: z.array(z.string()),
   breakdowns: breakdowns.optional(),
   plan_projects: z.array(planProjectSchema).optional(),
+  // P50 (ADR 0061, D2): the resolved plan window, as served (optional for stored results).
+  plan_from_week: nint.optional(),
+  plan_from_min_week: nint.optional(),
+  plan_from_label: nstr.optional(),
+  plan_until_week: nint.optional(),
+  plan_window_label: nstr.optional(),
+  plan_week_choices: z.array(planWeekChoice).optional(),
 });
 
 // --- P41: import format and saved scenarios (docs/API_CONTRACT_P41.md A / C) ---------------
@@ -397,6 +412,10 @@ const simulateRequestSchema: z.ZodType<ImportSimulateRequest> = z.object({
     }),
   ),
   exclude_plan_project_ids: z.array(z.string()).optional(),
+  // P50 (API_CONTRACT_P41 §F): the stored resolved window, sent back on a re-run.
+  plan_from_week: nint.optional(),
+  plan_until_week: nint.optional(),
+  plan_window_rerun: z.boolean().optional(),
 });
 
 const savedSummaryShape = {
@@ -413,6 +432,9 @@ const savedSummaryShape = {
   mode: z.enum(['merge', 'file_only']),
   plan_year_end_week: int,
   simulated_week: int,
+  // P50 (§F): served for every row (older rows filled by the server); optional for fixtures.
+  plan_from_week: int.optional(),
+  plan_until_week: int.optional(),
   plan_version: nint,
   hub_codes: z.array(z.string()),
   kpis: kpisSchema,

@@ -43,6 +43,9 @@ export interface StoredMeta {
   sourceSha256: string;
   simulatedWeek: number;
   planVersion: number | null;
+  /** P50 (API_CONTRACT_P41 §F): the stored "Plan from" / "Plan until" weeks. */
+  planFromWeek?: number | undefined;
+  planUntilWeek?: number | undefined;
   createdByName: string | null;
   createdAt: string;
   canEdit: boolean;

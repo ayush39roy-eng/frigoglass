@@ -7,8 +7,9 @@ import type {
   ImportSimulateRequest,
   ImportSimulateResponse,
   ImportStepEdit,
-  PlanYearEndWeek,
 } from './import-types';
+import { windowOptionsOf } from './plan-window';
+import { optionsOf } from './saved-scenarios';
 
 /**
  * Plan-import state (P32-T06, ADR 0044). Session only: no `persist`, a page refresh clears
@@ -53,6 +54,9 @@ export type ScenarioView =
       request: ImportSimulateRequest;
       simulated_week: number;
       plan_version: number | null;
+      /** P50 (API_CONTRACT_P41 §F): the stored window (older rows: simulated week / preset). */
+      plan_from_week: number;
+      plan_until_week: number;
       source: ImportSource;
       can_edit: boolean;
     };
@@ -134,6 +138,11 @@ export interface ImportState {
    * edits and exclusions, and is simulated again (always, even when unchanged).
    */
   restoreRequest: (request: ImportSimulateRequest, source: ImportSource | null) => void;
+  /**
+   * P50 (R49-13 / R49-19): after a re-run, the window options take the served (possibly
+   * raised) weeks and the re-run flag is cleared, so later requests send a valid window.
+   */
+  settleWindow: (result: ImportSimulateResponse) => void;
 }
 
 const EMPTY = {
@@ -243,11 +252,9 @@ export const useImportPlan = create<ImportState>()((set) => ({
   restoreRequest: (request, source) =>
     set((s) => ({
       rows: request.rows.map((r) => ({ ...r })),
-      options: {
-        mode: request.mode,
-        planYearEndWeek: request.plan_year_end_week as PlanYearEndWeek,
-        expandMulti: request.expand_multi,
-      },
+      // P50: the stored window, sent with `plan_window_rerun: true` (the server raises a
+      // passed f to today's week, then u to f, instead of answering 422).
+      options: { ...optionsOf(request), planWindowRerun: true },
       edits: Object.fromEntries(request.edits.map((e) => [editKey(e.project_ref, e.step_id), { ...e }])),
       undoStack: [],
       excludedPlanIds: [...(request.exclude_plan_project_ids ?? [])],
@@ -256,4 +263,6 @@ export const useImportPlan = create<ImportState>()((set) => ({
       rerunNonce: s.rerunNonce + 1,
       savedBrowse: false,
     })),
+  settleWindow: (result) =>
+    set((s) => ({ options: { ...s.options, ...windowOptionsOf(result, s.options.planYearEndWeek) } })),
 }));

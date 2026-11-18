@@ -7,12 +7,13 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { SuperAdminOnly } from '@/components/shared/super-admin-only';
-import { formatTimestamp } from '@/lib/format';
+import { formatTimestamp, formatWeek } from '@/lib/format';
 
 import { int } from '../../components/figures';
 import { downloadSavedScenario } from '../import-api';
 import { useImportPlan } from '../import-store';
 import type { SavedScenarioSummary } from '../import-types';
+import { savedWindowText } from '../plan-window';
 import { groupBySource, MAX_SAVED_NAME, savedViewOf, storedEntryOf } from '../saved-scenarios';
 import { MAX_COMPARE, useImportScenarios } from '../scenarios-store';
 import {
@@ -222,6 +223,9 @@ function SavedCard({ s, onOpened }: { s: SavedScenarioSummary; onOpened?: (() =>
     });
 
   const k = s.kpis;
+  // P50 (API_CONTRACT_P41 §F): the stored "Plan from" / "Plan until" weeks.
+  const windowText = savedWindowText(s);
+  const windowed = s.plan_until_week !== undefined && s.plan_until_week !== s.plan_year_end_week;
   return (
     <li className="space-y-s2 rounded-md border border-border px-s3 py-s2" data-testid="library-card" data-scenario={s.name}>
       {editing ? (
@@ -250,12 +254,18 @@ function SavedCard({ s, onOpened }: { s: SavedScenarioSummary; onOpened?: (() =>
         </span>
         <span aria-hidden="true">·</span>
         <span data-testid="library-card-week">
-          {`W${String(s.simulated_week)}${s.plan_version === null ? '' : ` · plan v${String(s.plan_version)}`}`}
+          {`simulated ${formatWeek(s.simulated_week)}${s.plan_version === null ? '' : ` · plan v${String(s.plan_version)}`}`}
         </span>
+        {windowText !== null ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <span data-testid="library-card-window">{windowText}</span>
+          </>
+        ) : null}
         <Badge tone="neutral">{s.mode === 'merge' ? 'merged with plan' : 'file only'}</Badge>
       </p>
       <dl className="grid grid-cols-3 gap-s2">
-        <Kpi label="Finish in plan year" value={k.within_plan_year} />
+        <Kpi label={windowed ? 'Finish in plan window' : 'Finish in plan year'} value={k.within_plan_year} />
         <Kpi label="Spill over" value={k.spillover} />
         <Kpi label="Left out" value={k.left_out} />
       </dl>

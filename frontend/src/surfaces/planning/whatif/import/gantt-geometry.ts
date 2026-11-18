@@ -2,6 +2,7 @@ import { snapWeekDelta, type WeekScale } from '@/surfaces/gantt/lib/gantt-coordi
 import { overlapForDrop, type OverlapStep } from '@/surfaces/gantt/lib/step-overlap';
 
 import type { ImportResultStep, ImportSimulateResponse } from './import-types';
+import { cutoffWeek } from './plan-window';
 import { shortWeekLabel } from './week-labels';
 
 /**
@@ -20,10 +21,11 @@ export const AXIS_TAIL_WEEKS = 4;
  * served `horizon_weeks`. Pixels only; every week is a served field.
  */
 export function importScale(
-  result: Pick<ImportSimulateResponse, 'current_week' | 'horizon_weeks' | 'plan_year_end_week' | 'projects'>,
+  result: Pick<ImportSimulateResponse, 'current_week' | 'horizon_weeks' | 'plan_year_end_week' | 'plan_until_week' | 'projects'>,
   weekPx = IMPORT_WEEK_PX,
 ): WeekScale {
-  let latest = result.plan_year_end_week + AXIS_TAIL_WEEKS;
+  // P50 (R49-16): past the served cut-off (`plan_until_week`, else the plan-year end).
+  let latest = cutoffWeek(result) + AXIS_TAIL_WEEKS;
   for (const p of result.projects) {
     if (p.end_week !== null) latest = Math.max(latest, p.end_week);
     for (const st of p.steps) if (st.end_week !== null) latest = Math.max(latest, st.end_week);

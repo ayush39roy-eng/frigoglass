@@ -223,13 +223,23 @@ export interface ImportOptions {
   mode: ImportMode;
   planYearEndWeek: PlanYearEndWeek;
   expandMulti: boolean;
+  /**
+   * P50 (ADR 0061 R49-7): "Plan from" f, an absolute week; null / absent = today's week (the
+   * server's default, so nothing is sent).
+   */
+  planFromWeek?: number | null | undefined;
+  /** P50 (R49-15): "Plan until" u; null / absent = the plan-year preset (nothing sent). */
+  planUntilWeek?: number | null | undefined;
+  /** P50 (R49-13 / R49-19): "Re-run on today's plan" — sends `plan_window_rerun: true`. */
+  planWindowRerun?: boolean | undefined;
 }
 
 /**
  * The `/simulate` body. P41 (ADR 0055 D2): `excludedPlanIds` are the plan projects unticked
  * in the project picker. They are sent as `exclude_plan_project_ids` in merge mode only
  * (a 422 in file_only) and only when there is at least one, so an unpicked request is
- * byte-identical to the pre-P41 body.
+ * byte-identical to the pre-P41 body. P50: the "Plan from" / "Plan until" weeks and the
+ * re-run flag likewise only when set.
  */
 export function buildSimulateRequest(
   rows: readonly ImportRow[],
@@ -248,5 +258,23 @@ export function buildSimulateRequest(
     })),
     edits: editsForRequest(edits, rows, options, exclude),
     ...(exclude.length > 0 ? { exclude_plan_project_ids: exclude } : {}),
+    ...windowFields(options),
+  };
+}
+
+/**
+ * P50 (ADR 0061, API_CONTRACT_P32 D2): the window keys, each only when it is not the
+ * default, so a request without a chosen window is byte-identical to the pre-P50 body (and
+ * its server-side digest). u equal to the preset means the plan year (R49-18) and is omitted.
+ */
+function windowFields(
+  options: ImportOptions,
+): Pick<ImportSimulateRequest, 'plan_from_week' | 'plan_until_week' | 'plan_window_rerun'> {
+  const f = options.planFromWeek ?? null;
+  const u = options.planUntilWeek ?? null;
+  return {
+    ...(f !== null ? { plan_from_week: f } : {}),
+    ...(u !== null && u !== options.planYearEndWeek ? { plan_until_week: u } : {}),
+    ...(options.planWindowRerun === true ? { plan_window_rerun: true } : {}),
   };
 }

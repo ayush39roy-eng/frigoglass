@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { formatBookedPct } from '@/lib/format';
+import { formatBookedPct, formatWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import { int } from '../../components/figures';
@@ -24,15 +24,20 @@ import {
   exportableIds,
   formatDelta,
   mixedClock,
+  mixedPlanFrom,
+  mixedPlanUntil,
   mixedSources,
   outcomeChanges,
+  planFromWeekOf,
+  planUntilWeekOf,
   simulatedWeekOf,
   type OutcomeChange,
 } from '../scenario-compare';
 import { useDownload } from '../use-import-library';
 import { SavedScenariosLibrary } from './saved-scenarios-library';
 import { MAX_COMPARE, MAX_SCENARIO_NAME, useImportScenarios, type ImportScenario } from '../scenarios-store';
-import { planYearOf, weekOrDash } from '../week-labels';
+import { weekOrDash } from '../week-labels';
+import { planScope } from '../plan-window';
 import { compareKpiDrill, outcomeChangeDrill } from '../drilldown';
 import { DrillNumber } from './drill-number';
 import { FeatureCard } from './feature-card';
@@ -52,7 +57,8 @@ const ORIGIN_TONE: Record<ImportScenario['origin'], 'primary' | 'neutral' | 'suc
 };
 
 function ScenarioMeta({ s }: { s: ImportScenario }): React.JSX.Element {
-  const year = planYearOf(s.response.plan_year_end_week, s.response.base_year);
+  const sc = planScope(s.response);
+  const from = planFromWeekOf(s);
   return (
     <span className="flex flex-wrap items-center gap-1 text-2xs text-text-muted">
       <Badge tone={ORIGIN_TONE[s.origin]}>{ORIGIN_LABEL[s.origin]}</Badge>
@@ -62,11 +68,19 @@ function ScenarioMeta({ s }: { s: ImportScenario }): React.JSX.Element {
       {s.stored ? (
         <>
           <span aria-hidden="true">·</span>
-          <span>{`simulated W${String(s.stored.simulatedWeek)}${s.stored.planVersion === null ? '' : ` · plan v${String(s.stored.planVersion)}`}`}</span>
+          <span>{`simulated ${formatWeek(s.stored.simulatedWeek)}${s.stored.planVersion === null ? '' : ` · plan v${String(s.stored.planVersion)}`}`}</span>
         </>
       ) : null}
       <span aria-hidden="true">·</span>
-      <span>plan year {String(year)}</span>
+      <span data-testid="compare-scenario-window">
+        {sc.windowLabel !== null ? `plan window ${sc.windowLabel}` : `plan year ${sc.name}`}
+      </span>
+      {from !== simulatedWeekOf(s) ? (
+        <>
+          <span aria-hidden="true">·</span>
+          <span data-testid="compare-scenario-from">{`file projects from ${formatWeek(from)}`}</span>
+        </>
+      ) : null}
       {s.rules ? (
         <>
           <span aria-hidden="true">·</span>
@@ -174,10 +188,11 @@ function KpiTable({ picked }: { picked: ImportScenario[] }): React.JSX.Element {
   // P41: scenarios from different workbooks carry their file under the name.
   const showSources = mixedSources(picked);
   // "Finish in 2027" as on the Executive tab when every scenario has the same plan year.
-  const years = new Set(picked.map((s) => planYearOf(s.response.plan_year_end_week, s.response.base_year)));
-  const planYear = years.size === 1 ? ([...years][0] ?? null) : null;
+  // P50 (R49-18): "Finish within the plan window" when every scenario has the same served window.
+  const scopes = new Set(picked.map((s) => planScope(s.response).inPhrase));
+  const scope = scopes.size === 1 ? ([...scopes][0] ?? null) : null;
   const label = (k: (typeof COMPARE_KPIS)[number]) =>
-    k.key === 'within_plan_year' && planYear !== null ? `Finish in ${String(planYear)}` : k.label;
+    k.key === 'within_plan_year' && scope !== null ? `Finish ${scope}` : k.label;
   return (
     <Table aria-label="Scenario figures" scrollLabel="Scenario figures">
       <TableHeader>
@@ -404,6 +419,9 @@ export function ResultsCompare(): React.JSX.Element {
 
   const unsaved = scenarios.some((s) => s.origin !== 'stored');
   const clockMixed = picked.length >= 2 && mixedClock(picked);
+  // P50 (API_CONTRACT_P41 §F): different "Plan from" / "Plan until" weeks.
+  const fromMixed = picked.length >= 2 && mixedPlanFrom(picked);
+  const untilMixed = picked.length >= 2 && mixedPlanUntil(picked);
   const exportIds = exportableIds(picked);
   const download = useDownload();
 
@@ -452,13 +470,31 @@ export function ResultsCompare(): React.JSX.Element {
                 {picked
                   .map(
                     (s) =>
-                      `${s.name}: W${String(simulatedWeekOf(s))}${
+                      `${s.name}: ${formatWeek(simulatedWeekOf(s))}${
                         s.stored?.planVersion != null ? ` · plan v${String(s.stored.planVersion)}` : ''
                       }`,
                   )
                   .join(' — ')}
                 . The figures were computed on different plans, so part of a difference may come from the plan.
               </p>
+            </Callout>
+          ) : null}
+          {fromMixed || untilMixed ? (
+            <Callout tone="warning" title="Plan windows differ" testId="compare-window-banner" role="status">
+              {fromMixed ? (
+                <p data-testid="compare-window-from">
+                  {`File projects start from different weeks: ${picked
+                    .map((s) => `${s.name} ${formatWeek(planFromWeekOf(s))}`)
+                    .join(' — ')}.`}
+                </p>
+              ) : null}
+              {untilMixed ? (
+                <p data-testid="compare-window-until">
+                  {`Plan windows differ — within counts are not like for like: ${picked
+                    .map((s) => `${s.name} until ${formatWeek(planUntilWeekOf(s))}`)
+                    .join(' — ')}.`}
+                </p>
+              ) : null}
             </Callout>
           ) : null}
           <FeatureCard

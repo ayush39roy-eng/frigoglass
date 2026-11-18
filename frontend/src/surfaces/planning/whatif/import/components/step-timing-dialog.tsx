@@ -30,12 +30,17 @@ function toText(v: number | null): string {
   return v === null ? '' : String(v);
 }
 
-function parseField(raw: string, min: number, max: number): { value: number | null; error?: string } {
+function parseField(
+  raw: string,
+  min: number,
+  max: number,
+  label: (week: number) => string = String,
+): { value: number | null; error?: string } {
   const t = raw.trim();
   if (t === '') return { value: null };
   if (!/^\d+$/.test(t)) return { value: null, error: 'Whole weeks only.' };
   const n = Number(t);
-  if (n < min || n > max) return { value: null, error: `Between ${String(min)} and ${String(max)}.` };
+  if (n < min || n > max) return { value: null, error: `Between ${label(min)} and ${label(max)}.` };
   return { value: n };
 }
 
@@ -74,7 +79,10 @@ export function ImportStepTimingDialog({
       });
   }
   const canMove = target?.editable === 'move_resize';
-  const start = parseField(fields.start, currentWeek, horizonWeeks);
+  // Owner rule 2026-11-18 (P50-T03): the typed value stays the absolute week that is sent;
+  // the hint and the error read week-of-year labels ("W5 '27"), never a week 53+.
+  const weekLabel = (w: number) => shortWeekLabel(w, baseYear);
+  const start = parseField(fields.start, currentWeek, horizonWeeks, weekLabel);
   const duration = parseField(fields.duration, 1, 104);
   const overlap = parseField(fields.overlap, 0, 104);
   const invalid = Boolean(start.error || duration.error || overlap.error);
@@ -122,7 +130,7 @@ export function ImportStepTimingDialog({
                 {start.error ??
                   (start.value !== null
                     ? shortWeekLabel(start.value, baseYear)
-                    : `${String(currentWeek)}–${String(horizonWeeks)}`)}
+                    : `${weekLabel(currentWeek)} to ${weekLabel(horizonWeeks)}`)}
               </p>
             </div>
             <div className="flex flex-col gap-1">

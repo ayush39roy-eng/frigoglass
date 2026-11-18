@@ -12,7 +12,7 @@ import type {
   ImportRow,
   ImportSimulateResponse,
 } from './import-types';
-import { planYearOf } from './week-labels';
+import { planScope, type PlanScope } from './plan-window';
 import { breakdownFor, NOT_PLACED_OUTCOMES, YEAR_ALL, YEAR_LATER, YEAR_NOT_PLACED, yearOptions } from './year-filter';
 
 /**
@@ -159,8 +159,9 @@ function yearPhrase(result: ImportSimulateResponse, key: string): string {
   return `finishing in ${key}`;
 }
 
-function planYear(result: ImportSimulateResponse): number {
-  return planYearOf(result.plan_year_end_week, result.base_year);
+/** P50 (R49-16 / R49-18): the served cut-off's wording — "in 2027", or the plan window. */
+function scopeOf(result: ImportSimulateResponse): PlanScope {
+  return planScope(result);
 }
 
 // --- Executive tiles ---------------------------------------------------------------------
@@ -175,7 +176,7 @@ export function execTileDrill(result: ImportSimulateResponse, key: string, tile:
   const k = result.kpis;
   const block: Breakdown | null = breakdownFor(result, key);
   const inBlock = block ? projectsInBlock(result, key) : [...result.projects];
-  const year = planYear(result);
+  const sc = scopeOf(result);
   const context = block ? yearContext(result, key) : undefined;
   const of = (outcome: WhatIfOutcome) => inBlock.filter((p) => p.outcome === outcome);
   const plan = result.projects.filter((p) => p.source === 'plan');
@@ -192,10 +193,10 @@ export function execTileDrill(result: ImportSimulateResponse, key: string, tile:
     case 'within':
       return projectDrill(
         result,
-        `Finish in ${String(year)}`,
+        `Finish ${sc.inPhrase}`,
         block ? block.outcomes.within_year : k.within_plan_year,
         of('within_year'),
-        `finishing in ${String(year)}`,
+        `finishing ${sc.inPhrase}`,
         { context },
       );
     case 'spillover':
@@ -204,7 +205,7 @@ export function execTileDrill(result: ImportSimulateResponse, key: string, tile:
         'Spill over',
         block ? block.outcomes.spillover : k.spillover,
         of('spillover'),
-        `spilling over past ${String(year)}`,
+        `spilling over past ${sc.name}`,
         { context },
       );
     case 'not_placed': {
@@ -250,18 +251,18 @@ export function execTileDrill(result: ImportSimulateResponse, key: string, tile:
     case 'before':
       return projectDrill(
         result,
-        `Plan projects in ${String(year)} before the import`,
+        `Plan projects ${sc.inPhrase} before the import`,
         k.before_within_plan_year ?? 0,
         plan.filter((p) => p.before_outcome === 'within_year'),
-        `of the plan finishing in ${String(year)} before the import`,
+        `of the plan finishing ${sc.inPhrase} before the import`,
       );
     case 'after':
       return projectDrill(
         result,
-        `Plan projects in ${String(year)} after the import`,
+        `Plan projects ${sc.inPhrase} after the import`,
         k.after_within_plan_year_existing ?? 0,
         plan.filter((p) => p.outcome === 'within_year'),
-        `of the plan finishing in ${String(year)} after the import`,
+        `of the plan finishing ${sc.inPhrase} after the import`,
       );
   }
 }
@@ -356,13 +357,13 @@ export function changeDrill(
   title: string,
 ): ProjectDrill {
   const refs = new Set(result.changes[kind].map((c) => c.ref));
-  const year = planYear(result);
+  const sc = scopeOf(result);
   return projectDrill(
     result,
     title,
     result.changes[kind].length,
     result.projects.filter((p) => refs.has(p.ref)),
-    kind === 'newly_slipping' ? `slipping out of ${String(year)}` : `moving into ${String(year)}`,
+    kind === 'newly_slipping' ? `slipping out of ${sc.name}` : `moving into ${sc.name}`,
   );
 }
 

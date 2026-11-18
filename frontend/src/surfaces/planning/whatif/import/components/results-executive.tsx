@@ -22,7 +22,8 @@ import { ProjectRowsTable, WorkingsDisclosure, type RowColumn } from '../../comp
 import type { Breakdown, BreakdownBucket, ImportChange, ImportSimulateResponse } from '../import-types';
 import { bucketLabel } from '../bucket-label';
 import { useEffectiveYear } from '../use-year-filter';
-import { planYearOf, weekOrDash } from '../week-labels';
+import { weekOrDash } from '../week-labels';
+import { planScope } from '../plan-window';
 import { breakdownFor, YEAR_ALL, yearOptions } from '../year-filter';
 import {
   bucketDrill,
@@ -112,7 +113,7 @@ function BucketDonut({
     // Category keeps the Dashboard's fixed hue per category; the others go by served order.
     fill: dashCatFill(dim === 'by_category' ? categoryRank(b.key) : i),
     detail:
-      `${formatInteger(b.within_year)} within the plan year · ${formatInteger(b.spillover)} spill over · ` +
+      `${formatInteger(b.within_year)} ${planScope(result).withinWords} · ${formatInteger(b.spillover)} spill over · ` +
       `${formatInteger(b.not_placed)} not placed`,
   }));
   return (
@@ -127,8 +128,8 @@ function BucketDonut({
       sliceOpenLabel={(sl) => drillLabel(drillOf(sl.key))}
       info={
         <p>
-          Projects in the selected year by {title.replace('Projects by ', '')}. Hover a slice for how many finish
-          within the plan year, spill over or are not placed; click a slice or a chip to list its projects. Every
+          Projects in the selected year by {title.replace('Projects by ', '')}. Hover a slice for how many finish{' '}
+          {planScope(result).withinWords}, spill over or are not placed; click a slice or a chip to list its projects. Every
           count is served by the planner.
         </p>
       }
@@ -192,7 +193,8 @@ function ChangeList({
 export function ResultsExecutive({ result }: { result: ImportSimulateResponse }): React.JSX.Element {
   const k = result.kpis;
   const base = result.base_year;
-  const year = planYearOf(result.plan_year_end_week, base);
+  // P50 (R49-16 / R49-18): the served cut-off; "within the plan window" when a window label is served.
+  const sc = planScope(result);
   const merge = result.mode === 'merge';
   const key = useEffectiveYear(result);
   const block = breakdownFor(result, key);
@@ -244,7 +246,7 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
           testId="import-kpi-total"
         />
         <ExecKpiTile
-          label={`Finish in ${String(year)}`}
+          label={`Finish ${sc.inPhrase}`}
           {...opener('within')}
           icon={CalendarCheck}
           tone="success"
@@ -273,7 +275,7 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
         />
         {merge && k.before_within_plan_year !== null && k.after_within_plan_year_existing !== null ? (
           <ExecKpiTile
-            label={`Plan in ${String(year)}: before → after`}
+            label={`Plan ${sc.inPhrase}: before → after`}
             value={`${int(k.before_within_plan_year)} → ${int(k.after_within_plan_year_existing)}`}
             valueNode={
               <>
@@ -368,20 +370,20 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
       {merge ? (
         <div className="grid gap-gutter lg:grid-cols-2">
           <ChangeList
-            title={`Newly slipping out of ${String(year)}`}
+            title={`Newly slipping out of ${sc.name}`}
             rows={result.changes.newly_slipping}
-            empty="No plan project slips out of the year."
+            empty={sc.windowed ? 'No plan project slips out of the plan window.' : 'No plan project slips out of the year.'}
             base={base}
             testId="import-newly-slipping"
-            drill={changeDrill(result, 'newly_slipping', `Newly slipping out of ${String(year)}`)}
+            drill={changeDrill(result, 'newly_slipping', `Newly slipping out of ${sc.name}`)}
           />
           <ChangeList
-            title={`Recovered into ${String(year)}`}
+            title={`Recovered into ${sc.name}`}
             rows={result.changes.recovered}
-            empty="No plan project moves into the year."
+            empty={sc.windowed ? 'No plan project moves into the plan window.' : 'No plan project moves into the year.'}
             base={base}
             testId="import-recovered"
-            drill={changeDrill(result, 'recovered', `Recovered into ${String(year)}`)}
+            drill={changeDrill(result, 'recovered', `Recovered into ${sc.name}`)}
           />
         </div>
       ) : null}

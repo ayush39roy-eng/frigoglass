@@ -179,7 +179,38 @@ export function capacityCompare(responses: readonly ImportSimulateResponse[]): C
 interface ComparedLike {
   fileName: string | null;
   response: ImportSimulateResponse;
-  stored?: { simulatedWeek: number; planVersion: number | null; id: string } | undefined;
+  stored?:
+    | {
+        simulatedWeek: number;
+        planVersion: number | null;
+        id: string;
+        planFromWeek?: number | undefined;
+        planUntilWeek?: number | undefined;
+      }
+    | undefined;
+}
+
+/**
+ * P50 (API_CONTRACT_P41 §F): the week a scenario's file projects start from — the served
+ * `plan_from_week`, else the stored one, else (pre-P50) the week it was simulated from.
+ */
+export function planFromWeekOf(s: ComparedLike): number {
+  return s.response.plan_from_week ?? s.stored?.planFromWeek ?? simulatedWeekOf(s);
+}
+
+/** P50 (R49-16): a scenario's served cut-off (`plan_until_week`, else stored, else the plan-year end). */
+export function planUntilWeekOf(s: ComparedLike): number {
+  return s.response.plan_until_week ?? s.stored?.planUntilWeek ?? s.response.plan_year_end_week;
+}
+
+/** P50 (R49-13 / §F): the compared scenarios' file projects start from different weeks. */
+export function mixedPlanFrom(picked: readonly ComparedLike[]): boolean {
+  return new Set(picked.map(planFromWeekOf)).size > 1;
+}
+
+/** P50 (R49-19 / §F): the compared scenarios end their plan windows on different weeks. */
+export function mixedPlanUntil(picked: readonly ComparedLike[]): boolean {
+  return new Set(picked.map(planUntilWeekOf)).size > 1;
 }
 
 /** The week a scenario was simulated from: the stored `simulated_week`, else the served `current_week`. */

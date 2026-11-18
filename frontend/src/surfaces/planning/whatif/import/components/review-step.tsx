@@ -16,6 +16,7 @@ import { useImportPlan } from '../import-store';
 import type { ImportMode, ImportParseIssue, ImportParseResponse, PlanYearEndWeek } from '../import-types';
 import { classifyImportError, type ImportSimulationState } from '../use-import';
 import { planYearOf } from '../week-labels';
+import { choiceLabel, pickerChoices, windowBlockedReason } from '../plan-window';
 import { reviewTileDrill, type ReviewTile } from '../drilldown';
 import { DrillNumber } from './drill-number';
 import { ActionBar, FeatureCard } from './feature-card';
@@ -67,7 +68,10 @@ export function ReviewStep({
   );
 
   const errors = React.useMemo(() => rowErrors(rows), [rows]);
-  const blocked = computeBlockedReason(rows);
+  // P50 (ADR 0061): the window pickers exist when the parse serves the choices.
+  const weekChoices = parsed.plan_week_choices ?? [];
+  const minWeek = parsed.plan_from_min_week ?? parsed.current_week;
+  const blocked = computeBlockedReason(rows) ?? windowBlockedReason(options, minWeek);
   // One definition for the tile and the banner: rows that WILL be scheduled (included, so
   // never On Hold) whose engineer is still auto-assign. The parse's `counts.auto_assign` counts
   // every file row, On Hold ones included, so it is shown only as the tile's hint.
@@ -287,12 +291,25 @@ export function ReviewStep({
       <FeatureCard
         icon={Settings2}
         title="Options"
-        hint={`Compute the plan for ${String(year)}`}
+        hint={
+          options.planUntilWeek != null
+            ? `Compute the plan up to ${choiceLabel(weekChoices, options.planUntilWeek)}`
+            : `Compute the plan for ${String(year)}`
+        }
         info={
-          <p>
-            Merge replaces each matched plan project with its row and keeps the rest of the plan; This file only
-            schedules the file alone. The plan year sets what counts as finishing within the year.
-          </p>
+          <>
+            <p>
+              Merge replaces each matched plan project with its row and keeps the rest of the plan; This file only
+              schedules the file alone. The plan year sets what counts as finishing within the year.
+            </p>
+            {weekChoices.length > 0 ? (
+              <p>
+                Plan from: the file&apos;s projects start no earlier than this week; the live plan&apos;s projects are
+                unchanged. Plan until: a project counts as finishing within the plan when it finishes by this week;
+                left at the default it is the end of the plan year.
+              </p>
+            ) : null}
+          </>
         }
       >
         <div className="grid gap-s4 sm:grid-cols-3">
@@ -326,6 +343,9 @@ export function ReviewStep({
               <option value="52">{String(y0)}</option>
             </NativeSelect>
           </div>
+          {weekChoices.length > 0 ? (
+            <PlanWindowPickers choices={weekChoices} minWeek={minWeek} />
+          ) : null}
           <div className="flex items-center gap-s2 self-end pb-1.5">
             <Checkbox
               id="import-expand"
@@ -363,5 +383,83 @@ export function ReviewStep({
         ) : null}
       </ActionBar>
     </div>
+  );
+}
+
+const DEFAULT_UNTIL = '';
+
+/**
+ * P50 (ADR 0061 R49-7 / R49-15, contract D1): "Plan from" and "Plan until", built from the
+ * served `plan_week_choices` (server labels such as "W1 2027 (4 Jan 2027)"; the browser
+ * derives no dates, I40). Plan from = today's week (the default, nothing sent) .. the plan
+ * window's end; Plan until = Plan from .. 104, blank = the end of the plan year.
+ */
+function PlanWindowPickers({
+  choices,
+  minWeek,
+}: {
+  choices: NonNullable<ImportParseResponse['plan_week_choices']>;
+  minWeek: number;
+}): React.JSX.Element {
+  const options = useImportPlan((s) => s.options);
+  const setOptions = useImportPlan((s) => s.setOptions);
+  const picks = pickerChoices(choices, minWeek, options);
+  const presetLabel = choiceLabel(choices, options.planYearEndWeek);
+  return (
+    <>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="import-plan-from" className="text-2xs text-text-muted">
+          Plan from
+        </Label>
+        <NativeSelect
+          id="import-plan-from"
+          value={String(picks.fromWeek)}
+          aria-describedby="import-plan-from-hint"
+          onChange={(e) => {
+            const w = Number(e.target.value);
+            setOptions({ planFromWeek: w === minWeek ? null : w, planWindowRerun: false });
+          }}
+          data-testid="import-plan-from"
+        >
+          {picks.from.map((c) => (
+            <option key={c.week} value={String(c.week)}>
+              {c.week === minWeek ? `${c.label} — this week` : c.label}
+            </option>
+          ))}
+        </NativeSelect>
+        <p id="import-plan-from-hint" className="text-2xs text-text-muted">
+          The file&apos;s projects start no earlier
+        </p>
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="import-plan-until" className="text-2xs text-text-muted">
+          Plan until (optional)
+        </Label>
+        <NativeSelect
+          id="import-plan-until"
+          value={options.planUntilWeek == null ? DEFAULT_UNTIL : String(options.planUntilWeek)}
+          aria-describedby="import-plan-until-hint"
+          onChange={(e) => {
+            const raw = e.target.value;
+            const w = raw === DEFAULT_UNTIL ? null : Number(raw);
+            setOptions({
+              planUntilWeek: w === null || w === options.planYearEndWeek ? null : w,
+              planWindowRerun: false,
+            });
+          }}
+          data-testid="import-plan-until"
+        >
+          <option value={DEFAULT_UNTIL}>{`End of the plan year — ${presetLabel}`}</option>
+          {picks.until.map((c) => (
+            <option key={c.week} value={String(c.week)}>
+              {c.label}
+            </option>
+          ))}
+        </NativeSelect>
+        <p id="import-plan-until-hint" className="text-2xs text-text-muted">
+          Finishing by this week counts as within the plan
+        </p>
+      </div>
+    </>
   );
 }

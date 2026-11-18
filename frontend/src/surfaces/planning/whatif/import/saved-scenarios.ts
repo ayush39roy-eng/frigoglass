@@ -1,3 +1,5 @@
+import { formatWeek } from '@/lib/format';
+
 import { buildSimulateRequest, editKey, type EditMap, type ImportOptions } from './import-rows';
 import type { ImportSource, ImportState, ScenarioView } from './import-store';
 import type { ImportSimulateRequest, PlanYearEndWeek, SavedScenario, SavedScenarioSummary } from './import-types';
@@ -12,10 +14,15 @@ export const MAX_SAVED_NAME = 120;
 export const MAX_SAVED_NOTE = 1000;
 
 export function optionsOf(request: ImportSimulateRequest): ImportOptions {
+  const planYearEndWeek = request.plan_year_end_week as PlanYearEndWeek;
+  const u = request.plan_until_week ?? null;
   return {
     mode: request.mode,
-    planYearEndWeek: request.plan_year_end_week as PlanYearEndWeek,
+    planYearEndWeek,
     expandMulti: request.expand_multi,
+    // P50 (API_CONTRACT_P41 §F): the stored resolved window; u = the preset is the plan year.
+    planFromWeek: request.plan_from_week ?? null,
+    planUntilWeek: u === null || u === planYearEndWeek ? null : u,
   };
 }
 
@@ -33,6 +40,8 @@ export function storedMetaOf(s: SavedScenarioSummary): StoredMeta {
     sourceSha256: s.source_file_sha256,
     simulatedWeek: s.simulated_week,
     planVersion: s.plan_version,
+    planFromWeek: s.plan_from_week ?? s.simulated_week,
+    planUntilWeek: s.plan_until_week ?? s.plan_year_end_week,
     createdByName: s.created_by_name,
     createdAt: s.created_at,
     canEdit: s.can_edit,
@@ -65,6 +74,8 @@ export function savedViewOf(s: SavedScenario): ScenarioView {
     request: s.request,
     simulated_week: s.simulated_week,
     plan_version: s.plan_version,
+    plan_from_week: s.plan_from_week ?? s.simulated_week,
+    plan_until_week: s.plan_until_week ?? s.plan_year_end_week,
     source: sourceOf(s),
     can_edit: s.can_edit,
   };
@@ -104,10 +115,10 @@ export function groupBySource(items: readonly SavedScenarioSummary[]): SourceGro
   return [...groups.values()];
 }
 
-/** "Saved scenario — simulated W47 against plan v14". */
+/** "Saved scenario — simulated W47 against plan v14" (P50: week-of-year label, never W53+). */
 export function savedBannerTitle(simulatedWeek: number, planVersion: number | null): string {
   const plan = planVersion === null ? '' : ` against plan v${String(planVersion)}`;
-  return `Saved scenario — simulated W${String(simulatedWeek)}${plan}`;
+  return `Saved scenario — simulated ${formatWeek(simulatedWeek)}${plan}`;
 }
 
 /** The request behind what the results show (a view's own, else the session's). */

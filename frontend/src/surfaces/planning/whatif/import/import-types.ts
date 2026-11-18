@@ -11,8 +11,21 @@ export type ImportWorkflow = 'PDD' | 'OEM';
 export type ImportSeverity = 'info' | 'warning' | 'error';
 export type ImportMode = 'merge' | 'file_only';
 export type PlanYearEndWeek = 52 | 104;
-/** `running` (P32-R06): PRIORITY "Running" — P1 with rank 0, scheduled before rank 1. */
-export type PrioritySource = 'rank' | 'running' | 'matched' | 'default';
+/**
+ * `running` (P32-R06): PRIORITY "Running" — P1 with rank 0, scheduled before rank 1.
+ * `band` (P50, ADR 0061 R49-3): a Yes in a "Must Do" / band column set the priority.
+ */
+export type PrioritySource = 'band' | 'rank' | 'running' | 'matched' | 'default';
+/** P50 (R49-2): the most urgent band whose column said Yes (display only). */
+export type FileBand = 'P1' | 'P2' | 'P3' | 'P4';
+
+/** P50 (ADR 0061 R49-7, I40): a week the "Plan from" / "Plan until" pickers may offer, labelled by the server. */
+export interface PlanWeekChoice {
+  /** Absolute week (53 = W1 of the next year). */
+  week: number;
+  /** Server-made, e.g. "W1 2027 (4 Jan 2027)". The browser derives no dates. */
+  label: string;
+}
 export type StepEditable = 'move_resize' | 'resize' | 'none';
 
 // --- B2: parse ---------------------------------------------------------------------------
@@ -76,6 +89,8 @@ export interface ImportRow {
   certification_testing_required: boolean;
   step_weeks: Record<string, number>;
   include: boolean;
+  /** P50 (R49-2, API_CONTRACT_P32 D1): served; optional so a pre-P50 stored row validates. */
+  file_band?: FileBand | null | undefined;
 }
 
 export interface ImportParseIssue {
@@ -118,6 +133,10 @@ export interface ImportParseResponse {
   rows: ImportRow[];
   issues: ImportParseIssue[];
   counts: ImportParseCounts;
+  /** P50 (D1): the earliest "Plan from" week (= `current_week`, the default). */
+  plan_from_min_week?: number | undefined;
+  /** P50 (D1): weeks `current_week`..104 with server labels, for both pickers. */
+  plan_week_choices?: PlanWeekChoice[] | undefined;
 }
 
 // --- B3: simulate ------------------------------------------------------------------------
@@ -141,6 +160,15 @@ export interface ImportSimulateRequest {
    * of both runs. Merge mode only; sent only when non-empty (the contract default is `[]`).
    */
   exclude_plan_project_ids?: string[] | undefined;
+  /**
+   * P50 (ADR 0061, API_CONTRACT_P32 D2): file projects start from week f. Omitted when the
+   * planner kept the default (today's week) so the request is byte-identical to before.
+   */
+  plan_from_week?: number | null | undefined;
+  /** P50 (R49-15): the plan window's last week u; omitted = the plan-year preset. */
+  plan_until_week?: number | null | undefined;
+  /** P50 (R49-13 / R49-19): "Re-run on today's plan" — the server raises a passed f / u. */
+  plan_window_rerun?: boolean | undefined;
 }
 
 export interface ImportKpis {
@@ -381,6 +409,19 @@ export interface ImportSimulateResponse {
    * stored response from before P41 still validates.
    */
   plan_projects?: ImportPlanProject[] | undefined;
+  /**
+   * P50 (ADR 0061, D2): the resolved window. Optional so a pre-P50 stored response still
+   * validates. Every reader of the "within" cut-off reads `plan_until_week`, falling back
+   * to `plan_year_end_week` (see `plan-window.ts`).
+   */
+  plan_from_week?: number | null | undefined;
+  plan_from_min_week?: number | null | undefined;
+  /** "W1 2027 (4 Jan 2027)", server-made. */
+  plan_from_label?: string | null | undefined;
+  plan_until_week?: number | null | undefined;
+  /** "W48 2026 – W20 2027" only when the request set a u other than the preset, else null. */
+  plan_window_label?: string | null | undefined;
+  plan_week_choices?: PlanWeekChoice[] | undefined;
 }
 
 /** P41 (contract B): one tickable plan project, as served. */
@@ -437,6 +478,10 @@ export interface SavedScenarioSummary {
   mode: ImportMode;
   plan_year_end_week: number;
   simulated_week: number;
+  /** P50 (API_CONTRACT_P41 §F): the stored "Plan from" week (older rows: `simulated_week`). */
+  plan_from_week?: number | undefined;
+  /** P50 (§F): the stored plan window end (older rows: `plan_year_end_week`). */
+  plan_until_week?: number | undefined;
   plan_version: number | null;
   hub_codes: string[];
   kpis: ImportKpis;

@@ -3,12 +3,14 @@ import { ArrowLeft, Library, RefreshCw, Shapes } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
+import { formatWeek } from '@/lib/format';
 
 import { int } from '../../components/figures';
 import { NativeSelect } from '../../components/form-controls';
 import { Callout } from '../../components/result-parts';
 import { useImportPlan } from '../import-store';
 import type { ImportSimulateResponse } from '../import-types';
+import { choiceLabel, cutoffWeek, savedWindowText } from '../plan-window';
 import { savedBannerTitle, savedViewOf, sessionViewOf } from '../saved-scenarios';
 import { useImportScenarios } from '../scenarios-store';
 import { libraryErrorMessage, useFetchSavedScenario, useSavedScenarios } from '../use-import-library';
@@ -129,6 +131,12 @@ export function ScenarioBar({ pending }: { pending: boolean }): React.JSX.Elemen
           {error}
         </p>
       ) : null}
+      {view === null && result !== null && result.plan_from_label ? (
+        <p className="text-2xs text-text-muted" data-testid="scenario-plan-window">
+          {`Plan from ${result.plan_from_label} until ${choiceLabel(result.plan_week_choices, cutoffWeek(result))}`}
+          {result.plan_window_label ? ` · plan window ${result.plan_window_label}` : ' · the plan year'}
+        </p>
+      ) : null}
       {view === null && planExcluded !== undefined && planExcluded > 0 ? (
         <p className="text-2xs text-text-muted" data-testid="scenario-plan-excluded">
           {`${int(planExcluded)} plan project${planExcluded === 1 ? ' is' : 's are'} left out of this scenario.`}
@@ -187,9 +195,13 @@ export function ScenarioViewBanner({ current }: { current: ImportSimulateRespons
         <span>
           “{view.name}” from {view.source.file_name}, shown as saved. The plan may have moved since
           {current !== null && current.current_week !== view.simulated_week
-            ? ` (today is W${String(current.current_week)})`
+            ? ` (today is ${formatWeek(current.current_week)})`
             : ''}
           .
+        </span>
+        <span data-testid="import-view-window">
+          {savedWindowText(view) ?? ''}
+          {view.result.plan_window_label ? ` (${view.result.plan_window_label})` : ''}.
         </span>
         <Button type="button" size="sm" variant="secondary" onClick={() => restore(view.request, view.source)}>
           <RefreshCw />

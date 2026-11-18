@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
 import type { ImportSeverity } from '../import-types';
+import { PLAN_IMPORT_ISSUE_TITLES } from '../plan-window';
 import { SEVERITY_META, SEVERITY_ORDER } from '../severity-meta';
 
 export interface IssueItem {
@@ -55,6 +56,11 @@ export function IssueList({ items, label }: { items: readonly IssueItem[]; label
         <meta.Icon className="mt-0.5 size-3.5 shrink-0 text-text-muted" aria-hidden="true" />
         <span className="min-w-0 flex-1">
           {i.where ? <span className="font-medium text-text">{i.where}: </span> : null}
+          {PLAN_IMPORT_ISSUE_TITLES[i.code] ? (
+            <span className="font-semibold text-text" data-testid="import-issue-title">
+              {`${PLAN_IMPORT_ISSUE_TITLES[i.code] ?? ''}. `}
+            </span>
+          ) : null}
           <span className="text-text">{i.message}</span>{' '}
           <span className="font-mono text-2xs text-text-muted">{i.code}</span>
         </span>

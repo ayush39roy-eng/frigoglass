@@ -2730,8 +2730,8 @@ The ruling is labelled R49 (written before the phase number was assigned; P49 is
 
 | ID | Task | Owner | Depends on | Status |
 |---|---|---|---|---|
-| P50-T01 | Parser band columns (R49-1..6, I55); schema/service `plan_from_week` / `plan_until_week`, served labels, `PLAN_FROM_LATER` (service-emitted), saved scenarios / compare / export / audit (R49-13, R49-19) | backend-builder | — | in progress |
+| P50-T01 | Parser band columns (R49-1..6, I55); schema/service `plan_from_week` / `plan_until_week`, served labels, `PLAN_FROM_LATER` (service-emitted), saved scenarios / compare / export / audit (R49-13, R49-19) | backend-builder | — | done (MEMORY 2026-11-19) |
 | P50-T02 | Engine: plan-from floor and anchor (I54), plan-until cut-off / horizon / windows (I56) | algorithm-engineer | — | done (MEMORY 2026-11-19) |
-| P50-T03 | What-if import: "Plan from" / "Plan until" pickers, server labels, "band" source, banners, cut-off reads served `plan_until_week` | frontend-builder | T01, T02 | todo |
-| P50-T04 | Display: no week ≥ 53 on any surface — next-year weeks read W1.. with the year on hover (owner 2026-11-18) | frontend-builder | — | in progress |
+| P50-T03 | What-if import: "Plan from" / "Plan until" pickers, server labels, "band" source, banners, cut-off reads served `plan_until_week` | frontend-builder | T01, T02 | done (MEMORY 2026-11-19) |
+| P50-T04 | Display: no week ≥ 53 on any surface — next-year weeks read W1.. with the year on hover (owner 2026-11-18) | frontend-builder | — | done (MEMORY 2026-11-19) |
 | P50-T05 | Gate: qa-inspector, workflow-auditor, security-auditor | — | T01–T04 | todo |

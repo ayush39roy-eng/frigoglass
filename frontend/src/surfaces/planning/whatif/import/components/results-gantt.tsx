@@ -28,7 +28,8 @@ import { OUTCOME_LABEL, OUTCOME_ORDER, OUTCOME_TONE } from '../../components/out
 import { editKey } from '../import-rows';
 import { useImportPlan } from '../import-store';
 import type { ImportResultProject, ImportResultStep, ImportSimulateResponse, ImportStepMeta } from '../import-types';
-import { axisTicks, longWeekLabel, planYearOf, shortWeekLabel, weekOrDash } from '../week-labels';
+import { axisTicks, longWeekLabel, shortWeekLabel, weekOrDash } from '../week-labels';
+import { planScope } from '../plan-window';
 import { importScale, type DropEdit } from '../gantt-geometry';
 import { projectInYear, YEAR_ALL } from '../year-filter';
 import { StepDragHandles } from './step-drag';
@@ -122,8 +123,9 @@ export function ResultsGantt({
   const metaById = React.useMemo(() => new Map(result.steps_meta.map((m) => [m.step_id, m])), [result.steps_meta]);
   const hubs = React.useMemo(() => [...new Set(result.projects.map((p) => p.hub))].sort(), [result.projects]);
   const editCount = Object.keys(edits).length;
-  const yearEndX = weekEndToX(result.plan_year_end_week, scale);
-  const planYear = planYearOf(result.plan_year_end_week, base);
+  // P50 (R49-16): the dashed cut-off line is the served `plan_until_week` (fallback: the plan-year end).
+  const scope = planScope(result);
+  const yearEndX = weekEndToX(scope.cutoffWeek, scale);
 
   const filtered = React.useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -316,7 +318,7 @@ export function ResultsGantt({
             Drag a step bar to move it, drag its right edge to change its length, or drop it onto the step above to
             run the two in parallel (capacity still applies). Every drop recomputes the What-if; nothing is saved.
           </p>
-          <p>The dashed line is the end of {String(planYear)}.</p>
+          <p>The dashed line is the end of {scope.name}.</p>
         </CardInfo>
       </div>
 
@@ -381,7 +383,7 @@ export function ResultsGantt({
                   textAnchor="end"
                   fill="hsl(var(--color-text-muted))"
                 >
-                  {`End of ${String(planYear)}`}
+                  {`End of ${scope.name}`}
                 </text>
               </svg>
             </div>

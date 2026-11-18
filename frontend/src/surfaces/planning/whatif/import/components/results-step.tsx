@@ -22,6 +22,7 @@ import { ResultsGantt } from './results-gantt';
 import { ResultsProjects } from './results-projects';
 import { ScenarioBar, ScenarioViewBanner } from './scenario-bar';
 import { ScenarioBuilderButton } from './scenario-builder-dialog';
+import { PlanWindowNotice } from './plan-window-notice';
 import { YearFilterBar } from './year-filter-bar';
 
 // P32-R05: the chart-heavy tabs load on first open (the import view itself is lazy too).
@@ -170,6 +171,7 @@ function ResultsTabs({
       <ScenarioViewBanner current={current} />
       {/* R37-3: the result's own input week against the active run's. */}
       <SimulatedWeekNotice simulatedWeek={result.current_week} />
+      <PlanWindowNotice result={result} />
       <Tabs value={tab} onValueChange={(v) => setTab(v as ResultsTab)}>
         <div className="flex flex-wrap items-center justify-between gap-s3">
           <TabsList aria-label="Results" className="max-w-full flex-wrap">
