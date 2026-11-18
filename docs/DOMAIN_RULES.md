@@ -2011,17 +2011,17 @@ security (OQ #113).
   "Running" → P1 rank 0; (c) a rank → P1; (d) the matched plan project's band; (e) P3. A rank under
   a band orders the row within its band (`PRIORITY_BAND_OVER_RANK` when the band is P2–P4). Status
   is applied first. Ranked rows are ordered by rank within equal status and category.
-- **Plan from week f** (`cw ≤ f ≤ plan_year_end_week`, default `cw`, else 422 `INVALID_IMPORT`;
+- **Plan from week f** (`cw ≤ f ≤ u`, u = Plan until below; default `cw`, else 422 `INVALID_IMPORT`;
   absolute weeks, 53 = W1 of the next year). File rows only: the current In Progress step starts at
   f, every non-skipped Not Started step starts ≥ f, nothing is booked before f. Live plan projects,
-  the input week `cw`, gates (I27), capacity windows and `horizon_weeks = plan_year_end_week + 26`
-  are unchanged. Saved scenarios store f; re-run uses `max(f, cw)`.
+  the input week `cw` and gates (I27) are unchanged; the cut-off, horizon (`u + 26`) and capacity
+  windows follow the Plan until bullet below (R49-15..17 supersede R49-11). Saved scenarios store f; re-run uses `max(f, cw)`.
 - **I54** every file project books nothing before f; plan projects' solver input equals the f = cw
-  run; f = cw is byte-identical to the pre-R49 response. **I55** priority = the rule above; no band
+  run; f = cw gives every pre-R49 field identical (only the window fields are added). **I55** priority = the rule above; no band
   Yes → parsed exactly as before.
 - **Plan until week u** *(2026-11-19, R49-15..R49-21)*: optional; default = the plan-year preset
   `plan_year_end_week` (52/104). Allowed `f ≤ u ≤ 104`, else 422. u is the single cut-off: "within"
   = finishes by u (KPI names unchanged), `within_year_week = u` in both runs, `horizon_weeks = u + 26`,
   weekly capacity `cw..u`, calendar-year windows clipped to u. Server serves `plan_until_week` and
   `plan_window_label`. Saved scenarios store u; re-run u := max(u, f) (`PLAN_UNTIL_RAISED`); Compare
-  warns when windows differ. **I56** `cw ≤ f ≤ u ≤ 104`; u unset → identical to the R49-1..14 response.
+  warns when windows differ. **I56** `cw ≤ f ≤ u ≤ 104`; u unset → every pre-R49 field identical, only the window fields added. `BAND_VALUE_INVALID` applies to the four new band columns only; "Must Do" keeps its pre-R49 reading of other text.

@@ -261,7 +261,7 @@ def plan_window_issues(w: PlanWindow) -> list[SimIssueOut]:
                 code=PLAN_FROM_LATER,
                 message=(
                     f"Simulated from W{w.current_week}; file projects start from "
-                    f"{plan_week_label(w.from_week)}. Live plan projects are unchanged."
+                    f"{plan_week_label(w.from_week)}. Live plan projects keep their own start rules (their finishes can still move as capacity frees up)."
                 ),
             )
         )
