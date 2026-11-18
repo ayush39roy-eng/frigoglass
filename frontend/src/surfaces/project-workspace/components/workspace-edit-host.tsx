@@ -68,6 +68,7 @@ export function WorkspaceEditHost({
           />
         </React.Suspense>
       ) : null}
+      {registerSave.conflictDialog}
       <RegisterSavePanel
         flow={registerSave.flow}
         runState={registerSave.runState}

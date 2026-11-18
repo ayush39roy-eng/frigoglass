@@ -29,8 +29,8 @@ import {
   type PriorityDistribution,
   type PriorityMatrixRow,
   type PriorityPortfolioSummary,
+  type PriorityScoreChangeBody,
   type PriorityScoreRead,
-  type PriorityScoreUpdateRequest,
   type ScoringDimensionTable,
   type ScoringRubric,
   type ScoringRubricPreview,
@@ -119,7 +119,8 @@ export function fetchPriorityRow(projectId: string, ctx: FetchCtx = {}): Promise
  */
 export function updatePriorityScore(
   projectId: string,
-  body: PriorityScoreUpdateRequest,
+  /** P47 (ADR 0059 C1): with the `base` of the dimensions and gates it sends. */
+  body: PriorityScoreChangeBody,
 ): Promise<PriorityScoreRead> {
   return apiSend<PriorityScoreRead>('PUT', `/priorities/${projectId}`, body);
 }

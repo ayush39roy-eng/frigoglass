@@ -27,6 +27,7 @@ from models.enums import (
     WorkflowStepStatus,
 )
 from schemas.dashboard import ScheduleOutcome
+from schemas.edit_conflict import EditBase
 from schemas.priority import DimensionScore
 from schemas.project import ProjectRead
 
@@ -172,6 +173,8 @@ class FileUpdateRequest(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=255)
     category: ProjectFileCategory | None = None
     description: str | None = Field(default=None, max_length=2000)
+    #: P47 (ADR 0059): the values the user started from, per changed field.
+    base: EditBase = Field(default_factory=dict)
 
 
 class CommentRead(BaseModel):
@@ -248,6 +251,9 @@ class StageUpdateRequest(BaseModel):
     actual_end_week: int | None = Field(default=None, ge=1, le=HORIZON_MAX_WEEK)
     remaining_weeks_override: int | None = Field(default=None, ge=0, le=HORIZON_MAX_WEEK)
     blocked_reason: str | None = Field(default=None, max_length=2000)
+    #: P47 (ADR 0059): the stage's values the user started from, per changed
+    #: field. Optional.
+    base: EditBase = Field(default_factory=dict)
 
 
 class RecalculateResponse(BaseModel):

@@ -22,6 +22,7 @@ from models.currency import CurrencyRate
 from models.enums import CurrencyCode, RoleName
 from schemas.currency import CurrencyRateRead, CurrencyRateUpdateRequest
 from services.currency import currency_rate_read
+from services.edit_conflict import check_base, field_refs
 
 router = APIRouter(prefix="/currency-rates", tags=["currency-rates"])
 
@@ -66,15 +67,28 @@ async def update_currency_rate(
     (and the already-documented) target, not an interpretation made fresh
     here.
     """
-    result = await db.execute(
-        select(CurrencyRate).where(CurrencyRate.currency_code == currency_code)
-    )
+    stmt = select(CurrencyRate).where(CurrencyRate.currency_code == currency_code)
+    if body.base:
+        # P47 (ADR 0059 C1): the rate row `FOR UPDATE`, re-read.
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    result = await db.execute(stmt)
     rate = result.scalar_one_or_none()
     if rate is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No currency_rates row for currency_code={currency_code.value!r}",
         )
+    await check_base(
+        db,
+        current_user,
+        entity="currency_rate",
+        entity_id=rate.currency_code.value,
+        label=rate.currency_code.value,
+        base=body.base,
+        requested={"rate_to_eur": body.rate_to_eur},
+        current={"rate_to_eur": rate.rate_to_eur},
+        refs=field_refs("CurrencyRate", str(rate.id)),
+    )
 
     before_state = {
         "currency_code": rate.currency_code.value,

@@ -10,6 +10,7 @@
  * never diffs two runs itself (I20).
  */
 
+import type { EditBase } from '@/lib/api/edit-conflict';
 import type { Id } from '@/types/common';
 import type { HubName, ProjectPriority } from '@/types/enums';
 
@@ -36,6 +37,8 @@ export interface PriorityMoveRequest {
   /** From `POST …/priority/preview`. With it the move is applied in-process
    *  (`recalc_status: "applied"`); without it, ADR 0015 behaviour. */
   preview_token?: string | null;
+  /** P47 (ADR 0059 C1): the value as read of each field sent; `{}` = no check. */
+  base?: EditBase;
 }
 
 // PLACEHOLDER (P11 contract §1)

@@ -14,11 +14,13 @@ import { useQuery } from '@tanstack/react-query';
 
 import type { TrackingStatus } from '@/components/shared/tracking-status-meta';
 import { queryKeys } from '@/lib/query-keys';
+import type { QueryFreshness } from '@/lib/use-edit-freshness';
 import { NO_HUB_SELECTION, toHubFilterParams, type HubSelection } from '@/stores/hub-filter';
 import type { Id } from '@/types/common';
 import type { HubName, WorkflowStepKind, WorkflowStepStatus } from '@/types/enums';
 
 import { ApiError, apiGet, apiSend, type ApiRequestOptions } from './client';
+import type { EditBase } from './edit-conflict';
 
 export interface CheckInDueStage {
   step_id: string;
@@ -70,6 +72,9 @@ export interface CheckInEntry {
   percent_complete: number;
   blocked_reason: string | null;
   note: string | null;
+  /** P47 (ADR 0059 C1): the stage's status, % and hold reason as read when
+   *  the user started on this row. The note is appended, never checked. */
+  base?: EditBase;
 }
 
 export interface CheckInSubmitRequest {
@@ -172,11 +177,13 @@ export function checkInEntryErrors(err: unknown): CheckInEntryError[] {
 
 /** `GET /check-ins/due?hub_id=`. The sidebar badge and the check-in page share
  *  this key, so one fetch serves both. */
-export function useCheckInsDue(hub: HubSelection, enabled = true) {
+export function useCheckInsDue(hub: HubSelection, enabled = true, freshness?: QueryFreshness) {
   return useQuery({
     // P13 (ADR 0025): the country filter is keyed and sent beside the hub.
     queryKey: queryKeys.checkInsDue(hub),
     queryFn: ({ signal }) => fetchCheckInsDue(hub, { signal }),
     enabled,
+    // P47 (ADR 0059): focus refetch + 60 s poll while nobody edits the form.
+    ...freshness,
   });
 }

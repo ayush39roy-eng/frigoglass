@@ -12,6 +12,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from models.enums import RoleName
+from schemas.edit_conflict import EditBase
 
 #: A deliberately plain shape check (one `@`, no whitespace, a dot in the
 #: domain). Deliverability is the IdP's business; this only stops obvious
@@ -115,6 +116,9 @@ class UserUpdateRequest(BaseModel):
     #: (`manager_id == id`) and any longer reporting-line cycle are rejected
     #: — see `api/routers/users.py::_update_user`.
     manager_id: uuid.UUID | None = None
+    #: P47 (ADR 0059): the values the user started from, per changed field
+    #: (`roles` / `hub_ids` compare as sets). Optional.
+    base: EditBase = Field(default_factory=dict)
 
     @field_validator("roles")
     @classmethod

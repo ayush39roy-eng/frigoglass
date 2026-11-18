@@ -136,7 +136,7 @@ describe('Progress panel — stages', () => {
     expect(screen.getByTestId('overrun-PDD-B')).toHaveTextContent('+1 wk over');
   });
 
-  it('refuses to save Blocked without a reason, then PATCHes all six fields and shows the stale banner', async () => {
+  it('refuses to save Blocked without a reason, then PATCHes the changed fields and shows the stale banner', async () => {
     const user = userEvent.setup();
     const stale: WorkspaceResponse = workspaceFixture({
       schedule: { ...workspaceFixture().schedule, schedule_stale: true },
@@ -157,11 +157,9 @@ describe('Progress panel — stages', () => {
     // MemoryRouter starts at "/", so the route param is '' here; the API is mocked.
     expect(api.patchStage).toHaveBeenCalledWith('', 'PDD-B', {
       status: 'Blocked',
-      percent_complete: 50,
-      actual_start_week: 22,
-      actual_end_week: null,
-      remaining_weeks_override: null,
       blocked_reason: 'Waiting on supplier drawings',
+      // P47-R03 (QA-1): only the changed fields, each with its value as read.
+      base: { status: 'In Progress', blocked_reason: null },
     });
     expect(await screen.findByTestId('progress-stale-banner')).toHaveTextContent('Progress updated. Schedule is now stale.');
   });
@@ -478,8 +476,14 @@ describe('P11 — priority move (ADR 0015)', () => {
     renderPage();
     const panel = within(await screen.findByTestId('details-panel'));
     await user.click(panel.getByRole('button', { name: 'Edit details' }));
+    // P47: the Details form PATCHes only what changed, so change one field.
+    await user.type(panel.getByLabelText(/^External code/), 'RPD-9');
     await user.click(panel.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(reg.updateProject).toHaveBeenCalled());
+    expect(reg.updateProject).toHaveBeenCalledWith(fixture.project.id, {
+      external_code: `${fixture.project.external_code ?? ''}RPD-9`,
+      base: { external_code: fixture.project.external_code },
+    });
     await waitFor(() => expect(sse.streamSolverProgress).toHaveBeenCalledWith('run-50', expect.any(Function), expect.any(AbortSignal)));
     expect(await screen.findByRole('heading', { name: 'Timeline updated' })).toBeInTheDocument();
     expect(await screen.findByTestId('timeline-hidden-count')).toHaveTextContent('+2 more in hubs outside your scope');

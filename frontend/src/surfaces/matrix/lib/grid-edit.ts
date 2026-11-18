@@ -23,6 +23,7 @@ import type {
   ScenarioApplyRequest,
 } from '../api/types';
 import { liveRequestValuesFromRow } from '../components/score-edit-schema';
+import { toScoreChangeBody } from './score-base';
 
 export type GridDraft = PriorityScoreUpdateRequest;
 export type GridDrafts = Readonly<Record<string, GridDraft>>;
@@ -115,14 +116,54 @@ export function buildGridApplyBody(
   drafts: GridDrafts,
   liveRows: readonly PriorityMatrixRow[],
   notes: string,
+  /** P47 (ADR 0059): each project's values when its first cell was edited.
+   *  When given, a row sends only the dimensions the user changed (omitted
+   *  keys keep their stored value, so a dimension someone else changed
+   *  meanwhile is never overwritten) and carries its `base`. */
+  reads?: Readonly<Record<string, GridDraft>>,
 ): ScenarioApplyRequest {
   const priority_scores = changedProjectIds(drafts, liveRows).map((id) => {
     const row = liveRows.find((r) => r.project_id === id) as PriorityMatrixRow;
     const draft = drafts[id] as GridDraft;
     const scores: DimensionScoreMap = {};
+    if (reads) {
+      const read = reads[id] ?? liveRequestValuesFromRow(row);
+      for (const d of row.dimension_scores) {
+        const next = draft.scores[d.key] ?? null;
+        if (next !== (read.scores[d.key] ?? null)) scores[d.key] = next;
+      }
+      // P47-R03 (QA-2): `hard_gates` only when the row's gates changed.
+      return { project_id: id, ...toScoreChangeBody({ scores, hard_gates: [...draft.hard_gates] }, read) };
+    }
     for (const d of row.dimension_scores) scores[d.key] = draft.scores[d.key] ?? null;
     return { project_id: id, scores, hard_gates: [...draft.hard_gates] };
   });
   const trimmed = notes.trim();
   return { notes: trimmed === '' ? null : trimmed, priority_scores };
+}
+
+/**
+ * P47 (ADR 0059 C2, "Use theirs"): the drafts with the stored values put back
+ * for each conflicting dimension / gate list (my other edits stay), and the
+ * read snapshot moved to the stored values so the next save starts from them.
+ */
+export function applyTheirScores(
+  drafts: GridDrafts,
+  reads: Readonly<Record<string, GridDraft>>,
+  projectId: string,
+  theirs: { scores: DimensionScoreMap; hard_gates: HardGateReason[] | null },
+): { drafts: GridDrafts; reads: Readonly<Record<string, GridDraft>> } {
+  const outDrafts: Record<string, GridDraft> = { ...drafts };
+  const outReads: Record<string, GridDraft> = { ...reads };
+  const put = (v: GridDraft | undefined): GridDraft | undefined =>
+    v && {
+      scores: { ...v.scores, ...theirs.scores },
+      hard_gates: theirs.hard_gates ? [...theirs.hard_gates] : v.hard_gates,
+    };
+  const draft = put(drafts[projectId]);
+  const read = put(reads[projectId]);
+  if (draft) outDrafts[projectId] = draft;
+  if (read) outReads[projectId] = read;
+  if (draft && read && !draftDiffers(read, draft)) delete outDrafts[projectId];
+  return { drafts: outDrafts, reads: outReads };
 }

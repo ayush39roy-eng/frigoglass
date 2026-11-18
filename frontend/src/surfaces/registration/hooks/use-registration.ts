@@ -9,6 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
+import type { EditBase } from '@/lib/api/edit-conflict';
 import { queryKeys } from '@/lib/query-keys';
 import { invalidateScoreReaders } from '@/lib/score-readers';
 
@@ -102,7 +103,7 @@ export function useCreateProject() {
 export function useUpdateProject() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ projectId, body }: { projectId: string; body: ProjectUpdateRequest }) =>
+    mutationFn: ({ projectId, body }: { projectId: string; body: ProjectUpdateRequest & { base?: EditBase } }) =>
       updateProject(projectId, body),
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({ queryKey: ['projects'] });

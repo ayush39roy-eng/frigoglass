@@ -43558,3 +43558,812 @@ every task.
 
 **How to apply:** gatekeepers must flag any migration with an UPDATE or DELETE on existing business
 rows as a release blocker until the owner approves it.
+
+## [2026-11-18] P47-T01 — ADR 0059: concurrent edits, field-level conflict check — orchestrator: DONE
+
+The owner asked that, when several users edit at once, the same field is never silently
+overwritten.
+
+**Today:** project, engineer, chamber and capacity edits take row locks but are last-write-wins.
+Templates, the rubric, the import format, the priority preview and engineer deactivation already
+detect conflicts.
+
+**Decision:**
+- An optional `base` (the values the user started from) goes with every edit. The server compares
+  it under the row lock and returns 409 `EDIT_CONFLICT` with the conflicting fields, who changed
+  them and when; financial values are hidden, and nothing is written.
+- Different fields edited at the same time both succeed.
+- The frontend shows a dialog (Use theirs / Keep mine), refetches on focus and polls every 60 s when
+  idle.
+- No migration and no data change.
+- Presence is deferred (OQ #108).
+
+**Next:** T02 and T03 run in parallel, then the T04 gate.
+
+## [2026-11-18] P47-T02 — field-level conflict check (`base` + 409 `EDIT_CONFLICT`) on every C3 edit — backend-builder: DONE (not committed)
+
+ADR 0059 C1 + C3. No migration, no data change, no new column. A request without `base` behaves
+exactly as before.
+
+**Shared pieces**
+- `backend/schemas/edit_conflict.py`: `EditBase` = optional JSON object (≤ 200 keys, key ≤ 100
+  chars). On every request model it is `base: EditBase = Field(default_factory=dict)`: omit it or
+  send an object; `{}` means no check; `null` is a 422.
+- `backend/services/edit_conflict.py`: `find_conflicts` / `check_base` / `step_conflicts` /
+  `priority_score_conflicts`, then `edit_conflict_error` / `raise_edit_conflict`, and
+  `latest_change`.
+- `api/errors.py`: `CodedHTTPException(..., extra=)` adds top-level keys, so the 409 body is
+  `{"code": "EDIT_CONFLICT", "detail": "Someone else changed this while you were editing.",
+  "conflicts": [{entity, id, label, field, your_value, current_value, changed_by, changed_at}]}`.
+
+**Rules as built**
+- Only fields present both in the request and in `base` are checked. A field the request does not
+  send is never checked, so different fields of one record both succeed.
+- A field whose requested value equals the stored one is not a change and is never a conflict.
+- Otherwise a stored value that differs from `base` is a conflict.
+- The check runs after the row lock and before any write, so a 409 writes nothing, audits nothing,
+  marks nothing stale and dispatches no run.
+- Batches are refused whole and list every conflicting field: register-edits, check-ins,
+  step-pins, scenario Apply and the steps PUT.
+- Comparison uses the read shape: enum → value, UUID → string (case-insensitive), every number →
+  exact Decimal (`12` = `12.0` = `"12.00"`), blank string = null, lists of scalars compared as
+  sets.
+- Financial fields (TCOGS, margin, selling price, customer name) are compared, and both values are
+  always `"<hidden>"`.
+- `changed_by` / `changed_at` come from the newest audit row of the entity that changed the field,
+  falling back to the newest row of the entity. Priority scores also search
+  `scenario_apply_changes`; stages also search the project-level check-in / current-step rows.
+- `changed_by` is null for a system actor, and null when that row's `hub_id` is outside the
+  caller's scope and is not the entity's current hub. `changed_at` is still served then.
+- Full-replacement PUTs (hub calendar, steps) should send `base` for every field / step. A
+  concurrent change anywhere is then a conflict, because the PUT would put it back.
+
+**Locks added (only when `base` is sent)**
+- PATCH /projects: the project row `FOR UPDATE`, in the register batch's order. The order is: band
+  lock if status / priority → categories `FOR SHARE` if an effort input changes → leader engineers
+  `FOR SHARE` → row. Scope and permission are re-checked on the re-read row.
+- Freeze toggle: the category `FOR SHARE` on unfreeze, then the project row.
+- VIP pin: project row. Chamber PATCH and settings PUT: chamber row. Hub calendar: calendar row.
+  Steps: the workflow's step rows (id order). Scores: `PriorityScore` rows (id order). VIP item:
+  item row. User: user row (after the Super Admin membership lock). What-if scenario: its row.
+  Currency rate: its row. Project file: its row.
+- Already locked, no change: register-edits rows, check-ins / stage PATCH (`lock_projects`), step
+  pins (`lock_projects_in_scope`), engineer PATCH (`lock_engineers`). A priority move is checked
+  under the band-rank lock, which every priority writer holds.
+
+**Endpoint inventory (route → `base` location → fields checked)**
+| Route | `base` | Fields checked |
+|---|---|---|
+| PATCH /projects/{id} | body | any `ProjectUpdateRequest` field the PATCH sends (financial ones hidden in the 409) |
+| POST /projects/register-edits | `edits[i].base` | status, leader_engineer_id, actual_start_week, actual_end_week, design/lab_effort_weeks, hub_id, certification_testing_required; `step_exclusions` as `{code: bool}` (or the request's list) per step → field `step_exclusions.<code>`; `current_step_code` (live current step) |
+| POST /projects/{id}/priority | body | priority |
+| POST /projects/{id}/band-rank | — | already covered: required `preview_token`, 409 `PREVIEW_STALE` |
+| POST /projects/{id}/submit | — | already covered: legacy Draft-only state check (400) |
+| POST /gantt/projects/{id}/freeze | body | frozen; actual_start_week when sent |
+| PUT /gantt/step-pins | `items[i].base` | manual_start_week, manual_end_week → field `<step>.manual_*`, entity `project_step`, id = project id |
+| PATCH /engineers/{id} | body | name, hub_id, fte, allowed_categories, user_id, counts_in_capacity |
+| POST /engineers/{id}/deactivate, /reactivate | — | already covered: `LED_PROJECTS_CHANGED` token / `ENGINEER_ALREADY_ACTIVE` |
+| PATCH /chambers/{id} | body | code, lab_region, max_concurrent, platforms, efficiency, maintenance/breakdown/calibration_weeks, allowed_stages |
+| PUT /workflow-settings/chambers/{id} | body | platforms, efficiency, maintenance/breakdown/calibration_weeks |
+| PUT /workflow-settings/hub-calendars/{hub_id} | body | the five calendar fields (no stored calendar = a create, not checked) |
+| PUT /workflow-settings/steps/{workflow_id} | `steps[i].base` | kind, predecessor_ids → entity `workflow_step`, id = step id |
+| PUT /workflow-settings/lead-times, PATCH /projects/{id}/steps/{step}/timing | — | retired (410), nothing to check |
+| POST /check-ins | `entries[i].base` | status, percent_complete, blocked_reason (as the server would store them) → field `<step>.<f>` |
+| PATCH /projects/{id}/stages/{step_id} | body | any field the PATCH sends → field `<step>.<f>` |
+| PUT /priorities/{project_id} | body `{scores: {key: v}, hard_gates: [...]}` | `scores.<key>` for keys sent; hard_gates when sent |
+| POST /scenarios/apply (Matrix grid) | `priority_scores[i].base`, same shape | same |
+| PUT /projects/{id}/vip | body | is_vip |
+| PATCH /vip-items/{id} | body | area, pillar, title, status_tag, status_note, highlighted, parent_id, sort_order |
+| PUT /vip-items/{id}/projects | body `{project_ids: [...]}` | project_ids (set; only the links the caller can see) |
+| PATCH /users/{id} | body | email, full_name, roles, hub_scope_all, hub_ids, engineer_id, is_active, manager_id |
+| PATCH /whatif/import/scenarios/{id} | body | name, note |
+| PUT /currency-rates/{code} | body | rate_to_eur |
+| PATCH /projects/{id}/files/{file_id} | body | display_name, category, description |
+| POST /workflow-templates/apply | — | already covered: `TEMPLATE_CHANGED` |
+| PUT /scoring-rubric, PUT /whatif/import/format | — | already covered: `version` 409 |
+| PATCH /projects/{id}/comments/{id} | — | not needed: author-only within 15 minutes, a single writer |
+
+Not edits (nothing needed): every create (projects, engineers, chambers, VIP items, users,
+comments, files, access grants, categories, saved scenarios), the previews, schedule-run dispatch
+and cancel, Workspace recalculate, ask-agent, notification read, import-format reset.
+
+**Tests** (all pass, 35):
+- `tests/test_p47_project_conflicts.py`: PATCH, priority move, register batch (atomic, step
+  exclusions, current step), financial values hidden, `changed_by` null out of scope.
+- `tests/test_p47_endpoint_conflicts.py`: every other endpoint above; a two-client race each; no
+  base; matching base; different fields; batch atomicity with stale flag, check-in rows and
+  dispatch unchanged.
+- `tests/test_p47_race.py`: own container. A real second connection holds the row lock, and Bob's
+  PATCH waits, then gets a 409 naming Alice, or succeeds for a different field.
+- The related suites pass: projects/register/priority/band-rank/VIP/check-ins/workspace/files/
+  workflow settings/users/scenarios/currency/step pins/import scenarios, 835 tests.
+
+**Lint and types:** ruff is clean on the touched files. mypy shows 70 errors before and 70 after
+on the touched set; all are older ones (celery stubs, cp_sat, models).
+
+**Open, for T03:** `tests/test_openapi_frontend_contract.py` still fails, and the cause is the
+frontend TS types, not the backend.
+- These TS request types need `base?: ...` (non-nullable): PriorityScoreUpdateRequest,
+  FreezeToggleRequest, StepPinItem, HubCalendarUpdateRequest, ChamberSettingUpdateRequest,
+  FilePatchRequest, PriorityMoveRequest, CheckInEntry, VipPinRequest, VipItemLinksRequest.
+- I added frontend `PriorityScoreBase` to the allowlist and `base` to the pinned steps shape.
+- A new `PlanWeek` interface in `frontend/src/lib/api/session.ts` (not P47) also needs a contract
+  entry.
+
+## [2026-11-18] P47-T02 — full backend suite result (addendum to the entry above) — backend-builder
+
+Full suite, `tests/scheduling` excluded: 2890 passed, 14 failed. It must run with
+`RPD_REDIS_URL=redis://127.0.0.1:6399/0`, because the conftest placeholder `localhost:6379` reaches
+the developer's running Redis and a test hangs on it.
+
+- **Fixed in this task:** 1 flaky P47 assertion. The string `"14"` also matched inside a UUID; the
+  test now checks the conflict value fields.
+- **Not caused by P47, still open:**
+  - 11 in `test_openapi_frontend_contract.py`: the frontend TS still lacks `base?:` (T03 in
+    progress), plus a new frontend `PlanWeek` interface and the TS `StepPinItem.manual_end_week`
+    nullability.
+  - `test_p20_fte_followups::test_gantt_step_row_contract`: the frontend has no `pin_lapsed` /
+    `pin_clearable` on its Gantt step row.
+  - `test_p27_render_csp`: the inline script in `frontend/index.html` changed, so its sha256 in
+    `render.yaml` needs updating.
+  - `test_migrations::test_migration_up_down_up_down_cycle`: the table count is 42, the test
+    expects 38. P47 has no migration.
+
+## [2026-11-18] P47-T03 — frontend: `base` on every C3 edit, conflict dialog, idle-only freshness — frontend-builder: DONE (not committed)
+
+ADR 0059 C1 (send `base`), C2 (dialog, freshness), C3 (scope). Placement follows the P47-T02 table:
+top-level `base` on single-record PATCH/PUT, per item on batches (`edits[i]`, `items[i]`,
+`entries[i]`, `priority_scores[i]`, `steps[i]`).
+
+**Shared plumbing**
+- `lib/api/client.ts`: `ApiError.body` holds the parsed error JSON (6th constructor arg, optional).
+- `lib/api/edit-conflict.ts`:
+  - `editConflicts(err)` reads `conflicts` at the top level or inside an object `detail`.
+  - Base helpers: `pickBase` / `changedKeys` / `withBase`, and per-record snapshots
+    `captureBase` / `snapshotBase` / `forgetBase`. The first value of a field wins, so a later
+    refetch never moves `base`.
+  - `keepMineBase` sets the stored value. It handles dotted fields (`step_exclusions.<code>`,
+    `scores.<key>`, `<step_id>.<field>`) and drops a `"<hidden>"` field from `base`.
+  - Loops: `sendEditWithBase` (single record; `replaceOnTheirs` for full-record PUTs) and
+    `saveWithConflictCheck`.
+  - Also exports `EditConflictDismissedError` and `CONFLICT_COPY`.
+- `components/shared/edit-conflict-dialog.tsx` and `edit-conflict-meta.ts`:
+  - For each conflict it shows the label and friendly field, "You entered", "Now saved" and
+    "Changed by X at HH:MM" (with the date when not today).
+  - `"<hidden>"` is shown as "hidden". Everything is text nodes only; no dangerouslySetInnerHTML.
+  - Buttons: Use theirs and Keep mine. Esc or the close button means nothing is saved and the edit
+    stays.
+- `lib/use-edit-conflict.tsx` gives a dialog per surface (a promise `ask`).
+- `stores/edit-conflict-host.ts` and `components/shared/edit-conflict-host.tsx` give an app-wide
+  dialog, mounted in `app-shell.tsx`, for the shared write hooks (VIP, scenario rename). With no
+  host mounted it resolves null.
+- `lib/use-project-conflict-format.ts` shows hub and leader ids as names in the dialog, taken from
+  cached lists.
+- `apiErrorMessage` maps `EditConflictDismissedError` to its message.
+- Freshness:
+  - `lib/use-edit-freshness.ts` `editFreshness(editing)`: idle means `refetchOnWindowFocus` plus a
+    60 s `refetchInterval`; editing means both are off.
+  - `stores/edit-session.ts`: `useEditSession(active)` registers an open editor, and
+    `useAnyEditInProgress()` pauses polling.
+
+**Surfaces covered (`base` source → conflict handling)**
+- **Projects register (inline, row edit, bulk; `ProjectsPage`, `use-register-save`):**
+  - Per-row snapshot captured per field on its first change: `step:<code>` for exclusions, and
+    each scalar.
+  - `edits[i].base`, with `step_exclusions` as `{code: bool}`.
+  - Keep mine resends. Use theirs drops only the conflicting fields from the drafts and forgets
+    their snapshot; the other edits stay in the buffer, unsaved.
+  - The list polls when idle and pauses while a row is in edit, holds a draft, or the popup is
+    open.
+- **Register popup (`registration-drawer`):**
+  - The identity PATCH sends only the fields changed against the project as first loaded, with
+    `base`, through `sendEditWithBase`.
+  - The register batch gets `base` from the popup values when the first register field changed.
+  - Use theirs drops those fields from the popup draft.
+- **Workspace (`ProjectWorkspacePage`):**
+  - Details form: PATCH of the changed fields only, against the project when Edit was pressed.
+    This used to send the full body.
+  - Stage row: the PATCH writes all six fields, so all six carry `base` from the stage at first
+    touch. Use theirs puts the stored values into the conflicting fields.
+  - Scoring section: PUT /priorities with the changed scores and gates, `base` taken at Edit.
+  - Workspace edit host: renders the register dialog.
+  - The workspace query polls when idle.
+- **Matrix:**
+  - Grid edit (scenarios/apply) now sends **only the changed dimensions** per row, plus the full
+    gate list and `base`, from a per-project snapshot at first edit. Before, it sent the full
+    13-key map, which would silently overwrite untouched dimensions. Use theirs puts the stored
+    values back into the drafts.
+  - Compare dialog PUT: the conflicting dimensions are dropped from its edits.
+  - Scenario panel Apply: `base` = the staged baseline. Use theirs goes through the new store
+    action `takeTheirs`.
+  - `usePriorityMatrix` polls when idle.
+- **Planning:**
+  - Engineer and chamber form edits: changed fields only, plus `base` from the row as opened.
+  - Hub and lab cards (`use-card-editor`): per-row snapshot. Use theirs reverts the conflicting
+    drafts.
+  - The engineer and chamber lists poll when idle.
+  - The optimistic list patch strips `base`.
+- **Check-in:** `entries[i].base` = `{status, percent_complete, blocked_reason}` at first change.
+  Conflicts match on project id plus the `<step_id>.` prefix. Use theirs puts the stored values
+  back. The due list polls when idle.
+- **Gantt step pins:** `items[i].base` = the stored pair at first edit. Use theirs drops those
+  steps' drafts. The Gantt polls when idle.
+- **VIP:**
+  - Pin `{is_vip}` with base `!isVip`.
+  - Item PATCH: changed fields only, against the item as opened, for highlight, reorder and the
+    editor.
+  - Links: `{project_ids}` with base = the links as opened.
+  - All through the app-wide dialog.
+- **Workflow Settings:**
+  - Hub calendar sends all five fields with `base`.
+  - Chamber PUT sends `base`.
+  - Steps PUT sends `steps[i].base {kind, predecessor_ids}`.
+  - Use theirs replaces my value with the stored one.
+  - No polling on this surface: its tabs reset drafts on remount, and the cache is the base.
+- **Admin users:** PATCH sends changed fields only, plus `base`. The list polls when idle.
+- **What-if saved-scenario rename:** `base.name` at Rename, through the app-wide dialog.
+
+**Kept as is (token/version flows):** priority move (preview token, PREVIEW_STALE), band rank,
+category timeline apply (TEMPLATE_CHANGED), rubric and import format (`version`), engineer
+deactivate.
+
+**Not sent, optional server-side, outside the ADR C3 list:**
+- Gantt freeze (`{frozen}`)
+- currency rate PUT
+- file PATCH
+- comment edit
+
+**Types:** `base?:` was added to `PriorityScoreUpdateRequest` (as `PriorityScoreBase`),
+`FreezeToggleRequest`, `StepPinItem`, `HubCalendarUpdateRequest`, `ChamberSettingUpdateRequest`,
+`FilePatchRequest`, `PriorityMoveRequest`, `CheckInEntry`, `VipPinRequest`, `VipItemLinksRequest`,
+`VipItemUpdateRequest`, `UserUpdateRequest`, `RegisterEditPatch`, `StagePatchRequest`,
+`ScenarioPriorityScoreChange` and the steps PUT item.
+
+**Tests**
+- New:
+  - `lib/api/edit-conflict.test.ts`: parsing; base helpers; Keep mine and Use theirs; full-PUT
+    replace; dismissed; dotted fields.
+  - `components/shared/edit-conflict-dialog.test.tsx`: renders every column; hidden shown as
+    "hidden"; formatter; both buttons; text only; axe; hook and host promises.
+  - `stores/edit-session.test.ts`: freshness options; pause and resume.
+  - `surfaces/projects/ProjectsPage.edit-conflict.test.tsx`: the batch body carries the right
+    `base`; the 409 dialog; Keep mine resends with the stored base; Use theirs keeps the other row
+    in the buffer and the next save sends only it; Esc keeps everything; the poll is 60 s / focus
+    when idle and off in edit.
+- Updated: about 37 existing assertions now include `base`. `saveBody()` in
+  `ProjectsPage.register-edit.test.tsx` strips `base` unless asked; three tests pin it. Matrix grid
+  test: changed-only map.
+- Runs:
+  - `tsc -b` is clean.
+  - eslint is clean on every touched file.
+  - vitest on projects, project-workspace, check-in, gantt, workflow-settings, lib, components,
+    stores, matrix, planning, admin-users and dashboard: all pass (963 + 894).
+  - `src/app` and layout: only the known `app.test.tsx` Gantt-nav failure.
+  - `backend/tests/test_openapi_frontend_contract.py`: 268 pass, 1 fails. The failure is
+    `PlanWeek` in `lib/api/session.ts`: a non-P47 type from another session that needs a contract
+    entry.
+
+**Assumptions:**
+- In single-record forms, "Use theirs" drops the conflicting fields and saves the remaining
+  (non-conflicting) changes at once, because a form has no edit buffer. Batches keep them unsaved.
+- A hidden financial conflict on "Keep mine" leaves that field out of `base`, so it is overwritten
+  deliberately.
+- A conflict whose dialog is closed saves nothing and keeps the edit.
+
+**Not touched:** `projects-table.tsx` and `step-chips.tsx`, which hold another session's changes.
+
+## [2026-11-18] P47-T04 — security-auditor gate (ADR 0059 field-level conflict check): PASS
+
+Scope: P47-T02 backend (`services/edit_conflict.py`, `schemas/edit_conflict.py`, `api/errors.py`,
+every router/service in the T02 inventory) and P47-T03 frontend (`lib/api/edit-conflict.ts`,
+`components/shared/edit-conflict-dialog.tsx` + meta/host, `lib/use-edit-conflict.tsx`), plus the
+`render.yaml` CSP hash. Uncommitted working tree. No feature code written; a temporary probe file
+was run and deleted.
+
+**Runs:** `tests/test_p47_*.py` (project, endpoint, race, qa_gate) + `test_p27_render_csp`: 44
+passed. Frontend conflict suites (edit-conflict, dialog, edit-session, ProjectsPage.edit-conflict):
+26 passed.
+
+**Probes (live, testcontainer DB):**
+- Out-of-scope Hub Planner with stale `base`: PATCH, priority move, VIP pin, freeze → 404;
+  register-edits → 403 `REGISTER_EDITS_FORBIDDEN`; PUT /priorities → 403. No `conflicts` in any.
+- Executive Viewer with Viewer/Editor grant, PATCH + `base` → 403, no values.
+- Financial 409: `your_value`/`current_value` = `"<hidden>"`; no TCOGS/customer string in the body.
+- `base` limits: 201 keys 422, 101-char key 422, `null` 422, 300-deep nesting 422, 50k-element
+  list handled (409, no 500).
+- `changed_by` null for an audit row in an out-of-scope hub (T02 test) confirmed.
+
+**Findings**
+| Id | Sev | Finding | Fix |
+|---|---|---|---|
+| M-1 | Medium | `PATCH /users/{id}` runs `check_base` before `ADMIN_ACCOUNT_REQUIRES_SUPER_ADMIN`, `_forbid_admin_roles_for_admin` and the D1 `ensure_super_admin`. An Admin sending a stale `base` for a Super Admin account gets 409 `EDIT_CONFLICT` with the field's stored value instead of 403 (probe: 409 with base, 403 without). No new data (Admin reads all users via GET /users) and nothing is written, but it breaks "authorise before conflict". | In `api/routers/users.py::_update_user`, move the `base` lock + `check_base` after the role/Super-Admin checks (before any write). |
+| M-2 | Medium (pre-existing, not P47) | An Engineer with an Admin `ProjectAccessGrant` (no PROJECT_REGISTRATION READ) gets 403 on GET /projects/{id} and null financials in the Workspace, but `PATCH /projects/{id}` returns `ProjectRead` with decrypted `tcogs_eur` and `customer_name` (probe confirmed). P47's `base` 409-vs-200 oracle on a financial field therefore reveals nothing beyond this response today. | Separate remediation: redact the four financial fields in the PATCH/freeze `ProjectRead` responses for a caller without PROJECT_REGISTRATION READ, and in the same change ignore or refuse financial keys in `base` for such a caller (otherwise the oracle becomes real). |
+| L-1 | Low | VIP links `changed_by`/`changed_at` (`vip_board._link_refs`) match any link/unlink row; those audit rows have `hub_id = NULL`, so a scoped caller can see the name and time of a link change to projects outside their scope. | Match only rows whose added/removed ids intersect the caller-visible set, or withhold `changed_by` for a scoped caller. |
+| I-1 | Info | VIP pin with `base`: row re-read under FOR UPDATE without re-checking scope/permission (the PATCH path re-checks). Narrow race; same as the no-`base` path. | Optional: re-authorise after the lock. |
+| I-2 | Info | VIP item and user PATCH take FOR UPDATE before the scope/role 404/403; held only until the request ends. | None needed. |
+| I-3 | Info | `changed_by` (actor full name) follows the ADR 0028 amendment (any reader sees actor names); not utilization data, OQ #8 not engaged. | None. |
+| I-4 | Info | `docs/OPEN_QUESTIONS.md` has two "### 108." headings (P42 and P47). | Renumber the P47 one. |
+
+**Verified OK:** financial values hidden on every path (`is_financial` checks the last dotted
+segment; register/step/score fields carry none; `label` is project name / code / title only);
+RBAC + scope run before the check on every inventory route except M-1; locks only taken when
+`base` is sent and in the existing order (band → categories SHARE → engineers SHARE → row);
+no migration, no data rewrite, no seed/script change (standing decision 2026-11-18 respected);
+frontend renders text nodes only, no `dangerouslySetInnerHTML`/`innerHTML`, no console or storage
+of conflict values; `render.yaml` CSP hash `sha256-npULhkKIdZ+ZW0WZwHOiuDnuOVpzRUKxfs6dNhlZCXE=`
+equals the sha256 of `frontend/index.html`'s inline theme script; other CSP directives unchanged.
+
+**Verdict: PASS** (no High or Critical). M-1 and L-1 should be fixed in a P47 remediation task;
+M-2 is pre-existing and needs its own task.
+
+## [2026-11-18] Correction — OQ renumbering (orchestrator)
+
+P46's "OQ #107" (weak test logins on the dev-mode demo) is now **OQ #113**. P47's "OQ #108" (live
+editing presence) is now **OQ #114**. Both numbers clashed with P42's #107 and #108. The ADRs,
+DOMAIN_RULES and the plan are updated; earlier MEMORY entries keep the old numbers (append-only).
+
+## [2026-11-18] P47-R01 — security gate follow-ups M-1, M-2, L-1, I-1 — backend-builder: DONE (not committed)
+
+The P47-T04 security gate passed and listed follow-ups; all of them are fixed here. No migration,
+no data change, no frontend change.
+
+**M-1: authorisation before the `base` comparison, everywhere.**
+- `PATCH /users/{id}`: the row lock stays where it was, before the read. `check_base` now runs
+  after `ADMIN_ACCOUNT_REQUIRES_SUPER_ADMIN`, `_forbid_admin_roles_for_admin` and the D1
+  `ensure_super_admin`.
+- Audit of the other inventory routes, three more fixed:
+  - `PATCH /projects/{id}` with `base`: `ensure_may_cancel` (Cancelled is Super Admin only) and
+    the target-hub scope 403 now run before the comparison. `stage_project_update` still repeats
+    them.
+  - Freeze toggle with `base`: `UNFREEZE_REQUIRES_ADMIN` now comes before the comparison.
+  - `PATCH /chambers/{id}`: the comparison moved after the lab-region scope 403.
+  - `PATCH /vip-items/{id}`: the comparison moved after the area 403 and parent checks, just
+    before the writes.
+- Already in the right order: register-edits, priority move, step pins, engineers, settings
+  chamber / hub calendar / steps, check-ins, stage PATCH, priorities PUT, scenario Apply, VIP
+  links, what-if scenario, currency, file PATCH.
+
+**M-2: financial fields for a caller without Project Registration READ** (pre-existing). Example:
+an Engineer with an Admin project grant.
+- `PATCH /projects/{id}` and the freeze toggle now answer through `project_read_for`. The four
+  fields are `null` and never read for such a caller, the same rule as the Workspace
+  `_financials`.
+- Such a caller sending any financial field in the edit or in `base` gets 422
+  `FINANCIAL_FIELDS_HIDDEN`, with field errors and nothing written. I chose 422 over silently
+  ignoring the fields: their UI never sends them (Registration needs Registration READ), and a
+  silent ignore would hide a stale client.
+
+**L-1: VIP link `changed_by`.**
+- `vip_board._link_refs` matches a link / unlink audit row only when its added / removed ids
+  include a project the caller can see (`_visible_link_ids`). An unscoped caller sees all rows.
+- New `fallback=False` option in `services.edit_conflict`: the VIP item and link checks never
+  fall back to the item's newest row. If nothing visible matches, `changed_by` / `changed_at` are
+  null.
+
+**I-1:** the VIP pin with `base` re-runs the scoped lookup and `authorize_project_action` on the
+locked row.
+
+**Tests:** `tests/test_p47_r01_security.py`, 13 passed.
+- An Admin with a stale `base` on a Super Admin account gets 403, not 409, and the target's name
+  is not in the body.
+- A D1 role removal, a Cancelled status, an out-of-scope hub move, an unfreeze by a Hub Planner
+  and an out-of-region chamber move each answer 403 with no `conflicts`.
+- PATCH masks the financial fields for a granted Engineer, and an Admin still sees them.
+- A financial key in the edit or in `base` gets 422 with nothing written.
+- A VIP link conflict names only the visible change; with no visible audit row it serves null.
+- The VIP pin with `base` on an out-of-scope project answers 404.
+
+**Other runs:**
+- P47 and related suites: 477 passed.
+- ruff is clean on the touched files.
+- mypy shows 70 errors after the change, the same 70 older ones as after T02.
+- `test_openapi_frontend_contract` still fails only on the frontend `PlanWeek` interface, which is
+  not P47.
+
+## [2026-11-18] P47-T04 — workflow-auditor gate (ADR 0059 field-level conflict check): PASS
+
+Scope: the uncommitted P47-T02/T03 code, judged against ADR 0059, DOMAIN_RULES (I10, ADR 0023
+coalescing, ADR 0050 band-rank lock order) and the 2026-11-18 standing decision. Every database
+write went to disposable testcontainers Postgres. The live `rpd` was not touched. No feature code was
+written. The referee tests are scratch only and were not added to the repo.
+
+**1. A 409 writes nothing: PASS.** On every covered path the check runs under the row lock, before
+the first write, the stale mark, the band-rank plan, the apply-run version and the dispatch decision:
+- PATCH /projects: after the band lock, the categories and the leaders, before `stage_project_update`.
+- register-edits: after the row locks, before `plan_batch_band_ranks`, then an explicit rollback.
+- priority move: under the band lock, before confirm or apply.
+- stage PATCH: after `lock_projects`. The `sync_project_steps` writes before it are never committed.
+- check-ins: after validation, before the `stage_checkins` rows, `mark_projects_stale`,
+  `find_in_flight_run` and the follow-up flag.
+- step pins: before the range rules.
+- PUT /priorities: before `write_project_scores`.
+- scenarios/apply: before `ScenarioApplyRun` and `_next_version`.
+- steps PUT: before the kind writes and `rederive_all_projects`.
+- freeze toggle: before the unfreeze re-copy.
+
+`get_db` never auto-commits, so the session closes with a rollback. Nothing in scheduling/, workers/,
+models/, band_rank, priority_move or priority_preview changed.
+
+Referee tests (4/4 pass) check the following after each 409: every project's status, priority,
+`band_rank`, `schedule_stale` and actual weeks; the counts of audit rows, schedule runs,
+`stage_checkins` and apply runs; and the follow-up flag.
+- Band rank: a PATCH status 409, a register batch 409 (one clean row plus one stale row), a priority
+  move 409 and a PATCH priority+status 409 leave every band rank as it was.
+- Check-in during a RUNNING run: the 409 leaves the flag's pending state and `request_count` as they
+  were (ADR 0023). The batch's other, clean stage stays Not Started.
+- Scenario apply 409: no apply-run version is consumed.
+
+**2. A matching `base`, or none, behaves as before: PASS.**
+- Referee test, two identical projects, one edited with a matching `base` and one without:
+  - PATCH and register batch give the same columns, the same `schedule_stale` and the same audit
+    multiset (actions and before/after states, ids removed).
+  - `recalc_status` is the same, the dispatch kwargs keys and `trigger_reason` are the same, and the
+    `eff_changes` are the same.
+- Locks:
+  - The extra locks only serialise transactions. The writes inside one request are still made by the
+    same code in the same order.
+  - PATCH-with-base takes band → categories `FOR SHARE` → leaders `FOR SHARE` → row, the register
+    batch's order. The later re-locks in `stage_project_update` are re-entrant.
+  - The scenario-apply `order_by(id)` only orders the lookup dict. The writes still iterate
+    `changes`.
+  - The steps PUT `order_by(id)` only reaches `build_workflows` validation. The writes and audit
+    states use `sorted()` or the request order.
+- Regression (no `base` = old behaviour):
+  - 37 files touching the P47 routes: 676 passed.
+  - The P11/P12/P14/P35/P36/P40/scenario/workflow-settings/workspace/scoring set plus the QA's
+    `test_p47_qa_gate.py`: 299 passed.
+  - The P47 suites: 35 passed.
+
+**3. Sending only changed fields keeps scores and bands: PASS.**
+- `write_project_scores` merges, and `compute_score` runs on `{**stored, **updates}`, so the engine
+  always sees the full stored set.
+- `compute_score` reads an absent key the same as null. A score row created from a partial map
+  therefore scores exactly like a full map with nulls.
+- Referee test: a changed-only map with `base` and a full 13-key map without it give identical
+  `weighted_score`, `normalized_pct`, `suggested_band` and served rows.
+- The Details form PATCH does not write scores. Tag pre-fill fires only on a not-set → set tag, so an
+  unchanged tag that is not sent changes nothing.
+- `identityChanges` can only add fields that did not change (strict `===`), never drop a real
+  change.
+- vitest matrix + workspace + edit-conflict: 31 files, 317 passed.
+
+**4. No migration and no data rewrite: PASS.** No file under alembic/, seed/ or scripts/ was added or
+changed. No model changed. There is no UPDATE/DELETE outside the request paths. `render.yaml` only
+changes the CSP script hash.
+
+**Advisories (none of them block the gate):**
+- A1: A scenario apply with `base` locks the score rows in id order. A concurrent apply without
+  `base` locks them in request order. Postgres can detect a deadlock between the two, which is a 500
+  that can be retried. No data is lost. The same class of risk existed between two applies before
+  P47.
+- A2: PATCH-with-base takes `FOR SHARE` on the category it read before the row lock. If the category
+  changes in that window, the order can invert against a template apply. The worst case is a
+  deadlock 500, never wrong data.
+- A3: Because the Details form now sends only changed fields, some presence-gated server work no
+  longer runs on an unrelated save: R7 `validate_effort_split`, `sync_project_steps` for an unchanged
+  hub or category, and the `project.update` audit row of a no-change save. No score, band or
+  schedule input changes. This is arguably more correct.
+- A4 (for qa): the compare dialog sends `base.hard_gates` as the request's own gates. When the scenario
+  has staged gates that differ from the stored ones, this gives a false 409 on `hard_gates`.
+- A5: a 409 still uses a rate-limit token (in memory, not data).
+
+Verdict: **PASS** (workflow leg).
+
+## [2026-11-18] P47-T03 addendum: gate advisory A4 fixed (frontend-builder)
+
+Score `base` now holds the served stored values from when editing started, never a scenario's staged copy: compare dialog `read = liveRequestValuesFromRow(row)`, grid snapshot from the served row. `base.hard_gates` is sent only when the request changes the gate list (`PriorityScoreBase.hard_gates` is now optional). New test `surfaces/matrix/lib/score-base.test.ts` uses a fake server applying the T02 rule: staged gates that differ from the stored ones, with no concurrent change, save with no 409, and a real concurrent gate change is still caught. Matrix and scoring-section vitest: 221 passed. tsc and eslint clean.
+
+## [2026-11-18] P47-T04 gate — qa-inspector: FAIL (one frontend defect; everything else PASS; judged with P47-R01 applied)
+
+**Verdict: FAIL.** One ADR 0059 C1 acceptance item fails on one surface: the Project Workspace
+**stage row** does not send only the changed fields. Everything else passes. The remediation is
+small and frontend-only.
+
+**Defect P47-QA-1 (blocking).** `frontend/src/surfaces/project-workspace/components/stage-row.tsx:157-166`
+builds the stage PATCH from all six fields (status, percent_complete, actual_start/end_week,
+remaining_weeks_override, blocked_reason), and `pickBase` gives every one of them a `base`. The
+backend `StageUpdateRequest` accepts any subset, so this is not required by the API.
+- Effect: a user who edits only the status, while someone else's check-in changed
+  `percent_complete`, gets a 409 that names a field they never touched. The dialog says "You
+  entered 50", which they did not enter. "Keep mine" then writes the stale percent back. This
+  breaks ADR C1 ("a field the request does not change is not checked; different fields both
+  succeed").
+- Not silent: the dialog shows the field before any overwrite.
+- Evidence:
+  - The vitest `it.fails` pin is in
+    `frontend/src/surfaces/project-workspace/ProjectWorkspacePage.edit-conflict.test.tsx`. Run as
+    a plain `it`, the received body has 4 extra fields and 4 extra base keys.
+  - `backend/tests/test_p47_qa_gate.py::test_stage_patch_subset_vs_all_six_fields`: the
+    six-field shape gets a 409 on `PDD-E.percent_complete`. The subset with `base` succeeds and
+    keeps the other user's 40 %, so the backend is ready for the fix.
+- Fix: send only `changedKeys(startDraft, draft)`. The `blocked_reason` rule still applies when
+  the status changes. Then flip the `it.fails` to `it` and update the pinned six-field assertion
+  in `ProjectWorkspacePage.test.tsx` ("On Hold needs a hold reason" test, about line 157).
+- By design, not defects: check-in entries (`status` and `percent_complete` are required by
+  `CheckInEntry`), step pins (both weeks are required), the hub-calendar and steps PUTs (full
+  replacement), and the Matrix `hard_gates` (the list is always a full replacement; omitting it
+  clears gates). In all of these, a concurrent change to the other field is a conflict, never a
+  silent overwrite.
+
+**Backend (Python 3.14 venv, `RPD_REDIS_URL=redis://127.0.0.1:6399/0`)**
+- P47 suites, with R01 and the QA additions: `test_p47_project_conflicts`, `_endpoint_conflicts`,
+  `_race`, `_r01_security` and `_qa_gate` all pass. The final rerun together with the VIP suites
+  (`test_p14_vip_board`, `test_p12_board_vip`, `test_adr0040_vip_pin`): **111 passed, 0 failed**.
+- With `test_openapi_frontend_contract.py` and `test_p27_render_csp.py`: 326 passed, 1 failed.
+  The failure is `PlanWeek`.
+- `test_p27_render_csp.py`: 4/4 pass. The `render.yaml` hash is updated in the tree.
+- Full suite (`tests/scheduling` excluded; it started before R01 finished landing; the P47+R01
+  files were re-run afterwards, see above): **2901 passed, 3 failed**. All three are classified
+  non-P47:
+  - `test_migrations::test_migration_up_down_up_down_cycle`: the table count, known; P47 has no
+    migration.
+  - `test_openapi_frontend_contract::test_every_p4_surface_types_file_is_covered`: `PlanWeek` in
+    `frontend/src/lib/api/session.ts`. That file is unmodified against HEAD (another session).
+  - `test_p20_fte_followups::test_gantt_step_row_contract`: `pin_lapsed`/`pin_clearable` are
+    missing from the frontend Gantt row (P40 pin fields).
+- Coverage of the P47 runs: `services/edit_conflict.py` **88 %** (263 stmts, 31 missed: mostly
+  the fallback branches of `_as_datetime`/`_equal`, audit-row matching with no match, and the
+  `scenario_apply_changes` merge), `schemas/edit_conflict.py` 100 %, `api/errors.py` 86 %. All
+  are at or above the 70 % bar. The repo-wide `--cov` total of 56 % reflects running only 3
+  files, not a P47 regression. This run rewrote `backend/.coverage`, which was already modified
+  in the tree.
+- New `backend/tests/test_p47_qa_gate.py` (6 tests, ruff-clean, formatted):
+  - register batch, two clients, **different fields of the same project**: both succeed and both
+    values are kept;
+  - register batch 409 on a two-hub batch: **global** `audit_log_entries` count unchanged,
+    `schedule_stale` stays False on both projects (reset is committed, because the 409 rolls back
+    the shared session), no `ScheduleRun`, no dispatch. Then "Keep mine" (`base` = the 409's
+    `current_value`) succeeds and is audited, with a positive control that the accepted batch
+    does mark stale or dispatch;
+  - register "Use theirs" (resend without the conflicting field) saves the rest;
+  - `base: {}` = no check (PATCH and batch); `base: null` = 422;
+  - engineers: two clients, different fields, both kept; then a stale same-field edit gets a 409
+    naming Alice, and Keep mine succeeds;
+  - stage PATCH subset vs six fields (the P47-QA-1 evidence).
+
+**Frontend**
+- `tsc -b`: clean.
+- eslint on all 94 changed .ts/.tsx files: 0 errors, 1 warning
+  (`projects-table.tsx:945`, react-hooks/incompatible-library on `useVirtualizer`; not P47, the
+  other session's file).
+- vitest, full: **2332 passed, 1 failed / 279 files**. The failure is the known
+  `src/app/app.test.tsx` "navigates to the Project Execution Timeline" 10 s timeout (Gantt nav,
+  classified non-P47).
+- New `frontend/src/surfaces/project-workspace/ProjectWorkspacePage.edit-conflict.test.tsx`: 4
+  pass and 1 expected fail (the P47-QA-1 pin).
+  - **Details form**: sends only the changed fields (`external_code`, `name`) with their `base`.
+  - **Keep mine**: resends with `base.external_code` = the stored value; the other base is
+    unchanged.
+  - **Use theirs**: drops the conflicting field and still saves `name`.
+  - **Esc**: saves nothing and the form stays open with my value.
+  - **axe** with the dialog open on the surface: 0 serious violations.
+- Verified in existing tests:
+  - Matrix grid sends only the changed dimensions plus `base` (`MatrixPage.test.tsx:1025-1031`).
+  - Projects register batch: Keep mine, Use theirs (other rows stay in the buffer), Esc, and the
+    poll at 60 s or on focus when idle, off while editing (`ProjectsPage.edit-conflict.test.tsx`).
+  - Admin users, VIP, check-in, Gantt pins, Planning and Workflow Settings bodies carry `base`.
+- The poll pauses during an edit: `editFreshness(useAnyEditInProgress())` is wired on Projects,
+  Workspace, Matrix, Planning, Check-in, Gantt and Admin users. Editors register through
+  `useEditSession` (details panel, stage row, scoring section, card editor, forms, pin drafts,
+  Matrix edit mode).
+- axe: the touched surfaces keep their axe tests (projects 4 files, workspace 5, matrix 5,
+  planning 16, check-in 1, gantt 3, workflow-settings 4, admin-users 1, dashboard 14, dialog 1).
+  All pass in the full run.
+
+**Live two-client smoke (disposable DB, never the live `rpd`)**
+- Setup: `rpd` → pg_dump → `rpd_p47_qa_smoke` (dropped afterwards); uvicorn :8047 with
+  `RPD_DEV_MODE=true`; a throwaway Redis on :6398 (stopped). Sessions: `admin` (Admin) and
+  `superadmin` (Super Admin), via `/me/dev-login` + `X-Dev-User-Email`. Project: "MAX-750 A
+  Huayi Alternative Compressor".
+- Results:
+  1. Same field (status), register batch: admin 200; superadmin **409** `EDIT_CONFLICT` with
+     `your_value` "In Queue", `current_value` "On Hold", `changed_by` "Admin" and `changed_at`
+     set. Nothing was written. Keep mine: 200.
+  2. Same field, PATCH: admin 200, superadmin 409.
+  3. Different fields from one stale read (PATCH `external_code` vs `status`): **both 200, both
+     values kept**.
+  4. Different fields in a register batch (`actual_end_week` vs `status`): both 200.
+  5. No `base`: 200 (last-write-wins as before).
+- Audit trail on the copy: 8 `project.update` rows, exactly the 8 accepted writes; the two 409s
+  wrote none.
+- Live `rpd` checked afterwards: that project is unchanged (status, external_code, updated_at
+  2026-11-16) and has 0 audit rows.
+- **Environment note:** the local `rpd` DB is at alembic `p41a_import_format_and_scenarios`,
+  5 revisions behind head (`p35b_step_excluded`). register-edits 500s on it
+  (`project_workflow_steps.manual_start_week` missing). I upgraded only the disposable copy. Not
+  P47, but a local `make dev` against `rpd` is broken until it is upgraded. That needs owner
+  approval per the 2026-11-18 standing decision, because migrations p41b/p42a/p35b include
+  backfills.
+
+**Next:** fix P47-QA-1 (frontend-builder), then re-run the QA leg (flip the `it.fails`, run
+workspace vitest and `test_p47_qa_gate.py`).
+
+## [2026-11-18] P47-T04 gate — qa-inspector addendum: second defect P47-QA-2 (silent overwrite of hard gates, from the T03 A4 fix) — verdict stays FAIL
+
+Found after the T03 "A4 fixed" addendum landed during this gate.
+
+**P47-QA-2 (blocking: a silent overwrite, the thing ADR 0059 exists to prevent).**
+- `frontend/src/surfaces/matrix/lib/score-base.ts:32` now leaves `hard_gates` out of `base` when
+  the user did not change gates.
+- `frontend/src/surfaces/matrix/lib/grid-edit.ts:135-136` still sends the full, possibly stale,
+  `hard_gates` list on every row.
+- The server writes it unconditionally: `backend/services/scenario_apply.py:224`
+  `score.hard_gates = change.hard_gates`. `api/routers/priorities.py:697` behaves the same for
+  `PUT /priorities`, where an omitted list also defaults to `[]`.
+- Result: Alice sets a gate; Bob, from an older read, edits one score in the Matrix grid; the
+  apply returns 201 and Alice's gate is gone, with no 409.
+- Pinned by `backend/tests/test_p47_qa_gate.py::test_matrix_grid_score_edit_does_not_revert_concurrent_gate_change`
+  (strict xfail). Under `--runxfail` it fails with "Alice's gate was silently reverted":
+  `[] != ['Regulatory deadline within 6 months']`.
+- The same pattern probably affects the compare dialog and the scoring section (PUT
+  /priorities); the remediation should check both.
+- Suggested fix:
+  - backend: write `hard_gates` only when it is in `model_fields_set` (scenario_apply and the
+    priorities PUT);
+  - frontend: omit `hard_gates` from the request when the gates are unchanged, and send it with
+    `base.hard_gates` (the served stored list) when they are changed. That keeps A4's "no false
+    409 on staged gates" without the overwrite.
+  - Then turn the xfail into a plain test.
+
+QA test totals after this addendum: `test_p47_qa_gate.py` 6 passed, 1 xfailed (strict). Workspace
+`ProjectWorkspacePage.edit-conflict.test.tsx`: 4 passed, 1 expected fail.
+
+**Remediation list for the orchestrator:** P47-QA-1 (stage row sends all six fields) and P47-QA-2
+(stale hard_gates silently overwrite). Re-run the QA leg after both are fixed.
+
+## [2026-11-18] P47-R02 — a scores-only save no longer clears the hard gates — backend-builder: DONE (not committed)
+
+**Problem.** `hard_gates` defaults to `[]` on `PriorityScoreUpdateRequest` and
+`ScenarioPriorityScoreChange`, and both writes were unconditional. A scores-only save (`PUT
+/priorities/{id}`, or a Matrix grid `POST /scenarios/apply` row) therefore cleared the gates. That
+silently overwrote a concurrent gate change by someone else.
+
+**Fix.** `score.hard_gates` is written only when `"hard_gates" in body/change.model_fields_set`
+(`api/routers/priorities.py`, `services/scenario_apply.py`).
+- An omitted field keeps the stored list.
+- An explicit `[]` still clears it.
+- A new score row starts with `[]` (column default).
+- The schema comments are updated. No migration, no frontend change.
+
+**Checked:**
+- The audit before / after is built from the stored row, so with the field omitted it shows the
+  stored gates.
+- `write_project_scores` (the weighted score and score band) does not read the gates.
+- `HARD_GATE_FORCES_P1` (`priority_move.project_hard_gates`) reads the stored gates.
+- No band or priority recompute takes gates from the request.
+- The P47 conflict check already compared `hard_gates` only when sent.
+
+**Tests:** `tests/test_p47_r02_hard_gates.py`, 3 passed.
+- A scores-only PUT and Apply keep the gates; the audit after-state keeps the gate; a P3 move
+  still gets 409 `HARD_GATE_FORCES_P1`.
+- `[]` clears the gates via Apply and via PUT; a new row starts with none.
+- User A's gate change survives user B's concurrent scores-only save, both via PUT and via Apply.
+
+**Runs:** priorities / scenario / matrix / rubric / score versions / capacity fill / p47 suites:
+295 passed, 1 xfailed; plus 111 passed in the other priority-touching suites. ruff is clean.
+mypy shows only the older errors in the touched files.
+
+## [2026-11-18] P47-R03 (frontend): QA-1 and QA-2 fixed. frontend-builder: DONE (not committed)
+
+- **QA-1, the stage row** (`project-workspace/components/stage-row.tsx`):
+  - The PATCH now sends only the fields that differ from what the edit started from, normalising
+    a blank hold reason to null.
+  - Each sent field carries its own `base`.
+  - A save with nothing changed sends nothing.
+  - The `it.fails` in `ProjectWorkspacePage.edit-conflict.test.tsx` is now a passing `it`.
+  - The six-field assertion in `ProjectWorkspacePage.test.tsx` now expects `{status,
+    blocked_reason}` plus their `base`.
+- **QA-2, the gates** (`matrix/lib/score-base.ts` `toScoreChangeBody`):
+  - Unchanged gates are left out of both the body and `base`. With the R02 server, the stored
+    gates are then untouched.
+  - Changed gates are sent together with `base.hard_gates`, taken from the served list. A4 still
+    holds: `read` is never the staged copy.
+  - "Use theirs" on a gate conflict drops the gates from the body.
+- **Where QA-2 applies:** the Matrix grid (`grid-edit.ts`), the compare dialog and the workspace
+  scoring section (via `sendScoreChange`), and scenario Apply (`scenario-panel.tsx`, against the
+  staged baseline).
+- **Types:**
+  - New `PriorityScoreChangeBody` (with `hard_gates?`) is what `updatePriorityScore` and
+    `useUpdatePriorityScore` send.
+  - `ScenarioPriorityScoreChange` now lists its fields itself, with `hard_gates?`.
+  - `PriorityScoreUpdateRequest` stays the in-memory values type.
+- **Tests:** `matrix/lib/score-base.test.ts` uses a fake server with the T02 and R02 rules. It
+  checks:
+  - Alice's concurrent gate survives Bob's scores-only save, which sends no `hard_gates` and gets
+    no 409;
+  - staged gates that differ from the stored ones save without a 409;
+  - a real conflict on gates both users changed gives a 409, and "Use theirs" keeps Alice's gates.
+  - The body assertions in the compare-dialog, MatrixPage, board, scenario-panel and
+    scoring-section tests were updated.
+- **Results:**
+  - Matrix plus workspace vitest: 309 passed.
+  - `tsc -b` and eslint are clean.
+  - The contract test gives 268 passed and 1 failed. The failure is the known non-P47 `PlanWeek`
+    in `lib/api/session.ts`.
+
+## [2026-11-18] P47-T04 gate — qa-inspector re-check after P47-R02/R03: PASS
+
+Re-check of P47-QA-1 and P47-QA-2 with R01, R02 and R03 in the working tree. **Verdict: PASS (QA
+leg).** Both defects are fixed and verified.
+
+**P47-QA-2 (stale `hard_gates` silently overwrite): fixed.**
+- `backend/tests/test_p47_qa_gate.py::test_matrix_grid_score_edit_does_not_revert_concurrent_gate_change`
+  is now a normal test. It sends the fixed grid shape: no `hard_gates` in the body or in `base`.
+  Alice's gate survives Bob's stale Matrix score save (201). It also survives a score-only
+  `PUT /priorities` from the scoring section. Both scores are stored.
+- Frontend: `surfaces/matrix/lib/score-base.ts` `toScoreChangeBody` sends `hard_gates` and
+  `base.hard_gates` only when the gates changed. `grid-edit.ts:136` uses it.
+  - The fallback at `grid-edit.ts:139` (full list, no base) runs only when `reads` is absent. The
+    only production caller, `MatrixPage.tsx:490`, always passes `gridReads`, so that path is
+    unreachable in the app.
+
+**P47-QA-1 (stage row sent all six fields): fixed.** `stage-row.tsx:175-178` builds the body from
+the changed fields only, and `base` from the values as read. The pin in
+`ProjectWorkspacePage.edit-conflict.test.tsx` is now a plain `it` and passes.
+
+**Backend runs** (`RPD_REDIS_URL=redis://127.0.0.1:6399/0`): **876 passed, 1 failed.**
+- Suites:
+  - P47: `test_p47_*`, which is project/endpoint conflicts, race, r01_security, r02_hard_gates
+    and qa_gate (7/7);
+  - priority and scoring: p11 priority move, p13 board, p14 preview, p17 delivery, p21 matrix,
+    p34 score versions, p36 band rank, p42 band, priority_scoring, p26 rubric, p27 scoring tags,
+    p25 capacity fill;
+  - scenarios: p41 import scenarios, scenario_apply_api;
+  - workspace and check-ins: workspace_api, p12 checkins;
+  - VIP: adr0040 pin, p12 board vip, p14 vip board;
+  - register and pins: p35 register fields/popup, p40 step pins api;
+  - `test_openapi_frontend_contract`, `test_p27_render_csp`.
+- The only failure is the known non-P47 `PlanWeek` contract
+  (`test_every_p4_surface_types_file_is_covered`).
+- `ruff check` is clean on `test_p47_qa_gate.py`.
+
+**Frontend runs:**
+- `tsc -b`: clean.
+- eslint on all 96 changed .ts/.tsx files: 0 errors, 1 warning. The warning is
+  `projects-table.tsx:945` `useVirtualizer` incompatible-library, in the other session's file,
+  not P47.
+- vitest on matrix, project-workspace, projects, lib, components/shared, stores, check-in and
+  planning: **132 files, 1200 tests, all passed** (this includes the scoring-section tests).
+
+**Live two-client smoke, repeated**
+- Setup: a disposable copy `rpd_p47_qa_smoke2`, upgraded to head, then dropped. Server on :8047
+  in dev mode with the encryption key from `.env`; throwaway Redis on :6398, stopped. Sessions
+  `admin` and `superadmin`. Project "Condenser 8ROW, CROSS FLOW WOT Flygrow as alternative to
+  Jicheng".
+- Results:
+  1. Same status in a batch: 200, then 409 naming Admin. Keep mine: 200.
+  2. Same status by PATCH: 200, then 409.
+  3. Different fields by PATCH: both 200, both kept.
+  4. Different fields in a batch: both 200.
+  5. No `base`: 200.
+  6. **New, gates:** admin sets the "Regulatory deadline within 6 months" gate (200). Superadmin,
+     from the stale read, saves a grid score (201). The gate is kept and the score is stored. A
+     stale same-field gate edit by superadmin gets a 409 on `hard_gates`.
+- Live `rpd` afterwards: that project is unchanged (updated_at 2026-11-16, 0 audit rows).
+
+**Still open (not P47, unchanged):**
+- the `PlanWeek` contract entry;
+- the `app.test` Gantt-nav timeout;
+- the `test_migrations` table count;
+- the p20 Gantt row pin fields;
+- the local `rpd` database is 5 migrations behind head. Upgrading it needs owner approval: some
+  of the migrations backfill existing rows.
+
+## [2026-11-18] P47-T04 — gate closed: security PASS, workflow PASS, qa PASS on re-check — orchestrator
+
+- **Security:** PASS. M-1 (authorisation before the conflict check, in 5 endpoints), M-2 (financial
+  masking in the PATCH and freeze responses, and 422 `FINANCIAL_FIELDS_HIDDEN`) and L-1 (VIP
+  changed_by scoping) were fixed in P47-R01.
+- **Workflow:** PASS. Advisory A4 (a false 409 from staged gates) was fixed in P47-T03's addendum.
+  A1/A2 (a retryable deadlock between concurrent applies) are accepted.
+- **QA:** first FAIL, on two defects:
+  - QA-2: a stale scores-only save reverted another user's hard gates.
+  - QA-1: the stage row sent all six fields.
+
+  Fixed by P47-R02 (the server writes `hard_gates` only when sent) and P47-R03 (the frontend omits
+  unchanged gates and sends only the stage fields that changed). The re-check is a PASS: backend
+  876/1 (the known PlanWeek failure), frontend 1200/1200, and the live two-client smoke test.
+- **Commit:** P47 only. Another session's work-in-progress is excluded: `step-chips.tsx`,
+  `projects-table.tsx`, and the P44 chip hunk of the register-edit test.
+- **Open, not P47:** the PlanWeek contract entry; the local `rpd` is 5 migrations behind, and
+  upgrading it needs owner approval under the data rule.

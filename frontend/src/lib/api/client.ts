@@ -34,14 +34,26 @@ export class ApiError extends Error {
   /** Whole seconds from a `Retry-After` header (429 `RATE_LIMITED`, P9-R02),
    *  when the server sent one as a number. Undefined otherwise. */
   readonly retryAfterSeconds: number | undefined;
+  /** P47 (ADR 0059): the parsed JSON error body, verbatim, for envelopes that
+   *  carry more than `detail` / `code` (409 `EDIT_CONFLICT` lists `conflicts`).
+   *  Undefined for a non-JSON body. Read through a typed parser, never shown raw. */
+  readonly body: unknown;
 
-  constructor(status: number, message: string, detail?: string, code?: string, retryAfterSeconds?: number) {
+  constructor(
+    status: number,
+    message: string,
+    detail?: string,
+    code?: string,
+    retryAfterSeconds?: number,
+    body?: unknown,
+  ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.detail = detail;
     this.code = code;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.body = body;
   }
 
   get isUnauthorized(): boolean {
@@ -87,8 +99,10 @@ function buildUrl(path: string, query: ApiRequestOptions['query']): string {
 async function parseError(response: Response): Promise<ApiError> {
   let detail: string | undefined;
   let code: string | undefined;
+  let parsed: unknown;
   try {
     const body: unknown = await response.json();
+    parsed = body;
     if (body && typeof body === 'object') {
       if ('detail' in body) {
         const raw = (body as { detail: unknown }).detail;
@@ -112,6 +126,7 @@ async function parseError(response: Response): Promise<ApiError> {
     detail,
     code,
     retryAfterSeconds,
+    parsed,
   );
 }
 

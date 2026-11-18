@@ -59,6 +59,7 @@ from schemas.whatif_import import (
     ImportSimulateResponse,
 )
 from services.active_run import get_active_run
+from services.edit_conflict import AuditRef, check_base, listed_change
 from services.export_builder import ExportSheets, xlsx_bytes
 from services.outcome_buckets import priority_label
 from services.whatif_baseline import Scope, WhatIfContext, principal_audit_hub_id, resolve_scope
@@ -190,13 +191,16 @@ def _can_delete(principal: Principal, row_created_by: uuid.UUID | None) -> bool:
 
 
 async def _get_visible(
-    db: AsyncSession, principal: Principal, scenario_id: uuid.UUID
+    db: AsyncSession, principal: Principal, scenario_id: uuid.UUID, *, lock: bool = False
 ) -> WhatifImportScenario:
     scope = await resolve_scope(db, principal)
     stmt = select(WhatifImportScenario).where(WhatifImportScenario.id == scenario_id)
     clause = _visible_clause(principal, scope)
     if clause is not None:
         stmt = stmt.where(clause)
+    if lock:
+        # P47 (ADR 0059 C1): the row `FOR UPDATE`, re-read.
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
     row = (await db.execute(stmt)).scalar_one_or_none()
     if row is None:
         raise not_found()
@@ -442,9 +446,22 @@ def _forbidden() -> CodedHTTPException:
 async def patch_scenario(
     db: AsyncSession, principal: Principal, scenario_id: uuid.UUID, body: ScenarioPatchIn
 ) -> SavedScenarioOut:
-    row = await _get_visible(db, principal, scenario_id)
+    row = await _get_visible(db, principal, scenario_id, lock=bool(body.base))
     if not _can_edit(principal, row.created_by):
         raise _forbidden()
+    await check_base(
+        db,
+        principal,
+        entity="whatif_scenario",
+        entity_id=row.id,
+        label=row.name,
+        base=body.base,
+        requested={k: getattr(body, k) for k in body.model_fields_set - {"base"}},
+        current={"name": row.name, "note": row.note},
+        refs=lambda name: (
+            AuditRef("WhatifImportScenario", str(row.id), listed_change("changed", name)),
+        ),
+    )
     before = {"id": str(row.id), "name": row.name}
     changed: list[str] = []
     if "name" in body.model_fields_set:

@@ -117,10 +117,16 @@ function EditorForm({ target, onClose }: { target: VipEditorTarget; onClose: () 
         });
         itemId = readId(created);
       } else {
-        await write.mutateAsync({ kind: 'update', itemId: target.item.id, body: fields });
+        // P47 (ADR 0059): only the changed fields, each checked against the item as opened.
+        await write.mutateAsync({ kind: 'update', itemId: target.item.id, body: fields, original: target.item });
       }
       if (itemId && !sameIds(links, initialLinks)) {
-        await write.mutateAsync({ kind: 'link', itemId, projectIds: links.map((l) => l.id) });
+        await write.mutateAsync({
+          kind: 'link',
+          itemId,
+          projectIds: links.map((l) => l.id),
+          ...(existing ? { originalProjectIds: initialLinks.map((l) => l.id) } : {}),
+        });
       }
       onClose();
     } catch (err) {

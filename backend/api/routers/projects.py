@@ -70,7 +70,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
-from api.deps import get_current_principal, require_permission
+from api.deps import get_current_principal, principal_can, require_permission
 from api.errors import HTTP_422, CodedHTTPException, field_error
 from api.query_params import (
     MAX_FILTER_VALUES,
@@ -93,6 +93,7 @@ from models.enums import (
 )
 from models.hub import Hub
 from models.project import Project, category_allowed_for_hub, workflow_id_for_hub
+from models.types import FINANCIAL_FIELD_NAMES
 from scheduling.effort_split import EffortSplitRejected
 from schemas.project import (
     BandRankMoveRequest,
@@ -124,6 +125,14 @@ from services.band_rank import (
 )
 from services.categories import CategoryCatalog, check_category_code, load_catalog
 from services.category_type_filter import any_of, category_type_filter
+from services.edit_conflict import (
+    AuditRef,
+    FieldConflict,
+    edit_conflict_error,
+    find_conflicts,
+    path_changed,
+    raise_edit_conflict,
+)
 from services.engineer_status import (
     CAUSE_PROJECT_UPDATE,
     CAUSE_REGISTER_EDIT,
@@ -174,6 +183,7 @@ from services.register_steps import (
     StepEdits,
     apply_step_edits,
     build_step_views,
+    live_current_step_id,
     load_step_context,
     project_eff_map,
 )
@@ -326,6 +336,44 @@ async def _authorize_registration_write(
     )
 
 
+def project_read_for(project: Project, principal: Principal) -> ProjectRead:
+    """`ProjectRead` of a written project. P47-R01 (security M-2): the four
+    financial fields are decrypted only for a caller with Project
+    Registration READ, as on the Workspace; anyone else (e.g. an Engineer
+    with an Admin project grant) gets `null` and the values are never read."""
+
+    if principal_can(principal, Surface.PROJECT_REGISTRATION, Action.READ):
+        return ProjectRead.model_validate(project)
+    data: dict[str, Any] = {
+        name: getattr(project, name)
+        for name in ProjectRead.model_fields
+        if name not in FINANCIAL_FIELD_NAMES
+    }
+    return ProjectRead.model_validate({**data, **dict.fromkeys(FINANCIAL_FIELD_NAMES)})
+
+
+def refuse_hidden_financials(
+    principal: Principal, sent: set[str], base: Mapping[str, Any]
+) -> None:
+    """P47-R01 (security M-2): a caller who cannot read the financial fields
+    may not send them, in the edit or in its `base` (422
+    `FINANCIAL_FIELDS_HIDDEN`, nothing written), so neither the write nor the
+    409-vs-200 of a `base` can probe a value it may not see."""
+
+    if principal_can(principal, Surface.PROJECT_REGISTRATION, Action.READ):
+        return
+    named = sorted((sent | set(base)) & FINANCIAL_FIELD_NAMES)
+    if named:
+        raise CodedHTTPException(
+            HTTP_422,
+            "FINANCIAL_FIELDS_HIDDEN",
+            [
+                field_error(name, "You cannot see or edit this financial field.")
+                for name in named
+            ],
+        )
+
+
 async def _lock_bands_and_reload(
     db: AsyncSession, project: Project, principal: Principal
 ) -> Project:
@@ -342,6 +390,144 @@ async def _lock_bands_and_reload(
     reloaded = await _get_project_or_404(db, project.id, principal)
     await _authorize_registration_write(db, reloaded, principal)
     return reloaded
+
+
+async def _lock_project_row_for_base(
+    db: AsyncSession, project: Project, updates: Mapping[str, Any], principal: Principal
+) -> Project:
+    """P47 (ADR 0059 C1): the single PATCH with a `base` locks its row
+    `FOR UPDATE` and re-reads it, in the register batch's lock order (band
+    rank lock if any, taken by the caller -> categories `FOR SHARE` ->
+    leader engineers `FOR SHARE` -> the project row), so the comparison and
+    the write see the same stored values. Scope and permission are re-checked
+    on the re-read row. A PATCH without `base` is unchanged."""
+
+    if updates.keys() & EFFORT_SPLIT_INPUT_FIELDS:
+        await share_lock_categories(db, [project.category, updates.get("category")])
+    leader_ids: set[uuid.UUID] = set()
+    if updates.get("leader_engineer_id") is not None:
+        leader_ids.add(updates["leader_engineer_id"])
+    if (
+        "status" in updates
+        and project.status in CLOSED_STATUSES
+        and project.leader_engineer_id is not None
+    ):
+        leader_ids.add(project.leader_engineer_id)
+    await lock_engineers(db, leader_ids, share=True)
+    await db.execute(
+        select(Project)
+        .where(Project.id == project.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    reloaded = await _get_project_or_404(db, project.id, principal)
+    await _authorize_registration_write(db, reloaded, principal)
+    return reloaded
+
+
+def _step_exclusion_base(value: Any) -> dict[str, Any]:
+    """`base.step_exclusions` as `{step_code: excluded}`; the request's own
+    list shape (`[{step_code, step_excluded}]`) is accepted too."""
+
+    if isinstance(value, Mapping):
+        return {str(k): v for k, v in value.items()}
+    if isinstance(value, list):
+        return {
+            str(x["step_code"]): x.get("step_excluded")
+            for x in value
+            if isinstance(x, Mapping) and "step_code" in x
+        }
+    return {}
+
+
+def _excluded_step_changed(step_code: str) -> Any:
+    """P47: a `project.step_excluded` / `project.step_included` audit row of
+    `step_code` that changed the flag."""
+
+    def matches(before: Mapping[str, Any] | None, after: Mapping[str, Any] | None) -> bool:
+        if not isinstance(after, Mapping) or after.get("step_id") != step_code:
+            return False
+        if "step_excluded" not in after:
+            return False
+        old = before.get("step_excluded") if isinstance(before, Mapping) else None
+        return bool(old != after["step_excluded"])
+
+    return matches
+
+
+async def project_conflicts(
+    db: AsyncSession,
+    project: Project,
+    base: Mapping[str, Any] | None,
+    updates: Mapping[str, Any],
+    *,
+    step_edits: StepEdits | None = None,
+) -> list[FieldConflict]:
+    """P47 (ADR 0059 C1): the project fields of `updates` (and the register
+    popup's `step_exclusions` / `current_step_code`) whose stored value is
+    no longer `base`. Call under the project row lock, before any write.
+    `step_exclusions` compare per step (`step_exclusions.<code>`, the stored
+    `excluded` flag); `current_step_code` compares with the live current step
+    (`services.register_steps.live_current_step_id`)."""
+
+    if not base:
+        return []
+    pid = str(project.id)
+    requested: dict[str, Any] = dict(updates)
+    flat_base: dict[str, Any] = {k: v for k, v in base.items() if k != "step_exclusions"}
+    step_current: dict[str, Any] = {}
+    wants_steps = step_edits is not None and (
+        ("step_exclusions" in base and step_edits.exclusions)
+        or ("current_step_code" in base and step_edits.current_step_code is not None)
+    )
+    if wants_steps:
+        assert step_edits is not None
+        ctx = await load_step_context(db, project, workflow_id=await _workflow_id(db, project))
+        if "step_exclusions" in base:
+            for code, excluded in _step_exclusion_base(base["step_exclusions"]).items():
+                flat_base[f"step_exclusions.{code}"] = excluded
+            for code, excluded in step_edits.exclusions:
+                key = f"step_exclusions.{code}"
+                requested[key] = excluded
+                row = ctx.rows.get(code)
+                step_current[key] = row.excluded if row is not None else None
+        if step_edits.current_step_code is not None:
+            requested["current_step_code"] = step_edits.current_step_code
+            step_current["current_step_code"] = live_current_step_id(project, ctx)
+
+    def current(name: str) -> Any:
+        if name in step_current:
+            return step_current[name]
+        return getattr(project, name, None)
+
+    def refs(name: str) -> Sequence[AuditRef]:
+        if name.startswith("step_exclusions."):
+            code = name.split(".", 1)[1]
+            return (AuditRef("Project", pid, _excluded_step_changed(code)),)
+        return (AuditRef("Project", pid, path_changed(name)),)
+
+    return find_conflicts(
+        entity="project",
+        entity_id=pid,
+        label=project.name,
+        base=flat_base,
+        requested={k: v for k, v in requested.items() if k in flat_base},
+        current=current,
+        refs=refs,
+        hub_id=project.hub_id,
+    )
+
+
+async def check_project_base(
+    db: AsyncSession,
+    principal: Principal,
+    project: Project,
+    base: Mapping[str, Any] | None,
+    updates: Mapping[str, Any],
+) -> None:
+    """`project_conflicts`, then the 409 `EDIT_CONFLICT` if any."""
+
+    await raise_edit_conflict(db, principal, await project_conflicts(db, project, base, updates))
 
 
 @router.get("", response_model=list[ProjectListItem])
@@ -566,7 +752,7 @@ async def update_project(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
     clock: PlanClock = Depends(get_plan_clock),
-) -> Project:
+) -> ProjectRead:
     """Partial update. See `schemas.project.ProjectUpdateRequest`'s docstring:
     `frozen` is not settable here (use the Gantt freeze toggle), and `status`
     may not be used to leave `Draft` here (use `POST /{id}/submit`, which
@@ -593,15 +779,29 @@ async def update_project(
     await check_category_code(db, body.category, loc=("body", "category"))
     project = await _get_project_or_404(db, project_id, current_user)
     await _authorize_registration_write(db, project, current_user)
+    refuse_hidden_financials(current_user, body.model_fields_set - {"base"}, body.base)
     if body.model_fields_set & {"status", "priority"}:
         # ADR 0050 / R36-8: a status or priority change may move the band
         # rank; the band-rank lock is the first lock of the write, taken only
         # after lookup + authorisation (P36-R01), and the project is re-read
         # and re-authorised under it.
         project = await _lock_bands_and_reload(db, project, current_user)
-    staged = await stage_project_update(
-        db, project, body.model_dump(exclude_unset=True), current_user, clock=clock
-    )
+    updates = body.model_dump(exclude_unset=True, exclude={"base"})
+    if body.base:
+        # P47 (ADR 0059 C1): lock the row the way the register batch does,
+        # then compare `base` before anything is written. P47-R01 (M-1):
+        # every authorisation check of the write runs before the comparison.
+        project = await _lock_project_row_for_base(db, project, updates, current_user)
+        ensure_may_cancel(project, updates.get("status"), current_user)
+        if updates.get("hub_id") is not None and not is_hub_in_scope(
+            current_user, updates["hub_id"]
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot move a project to a hub outside your assigned hub scope.",
+            )
+        await check_project_base(db, current_user, project, body.base, updates)
+    staged = await stage_project_update(db, project, updates, current_user, clock=clock)
     if staged.priority_moves:
         # Commits everything above together with the move.
         move = await apply_priority_change(db, project, staged.new_priority, current_user)
@@ -609,7 +809,7 @@ async def update_project(
     else:
         await db.commit()
     await db.refresh(project)
-    return project
+    return project_read_for(project, current_user)
 
 
 def ensure_may_cancel(
@@ -945,6 +1145,13 @@ REGISTER_EDIT_TRIGGER_REASON = "register_edit"
 _STEP_EDIT_FIELDS: frozenset[str] = frozenset({"step_exclusions", "current_step_code"})
 
 
+def _register_step_edits(edit: RegisterEditPatch) -> StepEdits:
+    return StepEdits(
+        exclusions=[(x.step_code, x.step_excluded) for x in edit.step_exclusions or []],
+        current_step_code=edit.current_step_code,
+    )
+
+
 def _register_error(project_id: uuid.UUID, exc: HTTPException) -> RegisterEditError:
     """A single-PATCH failure as one batch error: its code, and its message
     (a coded detail list is joined; never any field value beyond the week
@@ -1153,6 +1360,29 @@ async def save_register_edits(
     # changed while the batch waited for the lock).
     projects = await _authorize_register_batch(db, edits, current_user)
 
+    # P47 (ADR 0059 C1): every row's `base` is compared under the row locks
+    # before anything is written; any conflict refuses the whole batch (409
+    # `EDIT_CONFLICT` listing every conflicting field), so nothing is
+    # stored, audited, marked stale or dispatched.
+    conflicts: list[FieldConflict] = []
+    for edit in edits:
+        if edit.base:
+            conflicts.extend(
+                await project_conflicts(
+                    db,
+                    projects[edit.project_id],
+                    edit.base,
+                    edit.model_dump(
+                        exclude_unset=True, exclude={"project_id", "base", *_STEP_EDIT_FIELDS}
+                    ),
+                    step_edits=_register_step_edits(edit),
+                )
+            )
+    if conflicts:
+        error = await edit_conflict_error(db, current_user, conflicts)
+        await db.rollback()
+        raise error
+
     # ADR 0050 / R36-8: one band-rank plan for the whole batch (leavers
     # removed, enterers appended in ascending id, each band renumbered once),
     # read before any status is written. A row whose staging fails rolls the
@@ -1175,12 +1405,9 @@ async def save_register_edits(
     for edit in edits:
         project = projects[edit.project_id]
         updates = edit.model_dump(
-            exclude_unset=True, exclude={"project_id", *_STEP_EDIT_FIELDS}
+            exclude_unset=True, exclude={"project_id", "base", *_STEP_EDIT_FIELDS}
         )
-        step_edits = StepEdits(
-            exclusions=[(x.step_code, x.step_excluded) for x in edit.step_exclusions or []],
-            current_step_code=edit.current_step_code,
-        )
+        step_edits = _register_step_edits(edit)
         tracks_eff = bool(
             edit.model_fields_set & (SCHEDULE_INPUT_FIELDS | _STEP_EDIT_FIELDS)
         )
@@ -1343,6 +1570,10 @@ async def move_project_priority(
     # re-ranks two bands), taken after lookup, authorisation and the rate
     # limit (P36-R01); the project is re-read and re-authorised under it.
     project = await _lock_bands_and_reload(db, project, current_user)
+    if body.base:
+        # P47 (ADR 0059 C1): every priority writer holds the band-rank lock,
+        # so the re-read priority cannot change before this move commits.
+        await check_project_base(db, current_user, project, body.base, {"priority": body.priority})
     if body.preview_token is not None:
         return await confirm_priority_move(
             db, project, body.priority, current_user, body.preview_token

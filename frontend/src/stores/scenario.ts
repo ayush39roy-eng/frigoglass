@@ -100,6 +100,10 @@ interface ScenarioState {
   stageEdit: (input: StageEditInput) => void;
   /** Remove one project's staged edit entirely (undoable). */
   removeEdit: (projectId: string) => void;
+  /** P47 (ADR 0059 "Use theirs"): put the stored values back into one staged
+   *  edit, both its baseline and its next, for the conflicting dimensions /
+   *  gate list only; its other staged changes stay. */
+  takeTheirs: (projectId: string, theirs: { scores: PriorityScoreUpdateRequest['scores']; hard_gates: PriorityScoreUpdateRequest['hard_gates'] | null }) => void;
   undo: () => void;
   redo: () => void;
   /** Clear all staged edits, history, and notes — used by both "Discard" and
@@ -140,6 +144,21 @@ export const useScenarioStore = create<ScenarioState>()((set) => ({
       const nextPending = { ...state.pending };
       delete nextPending[projectId];
       return { pending: nextPending, past: [...state.past, state.pending], future: [] };
+    }),
+
+  takeTheirs: (projectId, theirs) =>
+    set((state) => {
+      const edit = state.pending[projectId];
+      if (!edit) return state;
+      const put = (v: PriorityScoreUpdateRequest): PriorityScoreUpdateRequest => ({
+        scores: { ...v.scores, ...theirs.scores },
+        hard_gates: theirs.hard_gates ? [...theirs.hard_gates] : v.hard_gates,
+      });
+      return {
+        pending: { ...state.pending, [projectId]: { ...edit, baseline: put(edit.baseline), next: put(edit.next) } },
+        past: [...state.past, state.pending],
+        future: [],
+      };
     }),
 
   undo: () =>

@@ -117,6 +117,7 @@ export function HubEngineerCard({
       className="relative min-w-0 overflow-hidden rounded-card border border-border bg-surface shadow-sm"
       data-testid={`hub-card-${hubName}`}
     >
+      {editor.conflictDialog}
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-primary-subtle/50 px-3 py-2">
         <h3 id={headingId} className="flex items-center gap-2 text-sm font-bold text-primary-subtle-fg">
           {region ? <CountryFlag region={region} /> : null}

@@ -292,6 +292,17 @@ describe('Register popup — one Save', () => {
             { step_code: 'PDD-C', step_excluded: true },
             { step_code: 'PDD-E', step_excluded: false },
           ],
+          // P47 (ADR 0059 C1): the values the popup showed when editing started.
+          base: {
+            status: 'In Development',
+            hub_id: 'hub-1',
+            leader_engineer_id: 'eng-1',
+            actual_end_week: null,
+            design_effort_weeks: null,
+            lab_effort_weeks: 4,
+            current_step_code: 'PDD-B',
+            step_exclusions: { 'PDD-C': false, 'PDD-E': true },
+          },
         },
       ],
     });
@@ -329,8 +340,14 @@ describe('Register popup — one Save', () => {
 
     await waitFor(() => expect(batchCalls()).toHaveLength(1));
     expect(http.sendWithHeaders).toHaveBeenCalledTimes(1);
-    expect(http.sendWithHeaders.mock.calls[0]).toEqual(['PATCH', `/projects/${P1}`, { external_code: 'RPD-9' }]);
-    expect(batchCalls()[0]![2]).toEqual({ edits: [{ project_id: P1, certification_testing_required: false }] });
+    expect(http.sendWithHeaders.mock.calls[0]).toEqual([
+      'PATCH',
+      `/projects/${P1}`,
+      { external_code: 'RPD-9', base: { external_code: null } },
+    ]);
+    expect(batchCalls()[0]![2]).toEqual({
+      edits: [{ project_id: P1, certification_testing_required: false, base: { certification_testing_required: true } }],
+    });
   });
 
   it('Save with nothing changed sends nothing and closes', async () => {

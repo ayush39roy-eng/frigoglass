@@ -2001,4 +2001,4 @@ Admin rights (the ADR 0012 manager delegation is unchanged); cancel a schedule r
 import scenario saved by someone else; reset the import format. Every other role gets 403
 `SUPER_ADMIN_ONLY`. All other Admin rights are unchanged. Dev mode has exactly two test logins
 (`superadmin`, `admin`, password = username), provisioned at startup in dev mode only; this is not
-security (OQ #107).
+security (OQ #113).

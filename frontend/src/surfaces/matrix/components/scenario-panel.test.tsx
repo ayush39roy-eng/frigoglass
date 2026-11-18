@@ -178,7 +178,15 @@ describe('ScenarioPendingPanel', () => {
     ];
     expect(body.notes).toBe('Q3 replan');
     // P26: only the changed dimension, and the full (here emptied) hard-gate list.
-    expect(body.priority_scores).toEqual([{ project_id: 'p1', scores: { strategic_project: 5 }, hard_gates: [] }]);
+    // P47 (ADR 0059 C1): `base` = the staged baseline (the live values when staged).
+    expect(body.priority_scores).toEqual([
+      {
+        project_id: 'p1',
+        scores: { strategic_project: 5 },
+        hard_gates: [],
+        base: { scores: { strategic_project: 3 }, hard_gates: ['Active safety non-compliance'] },
+      },
+    ]);
 
     await waitFor(() => expect(useScenarioStore.getState().pending).toEqual({}));
     expect(useScenarioStore.getState().notes).toBe('');
@@ -253,7 +261,10 @@ describe('diff rendering edge cases (via ScenarioPendingPanel)', () => {
     await user.click(screen.getByRole('button', { name: /Apply/ }));
     await waitFor(() => expect(applyScenarioHook.mutateAsync).toHaveBeenCalledTimes(1));
     const [body] = applyScenarioHook.mutateAsync.mock.calls[0] as [{ priority_scores: unknown[] }];
-    expect(body.priority_scores).toEqual([{ project_id: 'p1', scores: { strategic_project: 4 }, hard_gates: [] }]);
+    expect(body.priority_scores).toEqual([
+      // Gates unchanged against the baseline: not sent (P47-R03).
+      { project_id: 'p1', scores: { strategic_project: 4 }, base: { scores: { strategic_project: 3 } } },
+    ]);
   });
 
   it('does not render a hard-gates diff line when the gate set is unchanged', () => {

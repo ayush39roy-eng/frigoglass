@@ -46,7 +46,7 @@ Owner answers:
   The browser no longer checks the password, and the shared `rpd-test-2026` password is retired.
 - **Not security.** In dev mode the API can still act as any seeded user through the
   `X-Dev-User-Email` header (ADR 0010 §4). Other tooling and agents rely on that, and it is
-  unchanged. Before go-live, OIDC SSO replaces all of this (OQ #9). OQ #107 records the risk of a
+  unchanged. Before go-live, OIDC SSO replaces all of this (OQ #9). OQ #113 records the risk of a
   public dev-mode demo.
 
 **D1 — Super Admin only (403 `SUPER_ADMIN_ONLY` for every other role, Admin included).**

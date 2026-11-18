@@ -17,7 +17,7 @@ import { saveErrorMessage } from './save-error';
  * editing, a preview (labelled "preview") re-evaluates the formula client-side
  * so the editor sees the effect before saving.
  */
-const FIELDS: { key: keyof HubCalendarUpdateRequest; label: string }[] = [
+const FIELDS: { key: Exclude<keyof HubCalendarUpdateRequest, 'base'>; label: string }[] = [
   { key: 'weekdays_per_week', label: 'Weekdays / week' },
   { key: 'national_holiday_days', label: 'National holidays (days)' },
   { key: 'medical_leave_days', label: 'Medical leave (days)' },

@@ -1,5 +1,6 @@
 import type { CheckInDueProject, CheckInDueStage, CheckInEntry } from '@/lib/api/check-ins';
 import { CHECKIN_NOTE_MAX, CHECKIN_REASON_MAX } from '@/lib/api/check-ins';
+import type { EditBase } from '@/lib/api/edit-conflict';
 import type { WorkflowStepStatus } from '@/types/enums';
 
 /**
@@ -109,8 +110,28 @@ export interface BatchPlan {
   errors: Record<string, CheckInErrors>;
 }
 
-/** Build the one-week batch from the served projects and the user's drafts. */
-export function planBatch(projects: readonly CheckInDueProject[], drafts: Readonly<Record<string, CheckInDraft>>): BatchPlan {
+/** P47 (ADR 0059 C1): the checked fields of a served stage, as read. */
+export function stageRead(stage: CheckInDueStage): EditBase {
+  return { status: stage.status, percent_complete: stage.percent_complete, blocked_reason: stage.blocked_reason };
+}
+
+/** P47 ("Use theirs"): the draft with the stored values of the conflicting fields. */
+export function withTheirValues(draft: CheckInDraft, stored: Readonly<Record<string, unknown>>): CheckInDraft {
+  const next: CheckInDraft = { ...draft, confirmed: false };
+  if (typeof stored.status === 'string') next.status = stored.status as WorkflowStepStatus;
+  if (typeof stored.percent_complete === 'number') next.percent_complete = stored.percent_complete;
+  if ('blocked_reason' in stored) next.blocked_reason = typeof stored.blocked_reason === 'string' ? stored.blocked_reason : '';
+  return next;
+}
+
+/** Build the one-week batch from the served projects and the user's drafts;
+ *  (P47) each entry carries `base`, from `reads` (the stage as read when the
+ *  row was first changed) or else the served stage. */
+export function planBatch(
+  projects: readonly CheckInDueProject[],
+  drafts: Readonly<Record<string, CheckInDraft>>,
+  reads?: Readonly<Record<string, EditBase>>,
+): BatchPlan {
   const plan: BatchPlan = { entries: [], keys: [], errors: {} };
   for (const project of projects) {
     for (const stage of project.stages) {
@@ -119,7 +140,9 @@ export function planBatch(projects: readonly CheckInDueProject[], drafts: Readon
       if (!isIncluded(draft, stage)) continue;
       const errors = validateDraft(draft);
       if (Object.keys(errors).length > 0) plan.errors[key] = errors;
-      plan.entries.push(toEntry(project.project_id, stage.step_id, draft));
+      const entry = toEntry(project.project_id, stage.step_id, draft);
+      if (reads) entry.base = { ...(reads[key] ?? stageRead(stage)) };
+      plan.entries.push(entry);
       plan.keys.push(key);
     }
   }

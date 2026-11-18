@@ -6,6 +6,9 @@ import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ApiError } from '@/lib/api/client';
+import { EditConflictDismissedError } from '@/lib/api/edit-conflict';
+import { useEditConflict } from '@/lib/use-edit-conflict';
+import { useEditSession } from '@/stores/edit-session';
 import { SCORING_SCALE, scoringAnchor } from '@/lib/domain-constants';
 import { IncompleteScoreMarker } from '@/components/shared/incomplete-score-marker';
 import { FromRegistrationHint } from '@/components/shared/scoring-tags';
@@ -17,6 +20,7 @@ import { updatePriorityScore } from '@/surfaces/matrix/api/matrix-api';
 import { POINTS_RULE_COPY, type DimensionScoreMap, type PriorityScoreUpdateRequest } from '@/surfaces/matrix/api/types';
 import { changedScores, scoresFromDimensionScores, toRequestBody } from '@/surfaces/matrix/components/score-edit-schema';
 import { rowMissingLabels } from '@/surfaces/matrix/lib/row-scores';
+import { sendScoreChange } from '@/surfaces/matrix/lib/score-base';
 import { FetchedScoringModelProvider, useScoringModel } from '@/surfaces/matrix/scoring-model';
 import { formatWeight, modelFromDimensionScores, type ScoringModelEntry } from '@/surfaces/matrix/lib/scoring-model-core';
 
@@ -76,9 +80,23 @@ function ScoringSectionInner({
   const [scores, setScores] = React.useState<DimensionScoreMap>(base);
   const [gates, setGates] = React.useState<HardGateReason[]>(score?.hard_gates ?? []);
   const [error, setError] = React.useState<string | null>(null);
+  /** P47 (ADR 0059): the scores and gates when "Edit scores" was pressed. */
+  const [readAtEdit, setReadAtEdit] = React.useState<PriorityScoreUpdateRequest | null>(null);
+  const conflict = useEditConflict();
+  useEditSession(editing);
 
   const save = useMutation({
-    mutationFn: (body: PriorityScoreUpdateRequest) => updatePriorityScore(projectId, body),
+    mutationFn: async (body: PriorityScoreUpdateRequest) => {
+      const sent = await sendScoreChange({
+        change: body,
+        read: readAtEdit ?? { scores: base, hard_gates: score?.hard_gates ?? [] },
+        send: (withBase) => updatePriorityScore(projectId, withBase),
+        ask: conflict.ask,
+        onUseTheirs: () => queryClient.invalidateQueries({ queryKey: queryKeys.projectWorkspace(projectId) }),
+      });
+      if (sent.outcome === 'dismissed') throw new EditConflictDismissedError();
+      return sent;
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projectWorkspace(projectId) });
       void queryClient.invalidateQueries({ queryKey: ['priority-matrix'] });
@@ -88,7 +106,9 @@ function ScoringSectionInner({
     },
     onError: (err) => {
       setError(
-        err instanceof ApiError && err.isForbidden
+        err instanceof EditConflictDismissedError
+          ? err.message
+          : err instanceof ApiError && err.isForbidden
           ? 'Your role cannot edit prioritization scores.'
           : err instanceof ApiError
             ? (err.detail ?? 'The scores could not be saved.')
@@ -99,6 +119,7 @@ function ScoringSectionInner({
 
   return (
     <section aria-labelledby="ws-scoring-heading" className="space-y-2" data-testid="scoring-section">
+      {conflict.dialog}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 id="ws-scoring-heading" className="label-caps text-text-muted">
           Prioritization scoring
@@ -152,6 +173,7 @@ function ScoringSectionInner({
             onClick={() => {
               setScores(base);
               setGates(score?.hard_gates ?? []);
+              setReadAtEdit({ scores: base, hard_gates: score?.hard_gates ?? [] });
               setError(null);
               setEditing(true);
             }}
@@ -264,7 +286,7 @@ function ScoringSectionInner({
             <X />
             Cancel
           </Button>
-          <Button type="button" size="sm" disabled={save.isPending} onClick={() => save.mutate(toRequestBody(changedScores(base, scores), gates))}>
+          <Button type="button" size="sm" disabled={save.isPending} onClick={() => save.mutate(toRequestBody(changedScores(readAtEdit?.scores ?? base, scores), gates))}>
             <Save />
             {save.isPending ? 'Saving…' : 'Save scores'}
           </Button>

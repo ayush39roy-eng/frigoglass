@@ -6,6 +6,8 @@ import { PriorityMoveProvider } from '@/components/shared/priority-move/priority
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { PlanWeekNotice } from '@/components/shared/plan-week-notice';
 import { ApiError } from '@/lib/api/client';
+import { editFreshness } from '@/lib/use-edit-freshness';
+import { useAnyEditInProgress, useEditSession } from '@/stores/edit-session';
 import { usePermission, useSessionStore } from '@/stores/session';
 
 import type { StagePatchRequest } from './api/types';
@@ -33,7 +35,9 @@ import { useStagePatch, useWorkspace } from './hooks/use-workspace';
  */
 export default function ProjectWorkspacePage(): React.JSX.Element {
   const { projectId = '' } = useParams();
-  const workspace = useWorkspace(projectId);
+  // P47 (ADR 0059): refetch on focus and every 60 s while no editor is open.
+  const editInProgress = useAnyEditInProgress();
+  const workspace = useWorkspace(projectId, editFreshness(editInProgress));
   const stagePatch = useStagePatch(projectId);
   const recalc = useRecalcFlow(projectId);
   const me = useSessionStore((s) => s.me);
@@ -46,6 +50,7 @@ export default function ProjectWorkspacePage(): React.JSX.Element {
   // Register popup (owner 2026-11-17): the project's one "Edit" popup, also
   // opened from the Projects list. Registration write, like Edit details.
   const [editOpen, setEditOpen] = React.useState(false);
+  useEditSession(editOpen);
   const [editForbidden, setEditForbidden] = React.useState(false);
   const editTrigger = React.useRef<HTMLElement | null>(null);
   const canEditProject = canWrite && reg.write && !editForbidden;

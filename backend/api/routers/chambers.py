@@ -50,6 +50,7 @@ from services.capacity_supply import (
     round2,
     to_days,
 )
+from services.edit_conflict import check_base, field_refs
 from services.hub_scope import is_lab_region_in_scope, scoped_lab_regions
 from services.plan_clock import PlanClock, get_plan_clock
 
@@ -98,12 +99,15 @@ def _integrity_http_error(exc: IntegrityError, action: str) -> HTTPException:
 
 
 async def _get_chamber_or_404(
-    db: AsyncSession, chamber_id: uuid.UUID, principal: Principal
+    db: AsyncSession, chamber_id: uuid.UUID, principal: Principal, *, lock: bool = False
 ) -> Chamber:
     stmt = select(Chamber).where(Chamber.id == chamber_id)
     regions = await scoped_lab_regions(db, principal)
     if regions is not None:
         stmt = stmt.where(Chamber.lab_region.in_(regions))
+    if lock:
+        # P47 (ADR 0059 C1): the row `FOR UPDATE`, re-read.
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
     result = await db.execute(stmt)
     chamber = result.scalar_one_or_none()
     if chamber is None:
@@ -260,7 +264,10 @@ async def update_chamber(
     current_user: Principal = Depends(_write),
     clock: PlanClock = Depends(get_plan_clock),
 ) -> ChamberRead:
-    chamber = await _get_chamber_or_404(db, chamber_id, current_user)
+    # P47 (ADR 0059 C1): with a `base`, the row is locked here and compared
+    # after the scope checks below.
+    chamber = await _get_chamber_or_404(db, chamber_id, current_user, lock=bool(body.base))
+    updates = body.model_dump(exclude_unset=True, exclude={"base"})
 
     if body.allowed_stages is not None:
         await _validate_allowed_stages(db, body.allowed_stages)
@@ -275,8 +282,21 @@ async def update_chamber(
                 ),
             )
 
+    # P47 (ADR 0059 C1): after the lab-region scope check above (P47-R01),
+    # before any write.
+    await check_base(
+        db,
+        current_user,
+        entity="chamber",
+        entity_id=chamber.id,
+        label=chamber.code,
+        base=body.base,
+        requested=updates,
+        current=lambda name: getattr(chamber, name, None),
+        refs=field_refs("Chamber", str(chamber.id)),
+    )
     before_state = chamber_audit_state(chamber)
-    for field_name, value in body.model_dump(exclude_unset=True).items():
+    for field_name, value in updates.items():
         setattr(chamber, field_name, value)
 
     try:

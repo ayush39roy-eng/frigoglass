@@ -9,6 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys, sortedKeyList } from '@/lib/query-keys';
+import type { QueryFreshness } from '@/lib/use-edit-freshness';
 import type { HubSelection } from '@/stores/hub-filter';
 import type { LabRegion } from '@/types/enums';
 
@@ -25,7 +26,11 @@ import type { FreezeToggleRequest } from '../api/types';
 /** P13-T13: every toolbar filter is a server param (API_CONTRACT_P13 §7). */
 export type UseGanttParams = GanttQueryParams;
 
-export function useGantt(params: UseGanttParams) {
+export function useGantt(
+  params: UseGanttParams,
+  /** P47 (ADR 0059): focus refetch + 60 s poll while no step week is drafted. */
+  freshness?: QueryFreshness,
+) {
   return useQuery({
     // Every user-facing filter must be in the key or a filter change would
     // serve the previous filter's rows (P4-T04 review). The whole params
@@ -45,6 +50,7 @@ export function useGantt(params: UseGanttParams) {
     queryFn: ({ signal }) => fetchGantt(params, { signal }),
     retry: retryUnlessAuth,
     placeholderData: (prev) => prev,
+    ...freshness,
   });
 }
 

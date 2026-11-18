@@ -123,6 +123,13 @@ from schemas.workspace import (
     StageUpdateRequest,
     WorkspaceRead,
 )
+from services.edit_conflict import (
+    AuditRef,
+    check_base,
+    path_changed,
+    raise_edit_conflict,
+    step_conflicts,
+)
 from services.file_sniff import EXTENSION_FOR_CONTENT_TYPE, UploadRejected, extension_of, sniff
 from services.notifications import generate_stage_blocked_notifications
 from services.plan_clock import PlanClock, get_plan_clock
@@ -284,7 +291,7 @@ async def patch_stage(
             "of its own.",
         )
 
-    explicit = body.model_dump(exclude_unset=True)
+    explicit = body.model_dump(exclude_unset=True, exclude={"base"})
     if "status" in explicit and explicit["status"] is None:
         raise CodedHTTPException(
             HTTP_422,
@@ -304,6 +311,22 @@ async def patch_stage(
             "STAGE_INCONSISTENT",
             [field_error(name, msg) for name, msg in errors],
         )
+    # P47 (ADR 0059 C1): under the project row lock taken above, before any
+    # write: the fields this PATCH sends must still hold their `base`.
+    await raise_edit_conflict(
+        db,
+        current_user,
+        step_conflicts(
+            project_id=project.id,
+            project_name=project.name,
+            hub_id=project.hub_id,
+            step_id=step_id,
+            step_row_id=row.id,
+            base=body.base,
+            requested=explicit,
+            current={name: getattr(row, name) for name in explicit},
+        ),
+    )
 
     before_state = _stage_state(project, row)
     was_blocked = row.status == WorkflowStepStatus.BLOCKED
@@ -634,14 +657,16 @@ def _file_state(project: Project, f: ProjectFile) -> dict[str, Any]:
     }
 
 
-async def _file_or_404(db: AsyncSession, project: Project, file_id: uuid.UUID) -> ProjectFile:
-    record = (
-        await db.execute(
-            select(ProjectFile).where(
-                ProjectFile.id == file_id, ProjectFile.project_id == project.id
-            )
-        )
-    ).scalar_one_or_none()
+async def _file_or_404(
+    db: AsyncSession, project: Project, file_id: uuid.UUID, *, lock: bool = False
+) -> ProjectFile:
+    stmt = select(ProjectFile).where(
+        ProjectFile.id == file_id, ProjectFile.project_id == project.id
+    )
+    if lock:
+        # P47 (ADR 0059 C1): the file row `FOR UPDATE`, re-read.
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    record = (await db.execute(stmt)).scalar_one_or_none()
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
     return record
@@ -701,8 +726,30 @@ async def update_file(
         db, current_user, project,
         surface=Surface.PROJECT_WORKSPACE, action=Action.WRITE, min_grant_role="admin",
     )
-    record = await _file_or_404(db, project, file_id)
-    updates = body.model_dump(exclude_unset=True)
+    record = await _file_or_404(db, project, file_id, lock=bool(body.base))
+    updates = body.model_dump(exclude_unset=True, exclude={"base"})
+    await check_base(
+        db,
+        current_user,
+        entity="project_file",
+        entity_id=record.id,
+        label=record.display_name,
+        base=body.base,
+        requested=updates,
+        current={
+            "display_name": record.display_name,
+            "category": record.category,
+            "description": record.description,
+        },
+        refs=lambda name: (
+            AuditRef(
+                "ProjectFile",
+                str(record.id),
+                path_changed("description_length" if name == "description" else name),
+            ),
+        ),
+        hub_id=project.hub_id,
+    )
     for key in ("display_name", "category"):
         if key in updates and updates[key] is None:
             raise CodedHTTPException(

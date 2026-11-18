@@ -698,7 +698,12 @@ describe('MatrixPage', () => {
       const [body] = applyMutateAsync.mock.calls[0] as [{ priority_scores: Record<string, unknown>[] }];
       expect(body.priority_scores).toHaveLength(1);
       // P26: the `scores` map holds only the changed dimension; hard gates are sent in full.
-      expect(body.priority_scores[0]).toEqual({ project_id: 'p1', scores: { strategic_project: 1 }, hard_gates: [] });
+      // P47 (ADR 0059 C1): with the staged baseline as `base`.
+      expect(body.priority_scores[0]).toEqual({
+        project_id: 'p1',
+        scores: { strategic_project: 1 },
+        base: { scores: { strategic_project: 5 } },
+      });
 
       await screen.findByTestId('scenario-empty');
     });
@@ -1001,17 +1006,31 @@ describe('MatrixPage', () => {
       await user.click(screen.getByRole('button', { name: 'Save' }));
 
       expect(mutateAsync).toHaveBeenCalledTimes(1);
-      const [body] = mutateAsync.mock.calls[0] as [{ notes: string | null; priority_scores: { project_id: string; scores: Record<string, number | null>; hard_gates: string[] }[] }];
+      const [body] = mutateAsync.mock.calls[0] as [
+        {
+          notes: string | null;
+          priority_scores: {
+            project_id: string;
+            scores: Record<string, number | null>;
+            hard_gates: string[];
+            base?: { scores: Record<string, number | null>; hard_gates: string[] };
+          }[];
+        },
+      ];
       expect(body.notes).toBe('Q4 review');
       expect(body.priority_scores.map((c) => c.project_id)).toEqual(['p1', 'p2']);
       const [first, second] = body.priority_scores;
-      // Full map: every active key of the row, the edited ones changed.
-      expect(Object.keys(first?.scores ?? {})).toHaveLength(13);
-      expect(first?.scores.strategic_project).toBe(2);
-      expect(first?.scores.new_customer).toBe(4);
+      // P47 (ADR 0059): only the dimensions the user changed (an untouched one
+      // is never overwritten), the gate list only when changed, and the values as read.
+      expect(first?.scores).toEqual({ strategic_project: 2 });
       expect(first?.hard_gates).toEqual(['Regulatory deadline within 6 months']);
-      expect(second?.scores.new_customer).toBeNull();
-      expect(second?.hard_gates).toEqual(['Active safety non-compliance']);
+      // Cooler A's gate list changed: the served list is in base. (A4)
+      expect(first?.base).toEqual({ scores: { strategic_project: 5 }, hard_gates: [] });
+      expect(second?.scores).toEqual({ new_customer: null });
+      // P47-R03 (QA-2): Cooler B's gates are unchanged: left out of body AND base,
+      // so another user's gate change is never reverted.
+      expect(second).not.toHaveProperty('hard_gates');
+      expect(second?.base?.hard_gates).toBeUndefined();
 
       expect(await screen.findByTestId('grid-saved-notice')).toHaveTextContent('Saved 2 projects as version 9');
       expect(screen.queryByTestId('grid-edit-bar')).not.toBeInTheDocument();

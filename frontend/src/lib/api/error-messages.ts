@@ -1,4 +1,5 @@
 import { ApiError } from './client';
+import { EditConflictDismissedError } from './edit-conflict';
 
 /**
  * Readable text for the machine-readable `code` on the P9 error envelope
@@ -115,6 +116,8 @@ export function flattenDetail(detail: string | undefined): string | undefined {
 }
 
 export function apiErrorMessage(err: unknown, fallback: string): string {
+  // P47 (ADR 0059): a conflict dialog closed without a choice; nothing saved.
+  if (err instanceof EditConflictDismissedError) return err.message;
   if (!(err instanceof ApiError)) return fallback;
   // 429 first: its copy depends on Retry-After, not just on the code.
   if (err.status === 429) return rateLimitedMessage(err.retryAfterSeconds);

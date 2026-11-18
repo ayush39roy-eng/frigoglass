@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { CircleX, Layers, Redo2, Save, Trash2, Undo2 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,6 +9,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ApiError } from '@/lib/api/client';
+import { CONFLICT_COPY, editConflicts } from '@/lib/api/edit-conflict';
+import { useEditConflict } from '@/lib/use-edit-conflict';
 import {
   changedScoreKeys,
   computeScenarioDiff,
@@ -20,6 +23,7 @@ import {
 import type { ScenarioApplyRequest } from '../api/types';
 import { useScoringModel } from '../scoring-model';
 import { useApplyScenario } from '../hooks/use-matrix';
+import { keepMineScoreBase, theirScoreValues, toScoreChangeBody } from '../lib/score-base';
 
 /**
  * Scenario mode (P5-T01) UI for the Prioritization Matrix.
@@ -114,6 +118,9 @@ export function ScenarioPendingPanel({
   const redo = useScenarioStore((s) => s.redo);
   const removeEdit = useScenarioStore((s) => s.removeEdit);
   const reset = useScenarioStore((s) => s.reset);
+  const takeTheirs = useScenarioStore((s) => s.takeTheirs);
+  const conflict = useEditConflict();
+  const queryClient = useQueryClient();
 
   const applyScenarioMutation = useApplyScenario();
   const [error, setError] = React.useState<string | null>(null);
@@ -134,12 +141,47 @@ export function ScenarioPendingPanel({
     // staged score on a dimension deactivated since is left out.
     const diff = computeScenarioDiff(pending, model.loaded ? new Set(model.dimensions.map((d) => d.key)) : undefined);
     if (diff.length === 0) return;
-    const body: ScenarioApplyRequest = {
+    // P47 (ADR 0059): each row's `base` is the staged edit's baseline (the
+    // live values when it was first staged).
+    let body: ScenarioApplyRequest = {
       notes: notes.trim() === '' ? null : notes.trim(),
-      priority_scores: diff,
+      // P47-R03 (QA-2): `hard_gates` only when the staged gates differ from the baseline.
+      priority_scores: diff.map((c) => {
+        const baseline = pending[c.project_id]?.baseline;
+        if (!baseline) return c;
+        return { project_id: c.project_id, ...toScoreChangeBody({ scores: c.scores, hard_gates: c.hard_gates ?? [] }, baseline) };
+      }),
     };
     try {
-      await applyScenarioMutation.mutateAsync(body);
+      for (;;) {
+        try {
+          await applyScenarioMutation.mutateAsync(body);
+          break;
+        } catch (err) {
+          const conflicts = editConflicts(err);
+          if (conflicts === null) throw err;
+          const choice = await conflict.ask(conflicts, body.priority_scores.length > 1 ? CONFLICT_COPY.batchNote : undefined);
+          if (choice === 'mine') {
+            body = {
+              ...body,
+              priority_scores: body.priority_scores.map((c) => {
+                const mine = conflicts.filter((x) => x.id === c.project_id);
+                return mine.length > 0 && c.base ? { ...c, base: keepMineScoreBase(c.base, mine) } : c;
+              }),
+            };
+            continue;
+          }
+          if (choice === 'theirs') {
+            // Drop my staged value for the conflicting dimensions only.
+            for (const id of new Set(conflicts.map((c) => c.id))) {
+              takeTheirs(id, theirScoreValues(conflicts.filter((c) => c.id === id)));
+            }
+            void queryClient.invalidateQueries({ queryKey: ['priority-matrix'] });
+          }
+          setError(choice === 'theirs' ? CONFLICT_COPY.batchTheirs : CONFLICT_COPY.dismissed);
+          return;
+        }
+      }
       reset();
     } catch (err) {
       if (err instanceof ApiError && err.isForbidden) {
@@ -163,6 +205,7 @@ export function ScenarioPendingPanel({
 
   return (
     <Card data-testid="scenario-panel">
+      {conflict.dialog}
       <CardHeader>
         <CardTitle>Scenario — pending changes</CardTitle>
         <div className="flex items-center gap-1">

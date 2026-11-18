@@ -196,7 +196,8 @@ describe('AdminUsersPage', () => {
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(/leave no active Super Admin/);
     expect(mutateAsync).toHaveBeenCalledWith({
       userId: 'u2',
-      body: expect.objectContaining({ is_active: false, roles: ['Super Admin'] }),
+      // P47 (ADR 0059): only the changed field, with the value the form opened with.
+      body: { is_active: false, base: { is_active: true } },
     });
   });
 

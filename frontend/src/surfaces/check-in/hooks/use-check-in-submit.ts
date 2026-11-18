@@ -4,7 +4,15 @@ import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-quer
 import { ApiError } from '@/lib/api/client';
 import { useSessionStore } from '@/stores/session';
 import { apiErrorMessage, checkInRateLimitedMessage } from '@/lib/api/error-messages';
-import { checkInEntryErrors, submitCheckIns, type CheckInEntry, type CheckInEntryError } from '@/lib/api/check-ins';
+import {
+  checkInEntryErrors,
+  submitCheckIns,
+  type CheckInEntry,
+  type CheckInEntryError,
+  type CheckInSubmitResponse,
+} from '@/lib/api/check-ins';
+import { CONFLICT_COPY, conflictFieldPrefix, editConflicts, keepMineBase, type EditConflict } from '@/lib/api/edit-conflict';
+import { useEditConflict } from '@/lib/use-edit-conflict';
 import { fetchScheduleRunChanges } from '@/lib/api/priority-move';
 import { queryKeys } from '@/lib/query-keys';
 import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
@@ -45,6 +53,18 @@ export interface SubmitResult {
   entryErrors: CheckInEntryError[];
   /** A non-entry error message (403, 429, network…). */
   message: string | null;
+  /** P47 (ADR 0059): the 409 `EDIT_CONFLICT` fields when the user chose "Use
+   *  theirs" (the page puts the stored values back for those fields only) or
+   *  closed the dialog. Empty otherwise. */
+  conflicts?: EditConflict[];
+  conflictChoice?: 'theirs' | 'dismissed';
+}
+
+/** The entry a conflict names: `entity: project_step`, `id` = the project,
+ *  `field` = `<step_id>.<field>`. */
+export function conflictMatchesEntry(conflict: EditConflict, entry: CheckInEntry): boolean {
+  const step = conflictFieldPrefix(conflict.field);
+  return conflict.id === entry.project_id && (step === null || step === entry.step_id);
 }
 
 /** A check-in changes progress, tracking status and (after a run) every run-derived view. */
@@ -66,13 +86,42 @@ export function useCheckInSubmit() {
   const { start: startWatcher } = watcher;
   const [flow, setFlow] = React.useState<CheckInFlow>({ kind: 'idle' });
   const refreshSession = useSessionStore((s) => s.refresh);
+  const conflict = useEditConflict();
+  const { ask } = conflict;
 
   const submit = React.useCallback(
     async (entries: CheckInEntry[]): Promise<SubmitResult> => {
       setFlow({ kind: 'submitting' });
-      let res;
+      let res: CheckInSubmitResponse;
+      let sent = entries;
       try {
-        res = await submitCheckIns(entries);
+        for (;;) {
+          try {
+            res = await submitCheckIns(sent);
+            break;
+          } catch (err) {
+            const conflicts = editConflicts(err);
+            if (conflicts === null) throw err;
+            // P47 (ADR 0059 C2): nothing was written; ask whose value to keep.
+            const choice = await ask(conflicts, sent.length > 1 ? CONFLICT_COPY.batchNote : undefined);
+            if (choice === 'mine') {
+              sent = sent.map((e) => {
+                const mine = conflicts.filter((c) => conflictMatchesEntry(c, e));
+                return mine.length > 0 && e.base ? { ...e, base: keepMineBase(e.base, mine) } : e;
+              });
+              continue;
+            }
+            if (choice === 'theirs') void queryClient.invalidateQueries({ queryKey: ['check-ins'] });
+            setFlow({ kind: 'idle' });
+            return {
+              ok: false,
+              entryErrors: [],
+              message: choice === 'theirs' ? CONFLICT_COPY.batchTheirs : CONFLICT_COPY.dismissed,
+              conflicts,
+              conflictChoice: choice === 'theirs' ? 'theirs' : 'dismissed',
+            };
+          }
+        }
       } catch (err) {
         const entryErrors = checkInEntryErrors(err);
         // P37 R37-10: the year closed under us; re-read /me so the page shows it.
@@ -135,7 +184,7 @@ export function useCheckInSubmit() {
       });
       return { ok: true, entryErrors: [], message: null };
     },
-    [begin, follow, queryClient, refreshSession, startWatcher],
+    [begin, follow, queryClient, refreshSession, startWatcher, ask],
   );
 
   const close = React.useCallback(() => {
@@ -162,5 +211,7 @@ export function useCheckInSubmit() {
     submitting: flow.kind === 'submitting',
     submit,
     close,
+    /** P47: the 409 dialog; render once on the page. */
+    conflictDialog: conflict.dialog,
   };
 }

@@ -120,7 +120,13 @@ describe('ProjectWorkspacePage — Edit popup (owner 2026-11-17)', () => {
 
     await waitFor(() => expect(http.send).toHaveBeenCalledTimes(1));
     expect(http.send).toHaveBeenCalledWith('POST', '/projects/register-edits', {
-      edits: [{ project_id: 'p-1', step_exclusions: [{ step_code: 'PDD-F', step_excluded: true }] }],
+      edits: [
+        {
+          project_id: 'p-1',
+          step_exclusions: [{ step_code: 'PDD-F', step_excluded: true }],
+          base: { step_exclusions: { 'PDD-F': false } },
+        },
+      ],
     });
     expect(http.sendWithHeaders).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());

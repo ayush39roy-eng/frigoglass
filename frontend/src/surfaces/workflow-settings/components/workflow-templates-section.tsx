@@ -1,13 +1,31 @@
 import * as React from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ApiError } from '@/lib/api/client';
+import {
+  CONFLICT_COPY,
+  conflictLeafField,
+  editConflicts,
+  EditConflictDismissedError,
+  keepMineBase,
+  sendEditWithBase,
+  type EditBase,
+} from '@/lib/api/edit-conflict';
+import { queryKeys } from '@/lib/query-keys';
+import { useEditConflict } from '@/lib/use-edit-conflict';
 import { formatTimestamp } from '@/lib/format';
 import { usePermission } from '@/stores/session';
 
-import type { WorkflowSettings, WorkflowSettingsSaveResult } from '../api/types';
+import type {
+  ChamberSettingUpdateRequest,
+  HubCalendarUpdateRequest,
+  StepsUpdateRequest,
+  WorkflowSettings,
+  WorkflowSettingsSaveResult,
+} from '../api/types';
 import { AccessNotice } from './access-notice';
 import { CalendarsTab } from './calendars-tab';
 import { ChambersTab } from './chambers-tab';
@@ -55,6 +73,93 @@ export function WorkflowTemplatesSection(): React.JSX.Element {
     return result;
   }, []);
 
+  // P47 (ADR 0059): every Settings PUT carries `base`, the cached settings as
+  // read (this surface does not poll, so the cache is what the editor started
+  // from). A 409 EDIT_CONFLICT asks whose value to keep; "Use theirs" puts the
+  // stored value in place of mine (these PUTs carry whole records).
+  const conflict = useEditConflict();
+  const queryClient = useQueryClient();
+  const checkedPut = React.useCallback(
+    async <B extends object>(
+      body: B,
+      original: object,
+      send: (withBase: B & { base: EditBase }) => Promise<WorkflowSettingsSaveResult>,
+    ): Promise<WorkflowSettingsSaveResult> => {
+      const sent = await sendEditWithBase({
+        body,
+        original,
+        send,
+        ask: conflict.ask,
+        replaceOnTheirs: true,
+        onUseTheirs: () => queryClient.invalidateQueries({ queryKey: queryKeys.workflowSettings() }),
+      });
+      if (sent.outcome === 'saved') return sent.data;
+      throw new EditConflictDismissedError(sent.outcome === 'theirs' ? CONFLICT_COPY.theirs : CONFLICT_COPY.dismissed);
+    },
+    [conflict.ask, queryClient],
+  );
+  const data = settings.data;
+  const askConflict = conflict.ask;
+  // The steps PUT carries `base` per step (`steps[i].base = {kind,
+  // predecessor_ids}`); a conflict names the step (`entity: workflow_step`).
+  const onSaveSteps = React.useCallback(
+    (workflowId: string, body: StepsUpdateRequest) => {
+      const read = new Map((data?.workflows.find((w) => w.id === workflowId)?.steps ?? []).map((st) => [st.step_id, st]));
+      let steps = body.steps.map((st) => {
+        const was = read.get(st.step_id);
+        return was ? { ...st, base: { kind: was.kind, predecessor_ids: was.predecessor_ids } as EditBase } : st;
+      });
+      const run = async (): Promise<WorkflowSettingsSaveResult> => {
+        for (;;) {
+          try {
+            return await saveSteps.mutateAsync({ workflowId, body: { steps } });
+          } catch (err) {
+            const conflicts = editConflicts(err);
+            if (conflicts === null) throw err;
+            const choice = await askConflict(conflicts);
+            if (choice === null) throw new EditConflictDismissedError();
+            steps = steps.map((st) => {
+              const mine = conflicts.filter((c) => c.id === st.step_id);
+              if (mine.length === 0 || !('base' in st) || !st.base) return st;
+              const base = keepMineBase(st.base, mine);
+              if (choice === 'mine') return { ...st, base };
+              // "Use theirs": the stored value replaces mine for that field.
+              const next: Record<string, unknown> = { ...st, base };
+              for (const c of mine) next[conflictLeafField(c.field)] = c.current_value;
+              return next as typeof st;
+            });
+            if (choice === 'theirs') {
+              void queryClient.invalidateQueries({ queryKey: queryKeys.workflowSettings() });
+              const mineLeft = steps.some(
+                (st) =>
+                  'base' in st &&
+                  st.base &&
+                  JSON.stringify({ kind: st.kind, predecessor_ids: st.predecessor_ids }) !== JSON.stringify(st.base),
+              );
+              if (!mineLeft) throw new EditConflictDismissedError(CONFLICT_COPY.theirs);
+            }
+          }
+        }
+      };
+      return track(run());
+    },
+    [data, track, saveSteps, askConflict, queryClient],
+  );
+  const onSaveCalendar = React.useCallback(
+    (hubId: string, body: HubCalendarUpdateRequest) => {
+      const original = data?.hub_calendars.find((c) => c.hub_id === hubId) ?? {};
+      return track(checkedPut(body, original, (withBase) => saveCalendar.mutateAsync({ hubId, body: withBase })));
+    },
+    [data, track, checkedPut, saveCalendar],
+  );
+  const onSaveChamber = React.useCallback(
+    (chamberId: string, body: ChamberSettingUpdateRequest) => {
+      const original = data?.chambers.find((c) => c.chamber_id === chamberId) ?? {};
+      return track(checkedPut(body, original, (withBase) => saveChamber.mutateAsync({ chamberId, body: withBase })));
+    },
+    [data, track, checkedPut, saveChamber],
+  );
+
   const denied =
     settings.error instanceof ApiError
       ? settings.error.isForbidden
@@ -94,14 +199,15 @@ export function WorkflowTemplatesSection(): React.JSX.Element {
               templatesNotice={templatesNotice}
               apply={apply}
               saving={{ steps: saveSteps.isPending, calendar: saveCalendar.isPending, chamber: saveChamber.isPending }}
-              onSaveSteps={(workflowId, body) => track(saveSteps.mutateAsync({ workflowId, body }))}
-              onSaveCalendar={(hubId, body) => track(saveCalendar.mutateAsync({ hubId, body }))}
-              onSaveChamber={(chamberId, body) => track(saveChamber.mutateAsync({ chamberId, body }))}
+              onSaveSteps={onSaveSteps}
+              onSaveCalendar={onSaveCalendar}
+              onSaveChamber={onSaveChamber}
             />
           </>
         )}
       </SectionBoundary>
       {apply.element}
+      {conflict.dialog}
     </div>
   );
 }

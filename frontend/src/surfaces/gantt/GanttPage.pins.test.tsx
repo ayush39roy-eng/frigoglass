@@ -255,8 +255,21 @@ describe('P40-T03c step Start / End weeks', () => {
     await user.click(screen.getByTestId('step-pin-edit-save'));
     expect(saveStepPins).toHaveBeenCalledWith({
       items: [
-        { project_id: 'p1', step_template_id: 'PDD-A', manual_start_week: 44, manual_end_week: 47 },
-        { project_id: 'p1', step_template_id: 'PDD-C', manual_start_week: null, manual_end_week: null },
+        // P47 (ADR 0059 C1): each item carries the stored pair as read.
+        {
+          project_id: 'p1',
+          step_template_id: 'PDD-A',
+          manual_start_week: 44,
+          manual_end_week: 47,
+          base: { manual_start_week: null, manual_end_week: null },
+        },
+        {
+          project_id: 'p1',
+          step_template_id: 'PDD-C',
+          manual_start_week: null,
+          manual_end_week: null,
+          base: { manual_start_week: 40, manual_end_week: 42 },
+        },
       ],
     });
     const panel = await screen.findByTestId('step-pin-save-panel');

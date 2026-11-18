@@ -2,8 +2,10 @@ import * as React from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError, type DownloadedFile } from '@/lib/api/client';
+import { CONFLICT_COPY, EditConflictDismissedError, sendEditWithBase } from '@/lib/api/edit-conflict';
 import { isSuperAdminOnlyError, SUPER_ADMIN_ONLY_MESSAGE } from '@/lib/auth/super-admin';
 import { saveBlob } from '@/lib/download';
+import { askEditConflict } from '@/stores/edit-conflict-host';
 import { useSessionStore } from '@/stores/session';
 
 import { classifyWhatIfError } from '../use-whatif';
@@ -140,8 +142,31 @@ export function useCreateSavedScenario() {
 export function useRenameSavedScenario() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, name, note }: { id: string; name: string; note?: string | null }) =>
-      patchSavedScenario(id, note === undefined ? { name } : { name, note }),
+    // P47 (ADR 0059): `from` = the name / note shown when the rename started;
+    // a 409 EDIT_CONFLICT opens the app-wide dialog.
+    mutationFn: async ({
+      id,
+      name,
+      note,
+      from,
+    }: {
+      id: string;
+      name: string;
+      note?: string | null;
+      from?: { name: string; note?: string | null };
+    }) => {
+      const body = note === undefined ? { name } : { name, note };
+      if (!from) return patchSavedScenario(id, body);
+      const sent = await sendEditWithBase({
+        body,
+        original: from,
+        send: (withBase) => patchSavedScenario(id, withBase),
+        ask: askEditConflict,
+      });
+      if (sent.outcome === 'dismissed') throw new EditConflictDismissedError();
+      if (sent.outcome === 'theirs') throw new EditConflictDismissedError(CONFLICT_COPY.theirs);
+      return sent.data;
+    },
     retry: false,
     onSettled: () => qc.invalidateQueries({ queryKey: SCENARIOS_KEY }),
   });
@@ -159,6 +184,7 @@ export function useDeleteSavedScenario() {
 /** Plain copy for a failed library / format / export call. */
 export function libraryErrorMessage(error: unknown): string {
   if (error instanceof ImportShapeError) return 'The server answered in an unexpected format. Reload the page.';
+  if (error instanceof EditConflictDismissedError) return error.message;
   if (error instanceof ApiError) {
     if (error.status === 0) return 'The server could not be reached. Try again.';
     if (error.status === 401) return 'Your session has ended. Sign in again.';

@@ -47,6 +47,7 @@ rejected with `KIND_IN_USE` (I4: chambers book lab-kind steps only).
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -98,6 +99,15 @@ from services.capacity_supply import (
     round2,
 )
 from services.categories import load_catalog
+from services.edit_conflict import (
+    AuditRef,
+    FieldConflict,
+    check_base,
+    field_refs,
+    find_conflicts,
+    path_changed,
+    raise_edit_conflict,
+)
 from services.hub_scope import hub_scope_filter, scoped_lab_regions
 from services.plan_clock import PlanClock, get_plan_clock
 from services.project_effort import (
@@ -387,6 +397,16 @@ def _step_error(code: str, detail: str) -> CodedHTTPException:
     return CodedHTTPException(HTTP_422, code, detail)
 
 
+def _step_refs(workflow_id: str, step_id: str) -> Callable[[str], Sequence[AuditRef]]:
+    """P47: a step's field in the `steps_update` audit states
+    (`steps.<step_id>.<field>`)."""
+
+    def refs(name: str) -> Sequence[AuditRef]:
+        return (AuditRef("Workflow", workflow_id, path_changed(f"steps.{step_id}.{name}")),)
+
+    return refs
+
+
 @router.put("/steps/{workflow_id}", response_model=WorkflowSettings)
 async def put_workflow_steps(
     workflow_id: str,
@@ -399,16 +419,18 @@ async def put_workflow_steps(
     workflow = await db.get(Workflow, workflow_id)
     if workflow is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown workflow")
-    templates = {
-        t.id: t
-        for t in (
-            await db.execute(
-                select(WorkflowStepTemplate).where(WorkflowStepTemplate.workflow_id == workflow_id)
-            )
+    templates_stmt = select(WorkflowStepTemplate).where(
+        WorkflowStepTemplate.workflow_id == workflow_id
+    )
+    if any(s.base for s in body.steps):
+        # P47 (ADR 0059 C1): the workflow's step rows `FOR UPDATE` (id
+        # order), re-read, so the `base` comparison and the write agree.
+        templates_stmt = (
+            templates_stmt.order_by(WorkflowStepTemplate.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
-        .scalars()
-        .all()
-    }
+    templates = {t.id: t for t in (await db.execute(templates_stmt)).scalars().all()}
 
     submitted = [s.step_id for s in body.steps]
     if len(submitted) != len(set(submitted)) or set(submitted) != set(templates):
@@ -438,6 +460,25 @@ async def put_workflow_steps(
             )
 
     proposed = {s.step_id: s for s in body.steps}
+    conflicts: list[FieldConflict] = []
+    for s in body.steps:
+        if s.base:
+            template = templates[s.step_id]
+            conflicts.extend(
+                find_conflicts(
+                    entity="workflow_step",
+                    entity_id=s.step_id,
+                    label=template.name,
+                    base=s.base,
+                    requested={"kind": s.kind, "predecessor_ids": s.predecessor_ids},
+                    current={
+                        "kind": template.kind,
+                        "predecessor_ids": list(template.predecessor_ids or []),
+                    },
+                    refs=_step_refs(workflow_id, s.step_id),
+                )
+            )
+    await raise_edit_conflict(db, current_user, conflicts)
     try:
         build_workflows(
             tuple(
@@ -573,9 +614,26 @@ async def put_hub_calendar(
             "HUB_NOT_CAPACITY_HUB",
             "This hub uses its capacity hub's work calendar; edit that one instead.",
         )
-    cal = (
-        await db.execute(select(HubWorkCalendar).where(HubWorkCalendar.hub_id == hub_id))
-    ).scalar_one_or_none()
+    cal_stmt = select(HubWorkCalendar).where(HubWorkCalendar.hub_id == hub_id)
+    if body.base:
+        # P47 (ADR 0059 C1): the calendar row `FOR UPDATE`, re-read.
+        cal_stmt = cal_stmt.with_for_update().execution_options(populate_existing=True)
+    cal = (await db.execute(cal_stmt)).scalar_one_or_none()
+    fields = body.model_dump(exclude={"base"})
+    if cal is not None:
+        # No stored calendar yet: this PUT creates it, nothing to compare.
+        await check_base(
+            db,
+            current_user,
+            entity="hub_calendar",
+            entity_id=hub_id,
+            label=hub.name.value,
+            base=body.base,
+            requested=fields,
+            current=_calendar_state(cal),
+            refs=field_refs("HubWorkCalendar", str(hub_id)),
+            hub_id=hub_id,
+        )
     weeks_in_year = cal.weeks_in_year if cal is not None else 52
     deduction = (
         body.national_holiday_days
@@ -592,10 +650,10 @@ async def put_hub_calendar(
 
     before = _calendar_state(cal) if cal is not None else {}
     if cal is None:
-        cal = HubWorkCalendar(hub_id=hub_id, weeks_in_year=52, **body.model_dump())
+        cal = HubWorkCalendar(hub_id=hub_id, weeks_in_year=52, **fields)
         db.add(cal)
     else:
-        for key, value in body.model_dump().items():
+        for key, value in fields.items():
             setattr(cal, key, value)
     await db.flush()
     return await _finish_put(
@@ -642,16 +700,30 @@ async def put_chamber(
         regions = await scoped_lab_regions(db, current_user)
         if regions is not None:
             stmt = stmt.where(Chamber.lab_region.in_(regions))
+    if body.base:
+        # P47 (ADR 0059 C1): the chamber row `FOR UPDATE`, re-read.
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
     chamber = (await db.execute(stmt)).scalar_one_or_none()
     if chamber is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chamber not found")
 
-    updates = body.model_dump(exclude_unset=True)
+    updates = body.model_dump(exclude_unset=True, exclude={"base"})
     for key, value in updates.items():
         if value is None:
             raise CodedHTTPException(
                 HTTP_422, "NULL_NOT_ALLOWED", f"{key} may not be null"
             )
+    await check_base(
+        db,
+        current_user,
+        entity="chamber",
+        entity_id=chamber.id,
+        label=chamber.code,
+        base=body.base,
+        requested=updates,
+        current=lambda name: getattr(chamber, name, None),
+        refs=field_refs("Chamber", str(chamber.id)),
+    )
     before = chamber_audit_state(chamber)
     for key, value in updates.items():
         setattr(chamber, key, value)

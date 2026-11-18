@@ -4,6 +4,7 @@
 // (P9-T03); reconciled against the regenerated OpenAPI in the P9 gate (P3-T07
 // contract test). Same convention as every per-surface `api/types.ts`.
 
+import type { EditBase } from '@/lib/api/edit-conflict';
 import type {
   HardGateReason,
   HubName,
@@ -179,6 +180,8 @@ export interface StagePatchRequest {
   actual_end_week?: number | null;
   remaining_weeks_override?: number | null;
   blocked_reason?: string | null;
+  /** P47 (ADR 0059 C1): the value each sent field had when the edit started. */
+  base?: EditBase;
 }
 
 export interface RecalculateResponse {
@@ -197,6 +200,8 @@ export interface FilePatchRequest {
   display_name?: string;
   category?: FileCategory;
   description?: string | null;
+  /** P47 (ADR 0059 C1): the value as read of each field sent; `{}` = no check. */
+  base?: EditBase;
 }
 
 export interface MentionCandidate {

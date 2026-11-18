@@ -78,6 +78,7 @@ from schemas.vip import (
 )
 from services.active_run import get_active_run
 from services.category_type_filter import category_type_filter
+from services.edit_conflict import check_base, field_refs
 from services.hub_scope import global_hub_filter, hub_scope_filter
 from services.outcome_buckets import priority_label
 from services.plan_clock import PlanClock, get_plan_clock
@@ -274,6 +275,34 @@ async def set_project_vip(
         db, current_user, project,
         surface=Surface.PROJECT_REGISTRATION, action=Action.WRITE, min_grant_role="admin",
     )
+    if body.base:
+        # P47 (ADR 0059 C1): the project row `FOR UPDATE`, re-read, then
+        # compared with `base` before anything is written.
+        await db.execute(
+            select(Project)
+            .where(Project.id == project.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        # P47-R01 (I-1): scope and permission re-checked on the re-read row
+        # (its hub may have changed while this request waited).
+        project = await _get_project_or_404(db, project.id, current_user)
+        await authorize_project_action(
+            db, current_user, project,
+            surface=Surface.PROJECT_REGISTRATION, action=Action.WRITE, min_grant_role="admin",
+        )
+        await check_base(
+            db,
+            current_user,
+            entity="project",
+            entity_id=project.id,
+            label=project.name,
+            base=body.base,
+            requested={"is_vip": body.is_vip},
+            current={"is_vip": project.is_vip},
+            refs=field_refs("Project", str(project.id)),
+            hub_id=project.hub_id,
+        )
     if project.is_vip == body.is_vip:
         return VipPinResponse(project_id=project.id, is_vip=project.is_vip)
 

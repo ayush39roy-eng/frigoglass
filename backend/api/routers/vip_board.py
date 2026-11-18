@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from fastapi import APIRouter, Depends, status
@@ -68,6 +69,7 @@ from schemas.vip_board import (
     VipPillarRef,
 )
 from services.active_run import get_active_run
+from services.edit_conflict import AUDIT_SEARCH_LIMIT, AuditRef, check_base, field_refs
 from services.hub_scope import HubIdsArg, RegionsArg, hub_scope_filter, narrowed_hub_filter
 from services.outcome_buckets import priority_label
 from services.plan_clock import PlanClock, get_plan_clock
@@ -130,6 +132,75 @@ def _item_state(item: VipItem, project_ids: list[uuid.UUID] | None = None) -> di
     if project_ids is not None:
         state["project_ids"] = sorted(str(p) for p in project_ids)
     return state
+
+
+_LINK_ACTIONS = ("vip_item.link", "vip_item.unlink")
+_LINK_KEYS = ("added_project_ids", "removed_project_ids")
+
+
+def _linked_in_row(after: Mapping[str, Any] | None) -> list[str]:
+    if not isinstance(after, Mapping):
+        return []
+    out: list[str] = []
+    for key in _LINK_KEYS:
+        ids = after.get(key)
+        if isinstance(ids, list):
+            out.extend(str(i) for i in ids)
+    return out
+
+
+async def _visible_link_ids(
+    db: AsyncSession, principal: Principal, item_id: uuid.UUID
+) -> set[str] | None:
+    """P47-R01 (security L-1): the projects named by this item's recent
+    link / unlink audit rows that the caller can see (`None`: unscoped
+    caller, every project). Those rows carry `hub_id = NULL`, so they are
+    filtered here by the projects they name."""
+
+    if principal.hub_scope_all:
+        return None
+    named: set[uuid.UUID] = set()
+    after: dict[str, Any] | None
+    for after in (
+        await db.execute(
+            select(AuditLogEntry.after_state)
+            .where(
+                AuditLogEntry.entity_type == "VipItem",
+                AuditLogEntry.entity_id == str(item_id),
+                AuditLogEntry.action.in_(_LINK_ACTIONS),
+            )
+            .order_by(AuditLogEntry.occurred_at.desc())
+            .limit(AUDIT_SEARCH_LIMIT)
+        )
+    ).scalars():
+        for raw in _linked_in_row(after):
+            try:
+                named.add(uuid.UUID(raw))
+            except ValueError:
+                continue
+    if not named:
+        return set()
+    stmt = select(Project.id).where(Project.id.in_(named))
+    scope = hub_scope_filter(principal, Project.hub_id)
+    if scope is not None:
+        stmt = stmt.where(scope)
+    return {str(pid) for pid in (await db.execute(stmt)).scalars()}
+
+
+def _link_refs(
+    item_id: uuid.UUID, visible: set[str] | None
+) -> Callable[[str], Sequence[AuditRef]]:
+    """P47: the `vip_item.link` / `vip_item.unlink` audit rows; for a scoped
+    caller only those that added or removed a project the caller can see
+    (P47-R01 L-1)."""
+
+    def changed(_before: Mapping[str, Any] | None, after: Mapping[str, Any] | None) -> bool:
+        listed = _linked_in_row(after)
+        if visible is None:
+            return bool(listed)
+        return any(pid in visible for pid in listed)
+
+    return lambda _name: (AuditRef("VipItem", str(item_id), changed),)
 
 
 def _audit(
@@ -199,13 +270,13 @@ async def _item_response(
 
 
 async def _get_item_or_404(
-    db: AsyncSession, item_id: uuid.UUID, principal: Principal
+    db: AsyncSession, item_id: uuid.UUID, principal: Principal, *, lock: bool = False
 ) -> VipItem:
-    item = (
-        await db.execute(
-            select(VipItem).options(selectinload(VipItem.children)).where(VipItem.id == item_id)
-        )
-    ).scalar_one_or_none()
+    stmt = select(VipItem).options(selectinload(VipItem.children)).where(VipItem.id == item_id)
+    if lock:
+        # P47 (ADR 0059 C1): the item row `FOR UPDATE`, re-read.
+        stmt = stmt.with_for_update(of=VipItem).execution_options(populate_existing=True)
+    item = (await db.execute(stmt)).scalar_one_or_none()
     if item is not None and not principal.hub_scope_all:
         hubs, visible = await _hubs_and_visible(db, principal)
         if item.area not in _visible_areas(hubs, visible):
@@ -463,10 +534,9 @@ async def update_vip_item(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
 ) -> VipItemResponse:
-    item = await _get_item_or_404(db, item_id, current_user)
-    fields = body.model_fields_set
+    item = await _get_item_or_404(db, item_id, current_user, lock=bool(body.base))
+    fields = body.model_fields_set - {"base"}
     before = _item_state(item)
-
     area = body.area if "area" in fields and body.area is not None else item.area
     pillar = body.pillar if "pillar" in fields and body.pillar is not None else item.pillar
     parent_id = body.parent_id if "parent_id" in fields else item.parent_id
@@ -490,6 +560,21 @@ async def update_vip_item(
     ):
         await _validate_parent(db, parent_id, area, pillar, item)
 
+    # P47 (ADR 0059 C1), after every scope / area check (P47-R01) and before
+    # any write. No entity fallback: the item's link rows can name projects
+    # outside the caller's scope (L-1).
+    await check_base(
+        db,
+        current_user,
+        entity="vip_item",
+        entity_id=item.id,
+        label=item.title,
+        base=body.base,
+        requested={name: getattr(body, name) for name in fields},
+        current=before,
+        refs=field_refs("VipItem", str(item.id)),
+        fallback=False,
+    )
     item.area = area
     item.pillar = pillar
     item.parent_id = parent_id
@@ -545,7 +630,7 @@ async def set_vip_item_projects(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
 ) -> VipItemLinksResponse:
-    item = await _get_item_or_404(db, item_id, current_user)
+    item = await _get_item_or_404(db, item_id, current_user, lock=bool(body.base))
     requested = list(dict.fromkeys(body.project_ids))
 
     found: dict[uuid.UUID, Project] = {}
@@ -586,6 +671,24 @@ async def set_vip_item_projects(
         replaceable = set((await db.execute(visible_stmt)).scalars().all())
     else:
         replaceable = current
+    # P47 (ADR 0059 C1): the links the caller can see must still be `base`.
+    await check_base(
+        db,
+        current_user,
+        entity="vip_item",
+        entity_id=item.id,
+        label=item.title,
+        base=body.base,
+        requested={"project_ids": requested},
+        current={"project_ids": sorted(replaceable, key=str)},
+        refs=_link_refs(
+            item.id,
+            await _visible_link_ids(db, current_user, item.id) if body.base else None,
+        ),
+        # P47-R01 (L-1): no "newest row of the item" fallback; it could name a
+        # link change to a project outside the caller's scope.
+        fallback=False,
+    )
     wanted = set(requested)
     added = sorted(wanted - current, key=str)
     removed = sorted(replaceable - wanted, key=str)

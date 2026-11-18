@@ -21,6 +21,9 @@ export interface StepPinDraft {
   stepName: string;
   start: string;
   end: string;
+  /** P47 (ADR 0059): the served pin when this step was first edited (`base`). */
+  baseStart?: number | null;
+  baseEnd?: number | null;
 }
 
 export function pinKey(projectId: string, stepId: string): string {
@@ -116,12 +119,16 @@ export function draftsToItems(drafts: readonly StepPinDraft[]): StepPinItem[] {
   return drafts.map((d) => {
     const s = d.start.trim();
     const e = d.end.trim();
-    return {
+    const item: StepPinItem = {
       project_id: d.projectId,
       step_template_id: d.stepId,
       manual_start_week: s === '' ? null : Number(s),
       manual_end_week: e === '' ? null : Number(e),
     };
+    if (d.baseStart !== undefined && d.baseEnd !== undefined) {
+      item.base = { manual_start_week: d.baseStart, manual_end_week: d.baseEnd };
+    }
+    return item;
   });
 }
 

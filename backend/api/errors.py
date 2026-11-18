@@ -38,9 +38,15 @@ class CodedHTTPException(HTTPException):
         code: str,
         detail: str | list[dict[str, Any]] | dict[str, Any],
         headers: dict[str, str] | None = None,
+        *,
+        extra: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(status_code=status_code, detail=detail, headers=headers)
         self.code = code
+        #: P47 (ADR 0059): more top-level keys of the error body, e.g.
+        #: `conflicts` on a 409 `EDIT_CONFLICT`. Never replaces `detail` or
+        #: `code`.
+        self.extra = extra
 
 
 def field_error(field: str, msg: str, error_type: str = "value_error") -> dict[str, Any]:
@@ -55,7 +61,7 @@ async def coded_http_exception_handler(request: Request, exc: Exception) -> JSON
     assert isinstance(exc, CodedHTTPException)
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.detail, "code": exc.code},
+        content={**(exc.extra or {}), "detail": exc.detail, "code": exc.code},
         headers=exc.headers,
     )
 

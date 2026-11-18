@@ -505,7 +505,8 @@ describe('Projects page — registration drawer', () => {
     expect(path).toBe(`/projects/${P1}`);
     // Register popup (owner 2026-11-17): the PATCH carries only the identity
     // fields that changed; hub / leader / dates / times go in the register batch.
-    expect(body).toEqual({ name: 'Cooler A2' });
+    // P47 (ADR 0059 C1): with the value the form opened with.
+    expect(body).toEqual({ name: 'Cooler A2', base: { name: 'Cooler A' } });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     await waitFor(() => expect(edit).toHaveFocus());
   });
@@ -657,7 +658,7 @@ describe('Projects page — registration drawer', () => {
     expect(moveApi.moveProjectPriority).toHaveBeenCalledWith(P1, 'P2', 'tok-r');
     await waitFor(() => expect(http.sendWithHeaders).toHaveBeenCalledTimes(1));
     const body = http.sendWithHeaders.mock.calls[0]![2] as Record<string, unknown>;
-    expect(body).toEqual({ external_code: 'X-1' });
+    expect(body).toEqual({ external_code: 'X-1', base: { external_code: null } });
   });
 
   it('P14: No on the priority preview saves nothing and keeps the drawer open with an explanation', async () => {
@@ -890,12 +891,17 @@ describe('Projects page — VIP (ADR 0040)', () => {
     );
     renderWithProviders(<ProjectsPage />);
     await user.click(screen.getByRole('button', { name: 'Make Alpha VIP' }));
-    await waitFor(() => expect(http.send).toHaveBeenCalledWith('PUT', '/projects/a/vip', { is_vip: true }));
+    // P47 (ADR 0059): a pin starts from the opposite value.
+    await waitFor(() =>
+      expect(http.send).toHaveBeenCalledWith('PUT', '/projects/a/vip', { is_vip: true, base: { is_vip: false } }),
+    );
 
     await user.click(screen.getByRole('tab', { name: 'Cards' }));
     const grid = await screen.findByTestId('projects-card-grid');
     await user.click(within(grid).getByRole('button', { name: 'Remove VIP from Bravo' }));
-    await waitFor(() => expect(http.send).toHaveBeenCalledWith('PUT', '/projects/b/vip', { is_vip: false }));
+    await waitFor(() =>
+      expect(http.send).toHaveBeenCalledWith('PUT', '/projects/b/vip', { is_vip: false, base: { is_vip: true } }),
+    );
     const cards = within(grid).getAllByTestId('project-card').map((c) => c.getAttribute('data-project-id'));
     expect(cards).toEqual(['b', 'a']);
   });

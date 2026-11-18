@@ -355,7 +355,7 @@ describe('P21-T05 Matrix tabs', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(mockSend).toHaveBeenCalledWith('POST', '/scenarios/apply', {
       notes: null,
-      priority_scores: [{ project_id: 'alpha', scores: all(1), hard_gates: [] }],
+      priority_scores: [{ project_id: 'alpha', scores: all(1), base: { scores: all(4) } }],
     });
     expect(mockSend.mock.calls.filter((c) => c[1] === '/scenarios/apply')).toHaveLength(1);
     expect(await screen.findByTestId('grid-saved-notice')).toHaveTextContent('Saved 1 project as version 7');

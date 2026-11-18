@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ApiError } from '@/lib/api/client';
+import { EditConflictDismissedError } from '@/lib/api/edit-conflict';
 import { formatDecimal } from '@/lib/format';
 import { useWorkflowStepTemplates } from '@/lib/api/reference';
 import { LAB_REGIONS, type LabRegion } from '@/types/enums';
@@ -163,6 +164,8 @@ function ChamberForm({
         setSubmitError('Your role cannot create or edit chambers.');
       } else if (err instanceof ApiError) {
         setSubmitError(err.detail ?? 'The chamber could not be saved. Please try again.');
+      } else if (err instanceof EditConflictDismissedError) {
+        setSubmitError(err.message);
       } else {
         setSubmitError('The chamber could not be saved. Please try again.');
       }

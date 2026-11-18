@@ -30,6 +30,7 @@ from models.enums import (
 )
 from models.project import canonical_tags
 from schemas.category import CategoryCode, CategoryCodeOut
+from schemas.edit_conflict import EditBase
 
 
 def _distinct_tags(tags: list[ScoringTag]) -> list[ScoringTag]:
@@ -169,6 +170,9 @@ class ProjectUpdateRequest(BaseModel):
     #: ADR 0038: the FULL new tag set (replaces it; `null` is a 422
     #: `NULL_NOT_ALLOWED`). Only a not-set -> set tag pre-fills a score.
     scoring_tags: ScoringTags | None = None
+    #: P47 (ADR 0059): the values the user started from, per changed field
+    #: (`{"status": "In Queue", ...}`). Optional; see `schemas.edit_conflict`.
+    base: EditBase = Field(default_factory=dict)
 
 
 class ProjectRead(BaseModel):
@@ -300,6 +304,8 @@ class PriorityMoveRequest(BaseModel):
     #: a current token the move is applied in-process (`applied`); a stale
     #: one is 409 `PREVIEW_STALE`. Absent: ADR 0015 behaviour, unchanged.
     preview_token: str | None = Field(default=None, min_length=16, max_length=128)
+    #: P47 (ADR 0059): `{"priority": <the priority the user started from>}`.
+    base: EditBase = Field(default_factory=dict)
 
 
 class PriorityPreviewRequest(BaseModel):
@@ -520,6 +526,10 @@ class RegisterEditPatch(BaseModel):
         AfterValidator(_unique_step_codes),
     ] = None
     current_step_code: StepCode | None = None
+    #: P47 (ADR 0059): this row's values the user started from, per changed
+    #: field; `step_exclusions` as `{step_code: excluded}` (or the request's
+    #: own list shape), `current_step_code` as the code served.
+    base: EditBase = Field(default_factory=dict)
 
 
 class RegisterEditsRequest(BaseModel):

@@ -14,6 +14,7 @@ from pydantic_core import PydanticCustomError
 
 from schemas.capacity import YearRemaining
 from schemas.category import EligibilityCode
+from schemas.edit_conflict import EditBase
 
 #: P19-R01 (S19-L3): the request models are strict (CLAUDE.md "Pydantic v2
 #: (strict)"): `{"fte": true}` or `{"fte": "0.5"}` is a 422, not a coerced
@@ -87,6 +88,8 @@ class EngineerUpdateRequest(BaseModel):
     #: P29 (ADR 0042 §5): Admin / Super Admin only (403
     #: `COUNTS_IN_CAPACITY_ADMIN_ONLY` for anyone else, even unchanged).
     counts_in_capacity: bool | None = None
+    #: P47 (ADR 0059): the values the user started from, per changed field.
+    base: EditBase = Field(default_factory=dict)
 
     @field_validator(*NON_NULLABLE_UPDATE_FIELDS, mode="before")
     @classmethod

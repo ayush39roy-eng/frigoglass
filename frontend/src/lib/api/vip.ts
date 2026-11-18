@@ -18,6 +18,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ServedHealth } from '@/components/shared/project-outcome-chips';
 import type { TrackingStatus } from '@/components/shared/tracking-status-meta';
 import { queryKeys } from '@/lib/query-keys';
+import { askEditConflict } from '@/stores/edit-conflict-host';
 import type { HubFilterParams } from '@/stores/hub-filter';
 import type { Id } from '@/types/common';
 import type {
@@ -30,6 +31,7 @@ import type {
 } from '@/types/enums';
 
 import { apiGet, apiSend } from './client';
+import { changedKeys, EditConflictDismissedError, sendEditWithBase, type EditBase } from './edit-conflict';
 
 // ---------------------------------------------------------------------------
 // P12 `/vip-projects` (backend/schemas/vip.py), reconciled 2026-10-10.
@@ -88,6 +90,8 @@ export interface VipProjectsResponse {
 
 export interface VipPinRequest {
   is_vip: boolean;
+  /** P47 (ADR 0059 C1): the value as read of each field sent; `{}` = no check. */
+  base?: EditBase;
 }
 
 export interface VipPinResponse {
@@ -216,10 +220,14 @@ export interface VipItemUpdateRequest {
   highlighted?: boolean;
   parent_id?: Id | null;
   sort_order?: number;
+  /** P47 (ADR 0059 C1): the value as read of each field sent; `{}` = no check. */
+  base?: EditBase;
 }
 
 export interface VipItemLinksRequest {
   project_ids: Id[];
+  /** P47 (ADR 0059 C1): the value as read of each field sent; `{}` = no check. */
+  base?: EditBase;
 }
 
 export function fetchVipBoard(params: HubFilterParams, signal?: AbortSignal): Promise<VipBoardResponse> {
@@ -256,20 +264,40 @@ export function useVipBoard(params: HubFilterParams) {
 
 export type VipItemWrite =
   | { kind: 'create'; body: VipItemCreateRequest }
-  | { kind: 'update'; itemId: string; body: VipItemUpdateRequest }
+  /** P47 (ADR 0059): `original` = the item as read when the edit started; only
+   *  the fields that differ from it are sent, each with its `base`. */
+  | { kind: 'update'; itemId: string; body: VipItemUpdateRequest; original?: object }
   | { kind: 'delete'; itemId: string }
-  | { kind: 'link'; itemId: string; projectIds: string[] };
+  /** P47: `originalProjectIds` = the linked projects as read (`base.project_ids`). */
+  | { kind: 'link'; itemId: string; projectIds: string[]; originalProjectIds?: string[] };
+
+/** A conflict-checked VIP write: the app-wide dialog asks whose value to keep. */
+async function checked(body: object, original: object, send: (withBase: object) => Promise<unknown>): Promise<unknown> {
+  if (Object.keys(body).length === 0) return null;
+  const sent = await sendEditWithBase({ body, original, send, ask: askEditConflict });
+  if (sent.outcome === 'dismissed') throw new EditConflictDismissedError();
+  return sent.outcome === 'saved' ? sent.data : null;
+}
 
 function runVipWrite(write: VipItemWrite): Promise<unknown> {
   switch (write.kind) {
     case 'create':
       return createVipItem(write.body);
-    case 'update':
-      return updateVipItem(write.itemId, write.body);
+    case 'update': {
+      if (!write.original) return updateVipItem(write.itemId, write.body);
+      const original = write.original;
+      const changes = Object.fromEntries(
+        changedKeys(original, write.body).map((k) => [k, (write.body as Record<string, unknown>)[k]]),
+      );
+      return checked(changes, original, (withBase) => updateVipItem(write.itemId, withBase as VipItemUpdateRequest));
+    }
     case 'delete':
       return deleteVipItem(write.itemId);
     case 'link':
-      return setVipItemProjects(write.itemId, write.projectIds);
+      if (!write.originalProjectIds) return setVipItemProjects(write.itemId, write.projectIds);
+      return checked({ project_ids: write.projectIds }, { project_ids: write.originalProjectIds }, (withBase) =>
+        apiSend<unknown>('PUT', `/vip-items/${encodeURIComponent(write.itemId)}/projects`, withBase),
+      );
   }
 }
 
@@ -338,8 +366,11 @@ interface VipPinContext {
 export function useSetProjectVip() {
   const queryClient = useQueryClient();
   return useMutation<VipPinResponse, Error, { projectId: Id; isVip: boolean }, VipPinContext>({
-    mutationFn: ({ projectId, isVip }) =>
-      apiSend<VipPinResponse>('PUT', `/projects/${projectId}/vip`, { is_vip: isVip } satisfies VipPinRequest),
+    // P47 (ADR 0059): the pin starts from the opposite of the asked value.
+    mutationFn: async ({ projectId, isVip }) =>
+      (await checked({ is_vip: isVip } satisfies VipPinRequest, { is_vip: !isVip }, (withBase) =>
+        apiSend<VipPinResponse>('PUT', `/projects/${projectId}/vip`, withBase),
+      )) as VipPinResponse,
     onMutate: async ({ projectId, isVip }) => {
       // An in-flight re-read must not overwrite the optimistic pin.
       await queryClient.cancelQueries({ queryKey: ['priority-matrix'] });

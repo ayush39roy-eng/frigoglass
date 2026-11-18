@@ -2,10 +2,13 @@ import * as React from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
+import { CONFLICT_COPY, editConflicts, keepMineBase, type EditConflict } from '@/lib/api/edit-conflict';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { fetchScheduleRunChanges } from '@/lib/api/priority-move';
 import { queryKeys } from '@/lib/query-keys';
 import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
+import { useEditConflict } from '@/lib/use-edit-conflict';
+import { useProjectConflictFormat } from '@/lib/use-project-conflict-format';
 import { invalidateRunDerivedQueries, useScheduleRunFollow } from '@/lib/use-schedule-run-follow';
 
 import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
@@ -18,6 +21,7 @@ import {
   type RegisterEditEffChange,
   type RegisterEditError,
   type RegisterEditsRequest,
+  type RegisterEditsResponse,
 } from '../api/register-edits';
 
 /**
@@ -64,6 +68,24 @@ export interface RegisterSaveResult {
   message: string | null;
   /** A 403 that names no row: the caller's role cannot write here at all. */
   forbidden: boolean;
+  /** P47 (ADR 0059): the 409 `EDIT_CONFLICT` fields, when the user chose
+   *  "Use theirs" (the caller drops these fields from its edit buffer and
+   *  keeps every other edit) or closed the dialog. Empty otherwise. */
+  conflicts: EditConflict[];
+  conflictChoice: 'theirs' | 'dismissed' | null;
+}
+
+/** "Keep mine" on a batch: each row's `base` takes the values stored now for
+ *  its conflicting fields; the other rows are resent unchanged. */
+export function keepMineEdits(body: RegisterEditsRequest, conflicts: readonly EditConflict[]): RegisterEditsRequest {
+  return {
+    edits: body.edits.map((edit) => {
+      const mine = conflicts.filter((c) => c.id === edit.project_id);
+      if (mine.length === 0 || !edit.base) return edit;
+      // `step_exclusions.<code>` lands in the `{code: bool}` base (keepMineBase).
+      return { ...edit, base: keepMineBase(edit.base, mine) };
+    }),
+  };
 }
 
 /** A register save changes the register, the Dashboard and (after a run)
@@ -78,6 +100,27 @@ function savedText(n: number): string {
   return `Saved ${String(n)} ${n === 1 ? 'project' : 'projects'}.`;
 }
 
+/** A refused save (not a conflict): per-row errors, 403, 429, network… */
+function refusedResult(err: unknown): RegisterSaveResult {
+  const rowErrors = registerEditErrors(err);
+  const isApi = err instanceof ApiError;
+  const forbidden = isApi && err.status === 403 && rowErrors.length === 0;
+  let message: string | null;
+  if (rowErrors.length > 0) {
+    message = isApi && err.code === REGISTER_EDITS_FORBIDDEN ? REGISTER_SAVE_COPY.forbiddenRows : REGISTER_SAVE_COPY.invalid;
+  } else if (isApi && err.status === 429) {
+    message =
+      err.retryAfterSeconds === undefined
+        ? REGISTER_SAVE_COPY.rateLimited
+        : `Too many saves in a row — wait ${String(Math.max(1, err.retryAfterSeconds))} s and save again. Nothing was saved.`;
+  } else if (isApi && err.code === REGISTER_EDITS_INVALID) {
+    message = REGISTER_SAVE_COPY.invalid;
+  } else {
+    message = apiErrorMessage(err, 'The edits could not be saved. Nothing was changed.');
+  }
+  return { ok: false, rowErrors, message, forbidden, conflicts: [], conflictChoice: null };
+}
+
 export function useRegisterSave() {
   const queryClient = useQueryClient();
   const run = useScheduleRunFollow();
@@ -88,40 +131,56 @@ export function useRegisterSave() {
   /** Register popup contract §2.5: the served per-step duration changes of
    *  the last successful Save (shown by the panel, never recomputed). */
   const [effChanges, setEffChanges] = React.useState<readonly RegisterEditEffChange[]>([]);
+  const conflict = useEditConflict(useProjectConflictFormat());
+  const { ask } = conflict;
 
   const save = React.useCallback(
     async (body: RegisterEditsRequest): Promise<RegisterSaveResult> => {
       setFlow({ kind: 'saving' });
       setEffChanges([]);
-      let res;
-      try {
-        res = await saveRegisterEdits(body);
-      } catch (err) {
-        const rowErrors = registerEditErrors(err);
-        const isApi = err instanceof ApiError;
-        const forbidden = isApi && err.status === 403 && rowErrors.length === 0;
-        let message: string | null;
-        if (rowErrors.length > 0) {
-          message = isApi && err.code === REGISTER_EDITS_FORBIDDEN ? REGISTER_SAVE_COPY.forbiddenRows : REGISTER_SAVE_COPY.invalid;
-        } else if (isApi && err.status === 429) {
-          message =
-            err.retryAfterSeconds === undefined
-              ? REGISTER_SAVE_COPY.rateLimited
-              : `Too many saves in a row — wait ${String(Math.max(1, err.retryAfterSeconds))} s and save again. Nothing was saved.`;
-        } else if (isApi && err.code === REGISTER_EDITS_INVALID) {
-          message = REGISTER_SAVE_COPY.invalid;
-        } else {
-          message = apiErrorMessage(err, 'The edits could not be saved. Nothing was changed.');
+      let res: RegisterEditsResponse;
+      let sent = body;
+      for (;;) {
+        try {
+          res = await saveRegisterEdits(sent);
+          break;
+        } catch (err) {
+          const conflicts = editConflicts(err);
+          if (conflicts === null) {
+            // The edit bar shows the message; no floating panel for a refused save.
+            setFlow({ kind: 'idle' });
+            return refusedResult(err);
+          }
+          // P47 (ADR 0059 C2): nothing was written. Ask whose value to keep.
+          const choice = await ask(conflicts, body.edits.length > 1 ? CONFLICT_COPY.batchNote : undefined);
+          if (choice === 'mine') {
+            sent = keepMineEdits(sent, conflicts);
+            continue;
+          }
+          setFlow({ kind: 'idle' });
+          if (choice === 'theirs') {
+            // Reload, so the grid shows the values stored now.
+            invalidateRegisterWrite(queryClient);
+            for (const id of new Set(conflicts.map((c) => c.id))) {
+              void queryClient.invalidateQueries({ queryKey: queryKeys.project(id) });
+              void queryClient.invalidateQueries({ queryKey: queryKeys.projectRegisterSteps(id) });
+            }
+          }
+          return {
+            ok: false,
+            rowErrors: [],
+            message: choice === 'theirs' ? CONFLICT_COPY.batchTheirs : CONFLICT_COPY.dismissed,
+            forbidden: false,
+            conflicts,
+            conflictChoice: choice === 'theirs' ? 'theirs' : 'dismissed',
+          };
         }
-        // The edit bar shows the message; no floating panel for a refused save.
-        setFlow({ kind: 'idle' });
-        return { ok: false, rowErrors, message, forbidden };
       }
 
       invalidateRegisterWrite(queryClient);
       setEffChanges(res.eff_changes ?? []);
       const saved = savedText(res.project_ids.length);
-      const ok: RegisterSaveResult = { ok: true, rowErrors: [], message: null, forbidden: false };
+      const ok: RegisterSaveResult = { ok: true, rowErrors: [], message: null, forbidden: false, conflicts: [], conflictChoice: null };
 
       switch (res.recalc_status) {
         case 'not_needed':
@@ -167,7 +226,7 @@ export function useRegisterSave() {
       });
       return ok;
     },
-    [begin, follow, queryClient, startWatcher],
+    [begin, follow, queryClient, startWatcher, ask],
   );
 
   const close = React.useCallback(() => {
@@ -196,5 +255,9 @@ export function useRegisterSave() {
     saving: flow.kind === 'saving',
     save,
     close,
+    /** P47: the 409 dialog; render once next to the save panel. */
+    conflictDialog: conflict.dialog,
+    /** The conflict dialog is open (an edit is still in progress). */
+    conflictOpen: conflict.open,
   };
 }

@@ -307,6 +307,17 @@ export type DimensionScoreMap = Record<DimensionKey, DimensionScoreValue>;
 export interface PriorityScoreUpdateRequest {
   scores: DimensionScoreMap;
   hard_gates: HardGateReason[];
+  /** P47 (ADR 0059 C1): the value as read of each field sent; `{}` = no check. */
+  base?: PriorityScoreBase;
+}
+
+/** P47-R03 (QA-2): the body actually sent to `PUT /priorities/{id}` and as a
+ *  `/scenarios/apply` row: `hard_gates` only when the gates change (with
+ *  `base.hard_gates`); left out, the stored gates are untouched. */
+export interface PriorityScoreChangeBody {
+  scores: DimensionScoreMap;
+  hard_gates?: HardGateReason[];
+  base?: PriorityScoreBase;
 }
 
 /** `PUT /priorities/{project_id}` response (→ `PriorityScoreRead`, P26 §5).
@@ -442,8 +453,22 @@ export interface ScoringRubricPreview {
  *  `ScenarioPriorityScoreChange`, P26 §5): the same `scores` map as the PUT
  *  (active keys only, omitted = unchanged, null clears) plus `project_id`.
  *  Any non-active key fails the whole batch with a 422. `extra="forbid"`. */
-export interface ScenarioPriorityScoreChange extends PriorityScoreUpdateRequest {
+/** P47 (ADR 0059 C1): a score change's `base`, the values as read when the
+ *  edit started: each dimension the change sends, and the gate list. */
+export interface PriorityScoreBase {
+  scores: DimensionScoreMap;
+  /** Only when the request changes the gate list (P47 gate advisory A4). */
+  hard_gates?: HardGateReason[];
+}
+
+export interface ScenarioPriorityScoreChange {
   project_id: Id;
+  scores: DimensionScoreMap;
+  /** P47-R03 (QA-2): sent only when this change changes the gate list; an
+   *  omitted list leaves the stored gates untouched (`[]` clears them). */
+  hard_gates?: HardGateReason[];
+  /** P47: per row (`lib/score-base.ts`). */
+  base?: PriorityScoreBase;
 }
 
 /** `POST /scenarios/apply` request body (→ `ScenarioApplyRequest`).

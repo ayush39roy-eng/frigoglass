@@ -5,18 +5,21 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import type { EditBase } from '@/lib/api/edit-conflict';
+import type { QueryFreshness } from '@/lib/use-edit-freshness';
 import { queryKeys } from '@/lib/query-keys';
 
 import { createUser, fetchRoles, fetchUsers, retryUnlessAuth, updateUser, type UserListParams } from '../api/users-api';
 import type { UserCreateRequest, UserUpdateRequest } from '../api/types';
 
-export function useUsers(params: UserListParams) {
+export function useUsers(params: UserListParams, freshness?: QueryFreshness) {
   return useQuery({
     // Search + pagination inputs go in the key so a change never serves a stale page.
     queryKey: queryKeys.users({ q: params.q, limit: params.limit ?? 100, offset: params.offset ?? 0 }),
     queryFn: ({ signal }) => fetchUsers(params, { signal }),
     retry: retryUnlessAuth,
     placeholderData: (prev) => prev,
+    ...freshness,
   });
 }
 
@@ -59,7 +62,7 @@ export function useCreateUser() {
 export function useUpdateUser() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, body }: { userId: string; body: UserUpdateRequest }) =>
+    mutationFn: ({ userId, body }: { userId: string; body: UserUpdateRequest & { base?: EditBase } }) =>
       updateUser(userId, body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['users'] });

@@ -10,6 +10,7 @@
  * `*_weeks_calculated`, and the server re-splits a figure (I9, D35-1).
  */
 
+import { snapshotBase, type BaseSnapshots, type EditBase } from '@/lib/api/edit-conflict';
 import type { ProjectStatus } from '@/types/enums';
 
 import type { ProjectFilterRow } from '@/surfaces/dashboard/api/types';
@@ -195,8 +196,64 @@ export function changedProjectIds(drafts: RegisterDrafts, rows: readonly Registe
   return rows.filter((r) => Object.keys(changedFields(drafts[r.project_id], r)).length > 0).map((r) => r.project_id);
 }
 
-/** The ONE batch body: per changed project, only its changed fields. */
-export function buildRegisterEditsBody(drafts: RegisterDrafts, rows: readonly RegisterRow[]): RegisterEditsRequest {
+/** P47 (ADR 0059): the snapshot key of one step's served exclusion flag. */
+export function stepBaseKey(stepCode: string): string {
+  return `step:${stepCode}`;
+}
+
+/**
+ * P47 (ADR 0059 C1): the served values of `row` a `base` snapshot may capture.
+ * A value not served yet (lab flag, hub, steps not loaded) is `undefined`, so
+ * it is captured later, when it is known, never as a guessed `null`.
+ */
+export function registerSnapshotValues(row: RegisterRow): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    ...baseValues(row),
+    hub_id: row.hub_id === undefined || row.hub_id === null ? undefined : row.hub_id,
+    certification_testing_required:
+      row.certification_testing_required === undefined || row.certification_testing_required === null
+        ? undefined
+        : row.certification_testing_required,
+  };
+  for (const [code, on] of Object.entries(row.excluded ?? {})) out[stepBaseKey(code)] = on;
+  return out;
+}
+
+/** The snapshot keys a draft patch touches (its scalars and its steps). */
+export function draftBaseKeys(patch: RegisterDraft): string[] {
+  const keys = Object.keys(patch).filter((k) => k !== 'excluded');
+  for (const code of Object.keys(patch.excluded ?? {})) keys.push(stepBaseKey(code));
+  return keys;
+}
+
+/** The `base` of one batch row: each changed scalar's value as first read,
+ *  and the first-read flag of each step whose exclusion it changes. */
+function registerPatchBase(patch: RegisterEditPatch, row: RegisterRow, snapshots: BaseSnapshots): EditBase {
+  const scalars = Object.keys(patch).filter((k) => k !== 'project_id' && k !== 'step_exclusions' && k !== 'base');
+  const fallback = registerSnapshotValues(row);
+  const base = snapshotBase(snapshots, row.project_id, scalars, fallback);
+  if (patch.step_exclusions) {
+    const steps = snapshotBase(
+      snapshots,
+      row.project_id,
+      patch.step_exclusions.map((e) => stepBaseKey(e.step_code)),
+      fallback,
+    );
+    // The backend's shape: `{code: excluded-as-read}` (conflict field `step_exclusions.<code>`).
+    base.step_exclusions = Object.fromEntries(
+      patch.step_exclusions.map((e) => [e.step_code, steps[stepBaseKey(e.step_code)] ?? false]),
+    );
+  }
+  return base;
+}
+
+/** The ONE batch body: per changed project, only its changed fields, and
+ *  (P47) when `snapshots` is given, the row's `base`. */
+export function buildRegisterEditsBody(
+  drafts: RegisterDrafts,
+  rows: readonly RegisterRow[],
+  snapshots?: BaseSnapshots,
+): RegisterEditsRequest {
   const edits: RegisterEditPatch[] = [];
   for (const row of rows) {
     const changed = changedFields(drafts[row.project_id], row);
@@ -211,7 +268,10 @@ export function buildRegisterEditsBody(drafts: RegisterDrafts, rows: readonly Re
         .sort(([a], [b]) => (order.get(a) ?? Number.MAX_SAFE_INTEGER) - (order.get(b) ?? Number.MAX_SAFE_INTEGER))
         .map(([step_code, step_excluded]) => ({ step_code, step_excluded }));
     }
-    if (Object.keys(patch).length > 1) edits.push(patch);
+    if (Object.keys(patch).length > 1) {
+      if (snapshots) patch.base = registerPatchBase(patch, row, snapshots);
+      edits.push(patch);
+    }
   }
   return { edits };
 }
@@ -234,4 +294,56 @@ export function parseEffortInput(raw: string): number | null | undefined {
   if (!/^\d+(\.\d{1,2})?$/.test(t)) return undefined;
   const n = Number(t);
   return Number.isFinite(n) && n <= 9999.99 ? n : undefined;
+}
+
+/** True for a conflict field that names the step exclusions
+ *  (`step_exclusions.<code>`, or the whole `step_exclusions`). */
+export function isStepConflictField(field: string): boolean {
+  return field === 'step_exclusions' || field.startsWith('step_exclusions.');
+}
+
+/** The step code of a `step_exclusions.<code>` conflict; null for the whole set. */
+function stepConflictCode(field: string): string | null {
+  return field.startsWith('step_exclusions.') ? field.slice('step_exclusions.'.length) : null;
+}
+
+/**
+ * P47 (ADR 0059 C2, "Use theirs"): the draft without the conflicting fields;
+ * every other staged field stays. Step conflicts drop the staged exclusions.
+ */
+export function withoutConflictFields<D extends { excluded?: Readonly<Record<string, boolean>> | undefined }>(
+  draft: D,
+  fields: Iterable<string>,
+): D {
+  const out: Record<string, unknown> = { ...draft };
+  for (const field of fields) {
+    if (!isStepConflictField(field)) {
+      delete out[field];
+      continue;
+    }
+    const code = stepConflictCode(field);
+    const excluded = out.excluded as Record<string, boolean> | undefined;
+    if (code === null || !excluded) {
+      delete out.excluded;
+      continue;
+    }
+    const rest = { ...excluded };
+    delete rest[code];
+    if (Object.keys(rest).length > 0) out.excluded = rest;
+    else delete out.excluded;
+  }
+  return out as D;
+}
+
+/** The snapshot keys to forget after "Use theirs" (re-captured on the next edit). */
+export function conflictBaseKeys(fields: Iterable<string>, draft: RegisterDraft | undefined): string[] {
+  const keys: string[] = [];
+  for (const field of fields) {
+    if (!isStepConflictField(field)) keys.push(field);
+    else {
+      const code = stepConflictCode(field);
+      keys.push(...(code === null ? Object.keys(draft?.excluded ?? {}) : [code]).map(stepBaseKey));
+    }
+  }
+  return keys;
 }

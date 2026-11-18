@@ -6,6 +6,7 @@
  */
 
 import { apiGet, apiSend, ApiError, type ApiRequestOptions } from '@/lib/api/client';
+import type { EditBase } from '@/lib/api/edit-conflict';
 
 import type { RoleRead, UserCreateRequest, UserList, UserRead, UserUpdateRequest } from './types';
 
@@ -32,7 +33,8 @@ export function createUser(body: UserCreateRequest): Promise<UserRead> {
   return apiSend<UserRead>('POST', '/users', body);
 }
 
-export function updateUser(userId: string, body: UserUpdateRequest): Promise<UserRead> {
+/** P47 (ADR 0059 C1): `base` = the starting value of each changed field. */
+export function updateUser(userId: string, body: UserUpdateRequest & { base?: EditBase }): Promise<UserRead> {
   return apiSend<UserRead>('PATCH', `/users/${userId}`, body);
 }
 

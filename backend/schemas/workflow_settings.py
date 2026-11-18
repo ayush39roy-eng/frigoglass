@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from models.enums import HubName, LabRegion, WorkflowStepKind
 from schemas.category import CategoryCodeOut
+from schemas.edit_conflict import EditBase
 
 #: `scheduling.template_timeline` flags (contract P33 C2).
 TemplateFlag = Literal["same_leader_serialised", "anchor_clamped", "gap_ignored_zero_length"]
@@ -121,6 +122,10 @@ class StepPrecedenceUpdate(BaseModel):
     step_id: str = Field(min_length=1, max_length=10)
     kind: WorkflowStepKind
     predecessor_ids: list[str] = Field(max_length=14)
+    #: P47 (ADR 0059): this step's `{"kind", "predecessor_ids"}` as the user
+    #: read them. Optional; a step whose submitted values equal the stored
+    #: ones is never checked.
+    base: EditBase = Field(default_factory=dict)
 
 
 class StepsUpdateRequest(BaseModel):
@@ -143,6 +148,8 @@ class HubCalendarUpdateRequest(BaseModel):
     medical_leave_days: float = Field(ge=0, le=366)
     casual_leave_days: float = Field(ge=0, le=366)
     annual_leave_days: float = Field(ge=0, le=366)
+    #: P47 (ADR 0059): the five fields as the user read them. Optional.
+    base: EditBase = Field(default_factory=dict)
 
 
 class ChamberSettingUpdateRequest(BaseModel):
@@ -158,6 +165,8 @@ class ChamberSettingUpdateRequest(BaseModel):
     maintenance_weeks: float | None = Field(default=None, ge=0, le=52)
     breakdown_weeks: float | None = Field(default=None, ge=0, le=52)
     calibration_weeks: float | None = Field(default=None, ge=0, le=52)
+    #: P47 (ADR 0059): the values the user started from, per changed field.
+    base: EditBase = Field(default_factory=dict)
 
 
 # --- P13-T16: previews (docs/API_CONTRACT_P13.md §5) ---------------------------

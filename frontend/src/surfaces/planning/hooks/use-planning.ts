@@ -31,6 +31,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
+import type { EditBase } from '@/lib/api/edit-conflict';
+import type { QueryFreshness } from '@/lib/use-edit-freshness';
 import { queryKeys } from '@/lib/query-keys';
 
 import {
@@ -87,7 +89,12 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
 
 // --- Engineers ---
 
-export function useEngineerList(hubIds: readonly string[] | undefined, status: EngineerStatusFilter = 'active') {
+export function useEngineerList(
+  hubIds: readonly string[] | undefined,
+  status: EngineerStatusFilter = 'active',
+  /** P47 (ADR 0059): focus refetch + 60 s poll while nobody edits. */
+  freshness?: QueryFreshness,
+) {
   return useQuery({
     // `hubIds` is a user-facing filter — part of the key (the P4-T04 review
     // lesson on stale hub-scoped caches); multi-select, sorted in the key.
@@ -97,6 +104,7 @@ export function useEngineerList(hubIds: readonly string[] | undefined, status: E
     queryFn: ({ signal }) => fetchEngineers(hubIds, { signal }, status),
     retry: retryUnlessAuth,
     placeholderData: (prev) => prev,
+    ...freshness,
   });
 }
 
@@ -126,13 +134,13 @@ export function useCreateEngineer() {
 export function useUpdateEngineer() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ engineerId, body }: { engineerId: string; body: EngineerUpdateRequest }) =>
+    mutationFn: ({ engineerId, body }: { engineerId: string; body: EngineerUpdateRequest & { base?: EditBase } }) =>
       updateEngineer(engineerId, body),
     onMutate: async ({ engineerId, body }) => {
       await queryClient.cancelQueries({ queryKey: ['engineers'] });
       const previous = queryClient.getQueriesData<EngineerRead[]>({ queryKey: ['engineers'] });
       queryClient.setQueriesData<EngineerRead[]>({ queryKey: ['engineers'] }, (rows) =>
-        rows?.map((r) => (r.id === engineerId ? { ...r, ...stripUndefined(body) } : r)),
+        rows?.map((r) => (r.id === engineerId ? { ...r, ...stripUndefined(withoutBase(body)) } : r)),
       );
       return { previous };
     },
@@ -141,6 +149,12 @@ export function useUpdateEngineer() {
     },
     onSettled: () => invalidateEngineerCapacityKeys(queryClient),
   });
+}
+
+/** P47: the optimistic patch writes the edited inputs only, never `base`. */
+function withoutBase<T extends { base?: EditBase }>(body: T): Omit<T, 'base'> {
+  const { base: _base, ...rest } = body;
+  return rest;
 }
 
 function stripUndefined<T extends object>(body: T): Partial<T> {
@@ -198,11 +212,12 @@ export function useReactivateEngineer() {
 
 // --- Chambers ---
 
-export function useChamberList() {
+export function useChamberList(freshness?: QueryFreshness) {
   return useQuery({
     queryKey: queryKeys.chambers(),
     queryFn: ({ signal }) => fetchChambers({ signal }),
     retry: retryUnlessAuth,
+    ...freshness,
   });
 }
 
@@ -226,13 +241,13 @@ export function useCreateChamber() {
 export function useUpdateChamber() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ chamberId, body }: { chamberId: string; body: ChamberUpdateRequest }) =>
+    mutationFn: ({ chamberId, body }: { chamberId: string; body: ChamberUpdateRequest & { base?: EditBase } }) =>
       updateChamber(chamberId, body),
     onMutate: async ({ chamberId, body }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.chambers() });
       const previous = queryClient.getQueryData<ChamberRead[]>(queryKeys.chambers());
       queryClient.setQueryData<ChamberRead[]>(queryKeys.chambers(), (rows) =>
-        rows?.map((r) => (r.id === chamberId ? { ...r, ...stripUndefined(body) } : r)),
+        rows?.map((r) => (r.id === chamberId ? { ...r, ...stripUndefined(withoutBase(body)) } : r)),
       );
       return { previous };
     },

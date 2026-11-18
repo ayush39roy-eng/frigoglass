@@ -9,6 +9,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
+import type { QueryFreshness } from '@/lib/use-edit-freshness';
 import { queryKeys, sortedKeyList } from '@/lib/query-keys';
 import { useCurrencyRates } from '@/lib/api/reference';
 import type {
@@ -40,7 +41,7 @@ import {
 } from '../api/matrix-api';
 import type {
   MatrixCurrencyCode,
-  PriorityScoreUpdateRequest,
+  PriorityScoreChangeBody,
   ScenarioApplyRequest,
   ScoringRubricPreviewRequest,
   ScoringRubricUpdateRequest,
@@ -68,7 +69,11 @@ export interface UseMatrixParams {
   q?: string | undefined;
 }
 
-export function usePriorityMatrix(params: UseMatrixParams) {
+export function usePriorityMatrix(
+  params: UseMatrixParams,
+  /** P47 (ADR 0059): focus refetch + 60 s poll while nobody edits the grid. */
+  freshness?: QueryFreshness,
+) {
   const query: MatrixQueryParams = {
     currency: params.currency,
     hubId: params.hubId,
@@ -99,6 +104,7 @@ export function usePriorityMatrix(params: UseMatrixParams) {
     queryFn: ({ signal }) => fetchPriorityMatrix(query, { signal }),
     retry: retryUnlessAuth,
     placeholderData: (prev) => prev,
+    ...freshness,
   });
 }
 
@@ -135,7 +141,7 @@ export function invalidateScoreReaders(queryClient: QueryClient, projectId: stri
 export function useUpdatePriorityScore() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ projectId, body }: { projectId: string; body: PriorityScoreUpdateRequest }) =>
+    mutationFn: ({ projectId, body }: { projectId: string; body: PriorityScoreChangeBody }) =>
       updatePriorityScore(projectId, body),
     onSuccess: (_data, { projectId }) => {
       invalidateScoreReaders(queryClient, projectId);

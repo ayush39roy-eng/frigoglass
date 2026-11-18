@@ -12,6 +12,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from models.enums import CurrencyCode
+from schemas.edit_conflict import EditBase
 
 
 class CurrencyRateRead(BaseModel):
@@ -68,3 +69,5 @@ class CurrencyRateUpdateRequest(BaseModel):
         allow_inf_nan=False,
         description="New rate: multiply a EUR amount by this to get the given currency.",
     )
+    #: P47 (ADR 0059): `{"rate_to_eur": <the rate the user read, or null>}`.
+    base: EditBase = Field(default_factory=dict)

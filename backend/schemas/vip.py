@@ -5,10 +5,11 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from models.enums import HubName, ProjectPriority, WorkflowStepStatus
 from schemas.category import CategoryCodeOut
+from schemas.edit_conflict import EditBase
 from services.project_cards import CardHealth
 from services.tracking import TrackingStatus
 
@@ -68,6 +69,8 @@ class VipPinRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     is_vip: bool
+    #: P47 (ADR 0059): `{"is_vip": <bool as the user read it>}`. Optional.
+    base: EditBase = Field(default_factory=dict)
 
 
 class VipPinResponse(BaseModel):

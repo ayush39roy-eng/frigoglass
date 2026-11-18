@@ -12,10 +12,20 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ApiError } from '@/lib/api/client';
+import {
+  CONFLICT_COPY,
+  conflictLeafField,
+  editConflicts,
+  keepMineBase,
+  pickBase,
+  type EditBase,
+} from '@/lib/api/edit-conflict';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import { formatPlanWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { useEditConflict } from '@/lib/use-edit-conflict';
+import { useEditSession } from '@/stores/edit-session';
 import { stageStatusLabel, WORKFLOW_STEP_STATUSES, type WorkflowStepStatus } from '@/types/enums';
 
 import type { StagePatchRequest, WorkspaceStage } from '../api/types';
@@ -52,6 +62,16 @@ function sameDraft(a: StageDraft, b: StageDraft): boolean {
   );
 }
 
+/** A blank hold reason and null are the same "unset". */
+function normStage(v: unknown): unknown {
+  return v === '' || v === undefined ? null : v;
+}
+
+/** The keys of `stored` that are fields of `draft`. */
+function pick(stored: Record<string, unknown>, draft: StageDraft): Partial<StageDraft> {
+  return Object.fromEntries(Object.entries(stored).filter(([k]) => k in draft)) as Partial<StageDraft>;
+}
+
 function numOrNull(raw: string): number | null {
   if (raw.trim() === '') return null;
   const n = Number(raw);
@@ -75,6 +95,10 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
   const [touched, setTouched] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [serverError, setServerError] = React.useState<string | null>(null);
+  /** P47 (ADR 0059): the served values when the user started editing this
+   *  stage: the `base` of the six fields the PATCH writes. */
+  const [startDraft, setStartDraft] = React.useState<StageDraft | null>(null);
+  const conflict = useEditConflict();
 
   // Adopt the server's copy after a save (or a refetch) unless mid-edit.
   const serverDraft = draftOf(stage);
@@ -91,9 +115,11 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
   const label = `${stage.step_id.slice(-1)}. ${stage.name}`;
 
   const update = (next: StageDraft) => {
+    if (!touched) setStartDraft(serverDraft);
     setTouched(true);
     setDraft(next);
   };
+  useEditSession(touched && dirty);
 
   if (stage.skipped) {
     return (
@@ -133,16 +159,56 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
   const save = async () => {
     setServerError(null);
     setSaving(true);
-    try {
-      await onSave(stage.step_id, {
-        status: draft.status,
-        percent_complete: draft.percent_complete,
-        actual_start_week: draft.actual_start_week,
-        actual_end_week: draft.actual_end_week,
-        remaining_weeks_override: draft.remaining_weeks_override,
-        blocked_reason: draft.status === 'Blocked' ? (draft.blocked_reason ?? '').trim() : null,
-      });
+    const full: Required<Omit<StagePatchRequest, 'base'>> = {
+      status: draft.status,
+      percent_complete: draft.percent_complete,
+      actual_start_week: draft.actual_start_week,
+      actual_end_week: draft.actual_end_week,
+      remaining_weeks_override: draft.remaining_weeks_override,
+      blocked_reason: draft.status === 'Blocked' ? (draft.blocked_reason ?? '').trim() : null,
+    };
+    // P47-R03 (QA-1): only the fields that differ from what the edit started
+    // from, each with its own `base`; a field left alone is never written, so
+    // another user's newer value there is kept.
+    const read = startDraft ?? serverDraft;
+    const readValues: Record<string, unknown> = { ...read, blocked_reason: read.blocked_reason ?? null };
+    const body: StagePatchRequest = Object.fromEntries(
+      Object.entries(full).filter(([k, v]) => normStage(v) !== normStage(readValues[k])),
+    );
+    let base: EditBase = pickBase(readValues, Object.keys(body));
+    if (Object.keys(body).length === 0) {
+      setSaving(false);
       setTouched(false);
+      return;
+    }
+    try {
+      for (;;) {
+        try {
+          await onSave(stage.step_id, { ...body, base });
+          setTouched(false);
+          setStartDraft(null);
+          return;
+        } catch (err) {
+          const conflicts = editConflicts(err);
+          if (conflicts === null) throw err;
+          const choice = await conflict.ask(conflicts);
+          if (choice === 'mine') {
+            base = keepMineBase(base, conflicts);
+            continue;
+          }
+          if (choice === 'theirs') {
+            // Drop my value for the conflicting fields only; the rest of the
+            // row's edit stays, unsaved, and now starts from the stored values.
+            const stored: Record<string, unknown> = {};
+            // Stage conflicts are keyed `<step_id>.<field>`.
+            for (const c of conflicts) stored[conflictLeafField(c.field)] = c.current_value;
+            setDraft((d) => ({ ...d, ...pick(stored, d) }));
+            setStartDraft((s) => ({ ...(s ?? serverDraft), ...pick(stored, s ?? serverDraft) }));
+          }
+          setServerError(choice === 'theirs' ? CONFLICT_COPY.theirsKept : CONFLICT_COPY.dismissed);
+          return;
+        }
+      }
     } catch (err) {
       setServerError(serverFieldErrors(err));
     } finally {
@@ -152,6 +218,7 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
 
   return (
     <li className="space-y-2 border-b border-border px-3 py-2.5 last:border-0" data-testid={`stage-${stage.step_id}`}>
+      {conflict.dialog}
       <div className="flex flex-wrap items-center gap-2">
         <span className="w-6 font-mono text-2xs text-text-muted">{stage.step_id.slice(-1)}</span>
         <StepKindBadge kind={stage.kind} compact />

@@ -38,11 +38,17 @@ function same(a: unknown, b: unknown): boolean {
   return norm(a) === norm(b);
 }
 
-export function identityChanges(body: Partial<ProjectCreateRequest>, project: ProjectRead): ProjectUpdateRequest {
+export function identityChanges(
+  body: Partial<ProjectCreateRequest>,
+  project: ProjectRead,
+  /** P47: the workspace Details form PATCHes every field it changed, the
+   *  register ones included (`false`). */
+  skipRegisterKeys = true,
+): ProjectUpdateRequest {
   const out: Record<string, unknown> = {};
   const served = project as unknown as Record<string, unknown>;
   for (const [key, value] of Object.entries(body)) {
-    if (SKIP.has(key) || value === undefined) continue;
+    if ((skipRegisterKeys && SKIP.has(key)) || value === undefined) continue;
     if (!same(value, served[key])) out[key] = value;
   }
   return out as ProjectUpdateRequest;

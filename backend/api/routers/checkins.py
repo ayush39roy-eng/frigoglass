@@ -75,6 +75,7 @@ from schemas.checkin import (
 )
 from services.active_run import get_active_run
 from services.checkin import CheckInAccess, candidate_filter, resolve_access, visible_stages
+from services.edit_conflict import FieldConflict, raise_edit_conflict, step_conflicts
 from services.hub_scope import global_hub_filter
 from services.notifications import generate_stage_blocked_notifications
 from services.plan_clock import PlanClock, get_plan_clock
@@ -201,6 +202,10 @@ def _due_stage(stage: DueStage, can_check_in: bool) -> CheckInDueStage:
 
 
 # --- POST /check-ins ------------------------------------------------------------------
+
+
+#: P47: the entry fields a person sets (the weeks are server-filled).
+_CHECKIN_BASE_FIELDS = ("status", "percent_complete", "blocked_reason")
 
 
 def _blank_to_none(value: str | None) -> str | None:
@@ -397,6 +402,27 @@ async def submit_check_ins(
                 "errors": [e.model_dump() for e in errors],
             },
         )
+
+    # P47 (ADR 0059 C1): under the project row locks, before any write: an
+    # entry whose stage no longer holds its `base` refuses the whole batch
+    # (409 `EDIT_CONFLICT`); nothing is stored, marked stale or dispatched.
+    edit_conflicts: list[FieldConflict] = []
+    for item in planned:
+        if item.entry.base:
+            filled = _server_filled(item.entry, item.row, clock.week)
+            edit_conflicts.extend(
+                step_conflicts(
+                    project_id=item.project.id,
+                    project_name=item.project.name,
+                    hub_id=item.project.hub_id,
+                    step_id=item.row.step_template_id,
+                    step_row_id=item.row.id,
+                    base=item.entry.base,
+                    requested={k: filled[k] for k in _CHECKIN_BASE_FIELDS},
+                    current={k: getattr(item.row, k) for k in _CHECKIN_BASE_FIELDS},
+                )
+            )
+    await raise_edit_conflict(db, current_user, edit_conflicts)
 
     # P37-T04: one calendar week for every stamp of this batch (I40).
     week = clock.week

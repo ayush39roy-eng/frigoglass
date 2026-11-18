@@ -13,6 +13,7 @@
  * current-step select.
  */
 
+import type { EditBase } from '@/lib/api/edit-conflict';
 import type { ProjectStatus } from '@/types/enums';
 
 import type { ProjectRead } from '@/surfaces/registration/api/types';
@@ -206,4 +207,19 @@ export function projectStepLock(project: { frozen: boolean; status: ProjectStatu
   if (project.frozen) return FROZEN_LOCK;
   if (project.status === 'Cancelled' || project.status === 'Commercialized') return 'project closed';
   return null;
+}
+
+/** P47 (ADR 0059 C1): the popup patch's `base`, from the values the popup
+ *  showed when the user started editing (`start`): each changed scalar, and
+ *  the served flag of each step whose exclusion it changes. */
+export function popupPatchBase(patch: RegisterEditPatch, start: PopupBase): EditBase {
+  const base: EditBase = {};
+  const src = start as unknown as Record<string, unknown>;
+  for (const f of POPUP_SCALAR_FIELDS) if (f in patch) base[f] = src[f] ?? null;
+  if (patch.step_exclusions) {
+    base.step_exclusions = Object.fromEntries(
+      patch.step_exclusions.map((e) => [e.step_code, start.excluded[e.step_code] ?? false]),
+    );
+  }
+  return base;
 }

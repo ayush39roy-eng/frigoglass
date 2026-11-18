@@ -91,6 +91,7 @@ from api.query_params import (
     StatusListQuery,
     TypeListQuery,
 )
+from api.routers.projects import project_read_for
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
@@ -119,6 +120,7 @@ from schemas.step_pin import StepPinsRefusal, StepPinsRequest, StepPinsResponse
 from services.active_run import slip_weeks, step_kinds_for_run
 from services.audit_helpers import project_audit_state
 from services.category_type_filter import any_of, category_type_filter
+from services.edit_conflict import check_base, field_refs
 from services.hub_scope import (
     global_hub_filter,
     hub_scope_filter,
@@ -728,7 +730,7 @@ async def toggle_freeze(
     body: FreezeToggleRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
-) -> Project:
+) -> ProjectRead:
     """Freeze toggle, per `docs/PROJECT_AND_STACK.md` §2 ("A freeze toggle
     per project. Locks `actual_start`, excludes the project from
     re-scheduling"). Setting `frozen=True` without `actual_start_week`
@@ -745,6 +747,42 @@ async def toggle_freeze(
     project = result.scalar_one_or_none()
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    if body.base:
+        # P47 (ADR 0059 C1): lock and re-read the row, then compare `base`.
+        # An unfreeze may re-copy the template (OR-5), so the category's
+        # FOR SHARE comes before the row lock, as below.
+        if not body.frozen:
+            await share_lock_categories(db, [project.category])
+        project = (
+            await db.execute(
+                stmt.with_for_update().execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if project is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+        if project.frozen and not body.frozen and not can_write_pins(current_user):
+            # P47-R01 (M-1): the unfreeze permission (same 403 as below)
+            # before the comparison.
+            raise CodedHTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "UNFREEZE_REQUIRES_ADMIN",
+                "Only an Admin or Super Admin can unfreeze a project.",
+            )
+        requested: dict[str, object] = {"frozen": body.frozen}
+        if body.actual_start_week is not None:
+            requested["actual_start_week"] = body.actual_start_week
+        await check_base(
+            db,
+            current_user,
+            entity="project",
+            entity_id=project.id,
+            label=project.name,
+            base=body.base,
+            requested=requested,
+            current={"frozen": project.frozen, "actual_start_week": project.actual_start_week},
+            refs=field_refs("Project", str(project.id)),
+            hub_id=project.hub_id,
+        )
 
     if body.frozen and body.actual_start_week is None and project.actual_start_week is None:
         raise HTTPException(
@@ -822,7 +860,8 @@ async def toggle_freeze(
     )
     await db.commit()
     await db.refresh(project)
-    return project
+    # P47-R01 (M-2): financial fields only for Project Registration READ.
+    return project_read_for(project, current_user)
 
 
 @router.put(

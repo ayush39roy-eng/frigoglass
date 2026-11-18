@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ApiError } from '@/lib/api/client';
+import { EditConflictDismissedError } from '@/lib/api/edit-conflict';
 import type { Hub } from '@/lib/api/reference';
 import { capacityHubsOnly, joinNames, memberHubsByCapacityHub } from '@/lib/hub-labels';
 import { useCategoryCatalogSnapshot } from '@/lib/category-catalog';
@@ -151,7 +152,9 @@ function EngineerForm({
             ? 'Your role cannot create or edit engineers.'
             : err instanceof ApiError
               ? (err.detail ?? 'The name could not be saved. Please try again.')
-              : 'The name could not be saved. Please try again.',
+              : err instanceof EditConflictDismissedError
+                ? err.message
+                : 'The name could not be saved. Please try again.',
         );
       }
       return;
@@ -174,6 +177,8 @@ function EngineerForm({
         setSubmitError('Your role cannot create or edit engineers.');
       } else if (err instanceof ApiError) {
         setSubmitError(err.detail ?? 'The engineer could not be saved. Please try again.');
+      } else if (err instanceof EditConflictDismissedError) {
+        setSubmitError(err.message);
       } else {
         setSubmitError('The engineer could not be saved. Please try again.');
       }

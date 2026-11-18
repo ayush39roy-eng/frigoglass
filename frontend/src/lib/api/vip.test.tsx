@@ -50,7 +50,8 @@ describe('useSetProjectVip (P34-T02 VIP star fix)', () => {
     // Non-row entries untouched; other rows untouched.
     expect(client.getQueryData(DIST_KEY)).toEqual({ total_projects: 2 });
     expect(vipOf(client, 'p2')).toBe(true);
-    expect(send).toHaveBeenCalledWith('PUT', '/projects/p1/vip', { is_vip: true });
+    // P47 (ADR 0059): the pin starts from the opposite value.
+    expect(send).toHaveBeenCalledWith('PUT', '/projects/p1/vip', { is_vip: true, base: { is_vip: false } });
     expect(invalidate).not.toHaveBeenCalled();
 
     await act(async () => {

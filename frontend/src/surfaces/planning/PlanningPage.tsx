@@ -12,7 +12,11 @@ import { MultiSelectDropdown } from '@/components/shared/multi-select-dropdown';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
+import { changedKeys, EditConflictDismissedError, sendEditWithBase } from '@/lib/api/edit-conflict';
 import { apiErrorMessage } from '@/lib/api/error-messages';
+import { useEditConflict } from '@/lib/use-edit-conflict';
+import { editFreshness } from '@/lib/use-edit-freshness';
+import { useAnyEditInProgress, useEditSession } from '@/stores/edit-session';
 import { isSuperAdminOnlyError, SUPER_ADMIN_ONLY_MESSAGE } from '@/lib/auth/super-admin';
 import { useHubs, useWorkflowStepTemplates } from '@/lib/api/reference';
 import { hubPickerLabel } from '@/lib/hub-labels';
@@ -114,11 +118,17 @@ export default function PlanningPage(): React.JSX.Element {
   const [defaultRegion, setDefaultRegion] = React.useState<LabRegion | undefined>(undefined);
 
   const hubsQuery = useHubs();
-  const engineerListQuery = useEngineerList(hubIds, engineerStatus);
+  // P47 (ADR 0059): the rosters refetch on focus and every 60 s while no
+  // card, form or dialog is editing.
+  useEditSession(engineerFormOpen || chamberFormOpen);
+  const freshness = editFreshness(useAnyEditInProgress());
+  const conflict = useEditConflict();
+  const askConflict = conflict.ask;
+  const engineerListQuery = useEngineerList(hubIds, engineerStatus, freshness);
   // The Overview always lists every visible engineer (same key as "All hubs"),
   // narrowed by the same Show filter (P38: active by default).
-  const allEngineersQuery = useEngineerList(undefined, engineerStatus);
-  const chamberListQuery = useChamberList();
+  const allEngineersQuery = useEngineerList(undefined, engineerStatus, freshness);
+  const chamberListQuery = useChamberList(freshness);
   const activeRunQuery = useActiveScheduleRun(true);
   const summaryQuery = useCapacitySummary();
   const templatesQuery = useWorkflowStepTemplates();
@@ -178,7 +188,19 @@ export default function PlanningPage(): React.JSX.Element {
         if (engineerFormMode === 'create') {
           await createEngineerMut.mutateAsync(body as EngineerCreateRequest);
         } else if (editEngineer) {
-          await updateEngineerMut.mutateAsync({ engineerId: editEngineer.id, body });
+          // P47 (ADR 0059): only the changed fields, each with the value the
+          // form opened with.
+          const changes = Object.fromEntries(
+            changedKeys(editEngineer, body).map((k) => [k, (body as Record<string, unknown>)[k]]),
+          ) as EngineerUpdateRequest;
+          if (Object.keys(changes).length === 0) return;
+          const sent = await sendEditWithBase({
+            body: changes,
+            original: editEngineer,
+            send: (withBase) => updateEngineerMut.mutateAsync({ engineerId: editEngineer.id, body: withBase }),
+            ask: askConflict,
+          });
+          if (sent.outcome === 'dismissed') throw new EditConflictDismissedError();
         }
       } catch (err) {
         if (err instanceof ApiError && err.isForbidden) {
@@ -188,7 +210,7 @@ export default function PlanningPage(): React.JSX.Element {
         throw err;
       }
     },
-    [engineerFormMode, editEngineer, createEngineerMut, updateEngineerMut, handleForbidden],
+    [engineerFormMode, editEngineer, createEngineerMut, updateEngineerMut, handleForbidden, askConflict],
   );
   const handleReactivateConfirm = React.useCallback(async () => {
     if (!reactivateTarget) return;
@@ -240,7 +262,17 @@ export default function PlanningPage(): React.JSX.Element {
         if (chamberFormMode === 'create') {
           await createChamberMut.mutateAsync(body);
         } else if (editChamber) {
-          await updateChamberMut.mutateAsync({ chamberId: editChamber.id, body });
+          const changes = Object.fromEntries(
+            changedKeys(editChamber, body).map((k) => [k, (body as unknown as Record<string, unknown>)[k]]),
+          ) as ChamberUpdateRequest;
+          if (Object.keys(changes).length === 0) return;
+          const sent = await sendEditWithBase({
+            body: changes,
+            original: editChamber,
+            send: (withBase) => updateChamberMut.mutateAsync({ chamberId: editChamber.id, body: withBase }),
+            ask: askConflict,
+          });
+          if (sent.outcome === 'dismissed') throw new EditConflictDismissedError();
         }
       } catch (err) {
         if (err instanceof ApiError && err.isForbidden) {
@@ -250,7 +282,7 @@ export default function PlanningPage(): React.JSX.Element {
         throw err;
       }
     },
-    [chamberFormMode, editChamber, createChamberMut, updateChamberMut, handleForbidden],
+    [chamberFormMode, editChamber, createChamberMut, updateChamberMut, handleForbidden, askConflict],
   );
   const handleDeleteChamberConfirm = React.useCallback(async () => {
     if (!deleteChamberTarget) return;
@@ -360,6 +392,7 @@ export default function PlanningPage(): React.JSX.Element {
   return (
     <>
       <OverviewLeaveGuard />
+      {conflict.dialog}
       <PageHeader
         title={TITLE}
         description={DESCRIPTION}

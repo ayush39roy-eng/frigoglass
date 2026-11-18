@@ -28,7 +28,7 @@ services:
     headers:
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; script-src 'self' 'sha256-V0ZiTxQfDEJo9pOlp5hFZbHboxfD1edEal3o2vpOkMI='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://frigoglass-hu6f.onrender.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+        value: "default-src 'self'; script-src 'self' 'sha256-npULhkKIdZ+ZW0WZwHOiuDnuOVpzRUKxfs6dNhlZCXE='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://frigoglass-hu6f.onrender.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
       - path: /*
         name: X-Frame-Options
         value: DENY

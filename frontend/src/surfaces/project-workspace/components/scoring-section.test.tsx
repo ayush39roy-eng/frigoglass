@@ -88,7 +88,8 @@ describe('Workspace scoring section — P25 capacity fill', () => {
     await user.click(screen.getByRole('button', { name: 'Save scores' }));
     expect(send).toHaveBeenCalledWith('PUT', '/priorities/p1', {
       scores: { strategic_project: 5, new_options: null },
-      hard_gates: [],
+      // P47 (ADR 0059 C1): the scores the edit started from, and the gates.
+      base: { scores: { strategic_project: 3, new_options: 3 } },
     });
   });
 
@@ -111,6 +112,9 @@ describe('Workspace scoring section — P25 capacity fill', () => {
     await user.click(screen.getByRole('button', { name: 'Edit scores' }));
     await user.selectOptions(screen.getByLabelText('New Customer'), '1');
     await user.click(screen.getByRole('button', { name: 'Save scores' }));
-    expect(send).toHaveBeenCalledWith('PUT', '/priorities/p1', { scores: { new_customer: 1 }, hard_gates: [] });
+    expect(send).toHaveBeenCalledWith('PUT', '/priorities/p1', {
+      scores: { new_customer: 1 },
+      base: { scores: { new_customer: 5 } },
+    });
   });
 });

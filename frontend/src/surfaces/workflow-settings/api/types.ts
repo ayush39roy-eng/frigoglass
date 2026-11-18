@@ -3,6 +3,7 @@
 // backend (P9-T03); reconciled against the regenerated OpenAPI in the P9 gate
 // (P3-T07 contract test). Same convention as every per-surface `api/types.ts`.
 
+import type { EditBase } from '@/lib/api/edit-conflict';
 import type { Category } from '@/lib/category-catalog';
 import type { RecalcStatus } from '@/lib/api/priority-move';
 import type {
@@ -98,7 +99,8 @@ export interface WorkflowSettings {
 
 /** `PUT /workflow-settings/steps/{workflow_id}` — all 14 steps. */
 export interface StepsUpdateRequest {
-  steps: { step_id: string; kind: WorkflowStepKind; predecessor_ids: string[] }[];
+  /** P47 (ADR 0059 C1): each step may carry `base` = `{kind, predecessor_ids}` as read. */
+  steps: { step_id: string; kind: WorkflowStepKind; predecessor_ids: string[]; base?: EditBase }[];
 }
 
 /** `PUT /workflow-settings/hub-calendars/{hub_id}` — the five editable fields. */
@@ -108,6 +110,8 @@ export interface HubCalendarUpdateRequest {
   medical_leave_days: number;
   casual_leave_days: number;
   annual_leave_days: number;
+  /** P47 (ADR 0059 C1): the value as read of each field sent; `{}` = no check. */
+  base?: EditBase;
 }
 
 /** `PUT /workflow-settings/chambers/{chamber_id}` — any subset. */
@@ -117,6 +121,8 @@ export interface ChamberSettingUpdateRequest {
   maintenance_weeks?: number;
   breakdown_weeks?: number;
   calibration_weeks?: number;
+  /** P47 (ADR 0059 C1): the value as read of each field sent; `{}` = no check. */
+  base?: EditBase;
 }
 
 /** A successful PUT: the full `GET` payload plus the `X-Schedule-Stale-Count` header. */

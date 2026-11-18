@@ -27,6 +27,8 @@ import { formatInteger } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
+import { captureBase, forgetBase, type BaseSnapshots } from '@/lib/api/edit-conflict';
+import { editFreshness } from '@/lib/use-edit-freshness';
 import { useHubFilter } from '@/stores/hub-filter';
 import { usePermission, useSessionStore } from '@/stores/session';
 import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
@@ -74,6 +76,11 @@ import { HIDEABLE_COLUMNS } from './lib/columns';
 import {
   buildRegisterEditsBody,
   changedProjectIds,
+  conflictBaseKeys,
+  draftBaseKeys,
+  registerSnapshotValues,
+  stepBaseKey,
+  withoutConflictFields,
   dropDraftExclusions,
   fieldChanged,
   setDraftBulk,
@@ -220,7 +227,17 @@ export default function ProjectsPage(): React.JSX.Element {
     return next;
   }, [filters, hubIds, regions, debouncedSearch, sort, chips.categories, chips.types]);
 
-  const query = useDashboardProjects(params);
+  /** Rows in inline edit (their "Edit" pressed, not yet "Done"). */
+  const [editingIds, setEditingIds] = React.useState<ReadonlySet<string>>(() => new Set());
+  const [drafts, setDrafts] = React.useState<RegisterDrafts>({});
+  /** P47 (ADR 0059): the values each row's edit started from (`base`),
+   *  captured per field the first time it is changed. */
+  const [editBases, setEditBases] = React.useState<BaseSnapshots>({});
+  // P47: refetch on focus and every 60 s, but never while a row is in edit,
+  // holds a draft or the popup is open, so a refetch never replaces a draft's
+  // served values.
+  const editInProgress = editingIds.size > 0 || Object.keys(drafts).length > 0 || drawer !== null;
+  const query = useDashboardProjects(params, editFreshness(editInProgress));
   const hubSelection = React.useMemo(() => ({ hubIds, regions }), [hubIds, regions]);
   const facets = useProjectFacets(hubSelection);
 
@@ -300,9 +317,6 @@ export default function ProjectsPage(): React.JSX.Element {
 
   // ---- P44-T01: per-row inline edit (P35-T02 cells, D35-2 save) ------------
 
-  /** Rows in inline edit (their "Edit" pressed, not yet "Done"). */
-  const [editingIds, setEditingIds] = React.useState<ReadonlySet<string>>(() => new Set());
-  const [drafts, setDrafts] = React.useState<RegisterDrafts>({});
   /** The row each draft was staged against, so a draft hidden by a filter
    *  change is still saved (and still counted). */
   const [draftRows, setDraftRows] = React.useState<Readonly<Record<string, ProjectFilterRow>>>({});
@@ -456,6 +470,8 @@ export default function ProjectsPage(): React.JSX.Element {
   const onField = React.useCallback(
     <F extends EditableField>(row: ProjectFilterRow, field: F, value: RegisterValues[F]) => {
       const base = enrich(row);
+      // P47: the value this field's edit started from (kept once captured).
+      setEditBases((b) => captureBase(b, row.project_id, registerSnapshotValues(base), [field]));
       setDrafts((d) => {
         let next = setDraftField(d, base, field, value);
         if (field === 'hub_id') {
@@ -488,6 +504,7 @@ export default function ProjectsPage(): React.JSX.Element {
     (row: ProjectFilterRow, stepCode: string) => {
       const base = enrich(row);
       if (base.excluded === undefined) return; // the served flags are not loaded yet
+      setEditBases((b) => captureBase(b, row.project_id, registerSnapshotValues(base), [stepBaseKey(stepCode)]));
       setDrafts((d) => toggleDraftExclusion(d, base, stepCode));
       setDraftRows((r) => ({ ...r, [row.project_id]: row }));
       clearRowError(row.project_id);
@@ -498,6 +515,7 @@ export default function ProjectsPage(): React.JSX.Element {
   const leaveEditMode = React.useCallback(() => {
     setEditingIds(new Set());
     setDrafts({});
+    setEditBases({});
     setDraftRows({});
     setRowErrors({});
     setSelected(new Set());
@@ -580,6 +598,12 @@ export default function ProjectsPage(): React.JSX.Element {
 
   const applyBulk = React.useCallback(
     (patch: RegisterDraft) => {
+      setEditBases((b) =>
+        tickedRows.reduce(
+          (acc, row) => captureBase(acc, row.project_id, registerSnapshotValues(enrich(row)), draftBaseKeys(patch)),
+          b,
+        ),
+      );
       setDrafts((d) => setDraftBulk(d, tickedRows.map(enrich), patch));
       setDraftRows((r) => ({ ...r, ...Object.fromEntries(tickedRows.map((row) => [row.project_id, row])) }));
       setRowErrors((prev) => {
@@ -599,13 +623,36 @@ export default function ProjectsPage(): React.JSX.Element {
       : null;
 
   const saveEdits = async (): Promise<void> => {
-    const body = buildRegisterEditsBody(drafts, draftBaseRows);
+    const body = buildRegisterEditsBody(drafts, draftBaseRows, editBases);
     if (body.edits.length === 0 || body.edits.length > REGISTER_EDITS_MAX) return;
     setSaveError(null);
     const res = await registerSave.save(body);
     if (res.ok) {
       leaveEditMode();
       return;
+    }
+    if (res.conflictChoice === 'theirs') {
+      // P47 (ADR 0059 C2): drop my value for the conflicting fields only; every
+      // other edit stays in the buffer, unsaved, and the forgotten bases are
+      // re-captured from the reloaded rows on the next edit.
+      const byId = new Map<string, string[]>();
+      for (const c of res.conflicts) byId.set(c.id, [...(byId.get(c.id) ?? []), c.field]);
+      setEditBases((b) => {
+        let next = b;
+        for (const [id, fields] of byId) next = forgetBase(next, id, conflictBaseKeys(fields, drafts[id]));
+        return next;
+      });
+      setDrafts((d) => {
+        const next: Record<string, RegisterDraft> = { ...d };
+        for (const [id, fields] of byId) {
+          const draft = next[id];
+          if (!draft) continue;
+          const kept = withoutConflictFields(draft, fields);
+          if (Object.keys(kept).length > 0) next[id] = kept;
+          else delete next[id];
+        }
+        return next;
+      });
     }
     if (res.forbidden) {
       setWriteForbidden(true);
@@ -1090,6 +1137,7 @@ export default function ProjectsPage(): React.JSX.Element {
         </React.Suspense>
       ) : null}
       {moveFlow.element}
+      {registerSave.conflictDialog}
       <RegisterSavePanel
         flow={registerSave.flow}
         runState={registerSave.runState}

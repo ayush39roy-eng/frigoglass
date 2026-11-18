@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { ArrowUpFromLine, PencilLine, RotateCcw, Star, TableProperties } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useStore } from 'zustand';
 
 import { PageHeader } from '@/components/layout/page-header';
@@ -17,6 +18,10 @@ import { PriorityBoardView, type SharedBoardFilters } from '@/surfaces/priority-
 import { BOARD_LAYOUT_PARAM } from '@/surfaces/priority-board/lib/board-layout';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
+import { CONFLICT_COPY, editConflicts } from '@/lib/api/edit-conflict';
+import { useEditConflict } from '@/lib/use-edit-conflict';
+import { editFreshness } from '@/lib/use-edit-freshness';
+import { useAnyEditInProgress, useEditSession } from '@/stores/edit-session';
 import { useHubFilter } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
@@ -51,13 +56,16 @@ import {
 import { useCompareSelection } from './lib/compare-selection';
 import { distributionFromRows, narrowByBand, narrowExceptBand, sortMatrixRows } from './lib/matrix-rows';
 import {
+  applyTheirScores,
   buildGridApplyBody,
   changedProjectIds,
   setDraftGate,
   setDraftScore,
+  type GridDraft,
   type GridDrafts,
 } from './lib/grid-edit';
 import { createTextFilterStore, TextFilterContext, type TextFilterField } from './lib/text-filters';
+import { keepMineScoreBase, theirScoreValues } from './lib/score-base';
 import { useGridMaxHeight, useSpaceBelow, useStuck } from './lib/use-stuck';
 import { NARROW_QUERY, useMediaQuery } from './lib/use-media-query';
 import { MatrixTable, type MatrixGridEdit } from './components/matrix-table';
@@ -213,14 +221,19 @@ function MatrixSurface(): React.JSX.Element {
   const selectedRate = currencies?.find((c) => c.currency_code === currency)?.rate_to_eur ?? null;
   const summaryQuery = usePrioritySummary(hubId, region);
   // D34-3: the project search is no longer a server param (it runs over the loaded rows).
-  const matrixQuery = usePriorityMatrix({
-    currency,
-    hubId: hubId ?? undefined,
-    region: region ?? undefined,
-    category: selectionParam(view.category),
-    type: selectionParam(view.type),
-    status: view.status ?? undefined,
-  });
+  // P47 (ADR 0059): refetch on focus and every 60 s while nobody edits.
+  const editInProgress = useAnyEditInProgress();
+  const matrixQuery = usePriorityMatrix(
+    {
+      currency,
+      hubId: hubId ?? undefined,
+      region: region ?? undefined,
+      category: selectionParam(view.category),
+      type: selectionParam(view.type),
+      status: view.status ?? undefined,
+    },
+    editFreshness(editInProgress),
+  );
 
   // P21 §1: a currency whose rate was removed meanwhile answers 422
   // CURRENCY_NOT_CONFIGURED. Fall back to EUR, say why, and re-read the list.
@@ -255,6 +268,12 @@ function MatrixSurface(): React.JSX.Element {
   // P34-T02 (D34-1): inline edit mode.
   const [editMode, setEditMode] = React.useState(false);
   const [drafts, setDrafts] = React.useState<GridDrafts>({});
+  /** P47 (ADR 0059): each project's values when its first cell was edited (`base`). */
+  const [gridReads, setGridReads] = React.useState<Readonly<Record<string, GridDraft>>>({});
+  useEditSession(editMode);
+  const conflict = useEditConflict();
+  const askConflict = conflict.ask;
+  const queryClient = useQueryClient();
   const [editNotes, setEditNotes] = React.useState('');
   const [saveError, setSaveError] = React.useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = React.useState(false);
@@ -393,14 +412,25 @@ function MatrixSurface(): React.JSX.Element {
     },
     [scenarioActive, scenarioPending],
   );
+  const captureRead = React.useCallback(
+    (row: PriorityMatrixRow) =>
+      // The SERVED row, never the scenario-staged one (P47 gate advisory A4).
+      setGridReads((r) => (r[row.project_id] ? r : { ...r, [row.project_id]: liveRequestValuesFromRow(row) })),
+    [],
+  );
   const onScore = React.useCallback(
-    (row: PriorityMatrixRow, key: string, value: DimensionScoreValue) =>
-      setDrafts((d) => setDraftScore(d, baseRow(row), key, value)),
-    [baseRow],
+    (row: PriorityMatrixRow, key: string, value: DimensionScoreValue) => {
+      captureRead(row);
+      setDrafts((d) => setDraftScore(d, baseRow(row), key, value));
+    },
+    [baseRow, captureRead],
   );
   const onGate = React.useCallback(
-    (row: PriorityMatrixRow, gate: HardGateReason, on: boolean) => setDrafts((d) => setDraftGate(d, baseRow(row), gate, on)),
-    [baseRow],
+    (row: PriorityMatrixRow, gate: HardGateReason, on: boolean) => {
+      captureRead(row);
+      setDrafts((d) => setDraftGate(d, baseRow(row), gate, on));
+    },
+    [baseRow, captureRead],
   );
   const gridEdit = React.useMemo<MatrixGridEdit | undefined>(
     () => (editMode && canEdit ? { drafts, baseRow, onScore, onGate } : undefined),
@@ -415,6 +445,7 @@ function MatrixSurface(): React.JSX.Element {
   const leaveEditMode = React.useCallback(() => {
     setEditMode(false);
     setDrafts({});
+    setGridReads({});
     setEditNotes('');
     setSaveError(null);
     setConfirmCancel(false);
@@ -456,13 +487,49 @@ function MatrixSurface(): React.JSX.Element {
       leaveEditMode();
       return;
     }
-    const body = buildGridApplyBody(drafts, live, editNotes);
+    const body = buildGridApplyBody(drafts, live, editNotes, gridReads);
     if (body.priority_scores.length === 0) {
       leaveEditMode();
       return;
     }
     try {
-      const res = await applyMutation.mutateAsync(body);
+      let sent = body;
+      let res: Awaited<ReturnType<typeof applyMutation.mutateAsync>>;
+      for (;;) {
+        try {
+          res = await applyMutation.mutateAsync(sent);
+          break;
+        } catch (err) {
+          const conflicts = editConflicts(err);
+          if (conflicts === null) throw err;
+          // P47 (ADR 0059 C2): nothing was written; ask whose value to keep.
+          const choice = await askConflict(conflicts, sent.priority_scores.length > 1 ? CONFLICT_COPY.batchNote : undefined);
+          if (choice === 'mine') {
+            sent = {
+              ...sent,
+              priority_scores: sent.priority_scores.map((c) => {
+                const mine = conflicts.filter((x) => x.id === c.project_id);
+                return mine.length > 0 && c.base ? { ...c, base: keepMineScoreBase(c.base, mine) } : c;
+              }),
+            };
+            continue;
+          }
+          if (choice === 'theirs') {
+            // Drop my value for the conflicting cells only; every other edit stays.
+            let nextDrafts = drafts;
+            let nextReads = gridReads;
+            for (const id of new Set(conflicts.map((c) => c.id))) {
+              const theirs = theirScoreValues(conflicts.filter((c) => c.id === id));
+              ({ drafts: nextDrafts, reads: nextReads } = applyTheirScores(nextDrafts, nextReads, id, theirs));
+            }
+            setDrafts(nextDrafts);
+            setGridReads(nextReads);
+            void queryClient.invalidateQueries({ queryKey: ['priority-matrix'] });
+          }
+          setSaveError(choice === 'theirs' ? CONFLICT_COPY.batchTheirs : CONFLICT_COPY.dismissed);
+          return;
+        }
+      }
       const n = body.priority_scores.length;
       setSavedNotice(
         `Saved ${formatInteger(n)} ${n === 1 ? 'project' : 'projects'} as version ${String(res.run.version)}. Scores and bands are re-read from the server.`,
@@ -476,7 +543,7 @@ function MatrixSurface(): React.JSX.Element {
       }
       setSaveError(saveErrorText(err));
     }
-  }, [served, scenarioActive, changedIds, drafts, stageScenarioEdit, leaveEditMode, editNotes, applyMutation]);
+  }, [served, scenarioActive, changedIds, drafts, stageScenarioEdit, leaveEditMode, editNotes, applyMutation, gridReads, askConflict, queryClient]);
 
   // The rubric card never depends on the grid's filters: keep its element stable.
   const rubricPanel = React.useMemo(() => <ScoringRubricPanel />, []);
@@ -770,6 +837,7 @@ function MatrixSurface(): React.JSX.Element {
         onDiscard={leaveEditMode}
         testId="grid-discard-dialog"
       />
+      {conflict.dialog}
       <GridLeaveGuard when={unsavedEdits} />
     </FetchedScoringModelProvider>
     </TextFilterContext.Provider>

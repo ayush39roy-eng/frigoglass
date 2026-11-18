@@ -23,6 +23,8 @@ import {
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ApiError } from '@/lib/api/client';
+import { CONFLICT_COPY } from '@/lib/api/edit-conflict';
+import { useEditConflict } from '@/lib/use-edit-conflict';
 import { cn } from '@/lib/utils';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
 import { useScenarioStore } from '@/stores/scenario';
@@ -42,6 +44,7 @@ import { usePriorityCompare, usePriorityEditRows, useUpdatePriorityScore } from 
 import { useCompareSelection, type CompareItem } from '../lib/compare-selection';
 import { groupByPillar } from '../lib/pillars';
 import { formatOutOf100, formatPoints, rowMissingLabels } from '../lib/row-scores';
+import { scoreConflictKey, sendScoreChange } from '../lib/score-base';
 import { previewScore } from '../lib/score-preview';
 import { useScoringModel } from '../scoring-model';
 import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
@@ -373,6 +376,7 @@ function CompareBody({
   const model = useScoringModel();
   const queryClient = useQueryClient();
   const updateScore = useUpdatePriorityScore();
+  const conflict = useEditConflict();
   const pending = useScenarioStore((s) => s.pending);
   const stageEdit = useScenarioStore((s) => s.stageEdit);
   const [hidden, setHidden] = React.useState<ReadonlySet<string>>(new Set());
@@ -471,7 +475,32 @@ function CompareBody({
 
     setStatus((prev) => ({ ...prev, [id]: { kind: 'saving' } }));
     try {
-      const saved = (await updateScore.mutateAsync({ projectId: id, body })) as PriorityScoreRead | undefined;
+      // P47 (ADR 0059): `base` = the scores the cells started from and the gates as read.
+      // `read` = the SERVED stored scores and gates (`row`), never a staged copy (A4).
+      const read = liveRequestValuesFromRow(row);
+      const sent = await sendScoreChange({
+        change: body,
+        read,
+        send: (withBase) => updateScore.mutateAsync({ projectId: id, body: withBase }),
+        ask: conflict.ask,
+        onUseTheirs: async (conflicts) => {
+          // Drop my value for the conflicting dimensions only; my other edits stay.
+          const keys = new Set(conflicts.map((c) => scoreConflictKey(c.field)));
+          setEdits((prev) => ({
+            ...prev,
+            [id]: Object.fromEntries(Object.entries(prev[id] ?? {}).filter(([k]) => !keys.has(k))),
+          }));
+          await queryClient.invalidateQueries({ queryKey: ['priority-matrix', 'compare'] });
+        },
+      });
+      if (sent.outcome !== 'saved') {
+        setStatus((prev) => ({
+          ...prev,
+          [id]: { kind: 'error', message: sent.outcome === 'theirs' ? CONFLICT_COPY.theirs : CONFLICT_COPY.dismissed },
+        }));
+        return;
+      }
+      const saved = sent.data as PriorityScoreRead | undefined;
       // The mutation re-reads every `priority-matrix` query (grid, distribution, rows,
       // compare); wait for compare so the served figures replace the preview in one step.
       await queryClient.invalidateQueries({ queryKey: ['priority-matrix', 'compare'] });
@@ -489,6 +518,7 @@ function CompareBody({
 
   return (
     <div className="flex flex-col gap-4" data-testid="compare-body">
+      {conflict.dialog}
       <ul className="flex flex-wrap gap-1.5" aria-label="Legend — choose a project to show or hide it on the chart">
         {projects.map((p, i) => {
           const off = hidden.has(p.project_id);

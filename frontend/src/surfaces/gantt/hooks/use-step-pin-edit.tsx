@@ -55,6 +55,8 @@ export interface StepPinDraftState {
   applyServerErrors: (errors: readonly StepPinError[], sent: readonly StepPinDraft[]) => void;
   /** Drop every draft and error (Cancel, or after a successful Save). */
   reset: () => void;
+  /** P47 ("Use theirs"): drop the drafts of these steps only. */
+  dropKeys: (keys: readonly string[]) => void;
   items: () => ReturnType<typeof draftsToItems>;
 }
 
@@ -74,7 +76,8 @@ export function useStepPinDraftState({
     (project: GanttProjectRow, step: GanttStepRow, next: (cur: { start: string; end: string }) => { start: string; end: string }) => {
       const key = pinKey(project.project_id, step.step_id);
       setDrafts((prev) => {
-        const pair = next(shownPair(step, prev.get(key)));
+        const before = prev.get(key);
+        const pair = next(shownPair(step, before));
         const out = new Map(prev);
         if (sameAsLive(pair, step)) {
           out.delete(key);
@@ -87,6 +90,9 @@ export function useStepPinDraftState({
             stepName: step.step_name,
             start: pair.start,
             end: pair.end,
+            // P47 (ADR 0059): the served pin when the step was first edited.
+            baseStart: before ? (before.baseStart ?? null) : step.manual_start_week,
+            baseEnd: before ? (before.baseEnd ?? null) : step.manual_end_week,
           });
         }
         return out;
@@ -117,6 +123,14 @@ export function useStepPinDraftState({
   const reset = React.useCallback(() => {
     setDrafts(new Map());
     setServerErrors(new Map());
+  }, []);
+
+  const dropKeys = React.useCallback((keys: readonly string[]) => {
+    setDrafts((prev) => {
+      const out = new Map(prev);
+      for (const key of keys) out.delete(key);
+      return out;
+    });
   }, []);
 
   const applyServerErrors = React.useCallback(
@@ -150,5 +164,5 @@ export function useStepPinDraftState({
 
   const items = React.useCallback(() => draftsToItems(list), [list]);
 
-  return { api, list, invalidCount, projectCount, applyServerErrors, reset, items };
+  return { api, list, invalidCount, projectCount, applyServerErrors, reset, dropKeys, items };
 }

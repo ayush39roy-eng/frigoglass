@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from schemas.edit_conflict import EditBase
 from schemas.whatif_import import ImportKpisOut, ImportSimulateRequest, ImportSimulateResponse
 
 # --- A. import format -------------------------------------------------------------------------
@@ -83,6 +84,9 @@ class ScenarioPatchIn(BaseModel):
     name: _Name | None = None
     #: `null` clears the note.
     note: _Note | None = None
+    #: P47 (ADR 0059): `{"name", "note"}` as the user read them, for the
+    #: fields this request changes. Optional.
+    base: EditBase = Field(default_factory=dict)
 
 
 class SavedScenarioSummary(BaseModel):

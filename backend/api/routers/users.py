@@ -83,6 +83,7 @@ from schemas.user_admin import (
     UserRead,
     UserUpdateRequest,
 )
+from services.edit_conflict import check_base, field_refs
 from services.project_access import manageable_projects
 
 router = APIRouter(tags=["user-admin"])
@@ -459,7 +460,7 @@ async def update_user(
 async def _update_user(
     user_id: uuid.UUID, body: UserUpdateRequest, db: AsyncSession, current_user: Principal
 ) -> UserRead:
-    updates = body.model_dump(exclude_unset=True)
+    updates = body.model_dump(exclude_unset=True, exclude={"base"})
     if "roles" in updates or "is_active" in updates:
         # S-01 (P9-R02): every change that can alter Super Admin membership
         # takes one transaction-scoped advisory lock *before* reading the
@@ -468,6 +469,10 @@ async def _update_user(
         # (Locking only the *other* Super Admins' rows, as before, let two
         # demotions lock different rows and both pass.)
         await db.execute(select(func.pg_advisory_xact_lock(SUPER_ADMIN_MEMBERSHIP_LOCK)))
+    if body.base:
+        # P47 (ADR 0059 C1): the user row `FOR UPDATE` (after the membership
+        # lock), then re-read by `_load_user` (populate_existing).
+        await db.execute(select(User.id).where(User.id == user_id).with_for_update())
     user = await _load_user(db, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -495,6 +500,24 @@ async def _update_user(
     removes_role = bool(set(current_roles) - set(new_roles))
     if deactivates or removes_role:
         ensure_super_admin(current_user)
+    if body.base:
+        # P47 (ADR 0059 C1) after every authorisation check above
+        # (P47-R01 M-1: an Admin editing an Admin / Super Admin account gets
+        # the 403, never a 409 with its values) and before any write.
+        stored = _user_read(
+            user, (await _engineer_ids_by_user(db, [user.id])).get(user.id)
+        ).model_dump(mode="json")
+        await check_base(
+            db,
+            current_user,
+            entity="user",
+            entity_id=user.id,
+            label=user.full_name,
+            base=body.base,
+            requested=updates,
+            current=stored,
+            refs=field_refs("User", str(user.id)),
+        )
     effective_hub_scope_all = (
         updates["hub_scope_all"] if "hub_scope_all" in updates else user.hub_scope_all
     )

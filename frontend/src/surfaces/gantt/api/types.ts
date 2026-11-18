@@ -3,6 +3,7 @@
 // P4-T01 docs/MEMORY.md carry-forward note). P3-T07's contract test must catch
 // drift between these shapes and the real schema.
 
+import type { EditBase } from '@/lib/api/edit-conflict';
 import type {
   HubName,
   ProjectCategory,
@@ -227,6 +228,8 @@ export interface StepPinItem {
   step_template_id: string;
   manual_start_week: number | null;
   manual_end_week: number | null;
+  /** P47 (ADR 0059 C1): the stored pair as read when the step was first edited. */
+  base?: EditBase;
 }
 
 /** `PUT /gantt/step-pins` body (`StepPinsRequest`, 1..500 items). */
@@ -281,6 +284,8 @@ export interface StepPinError {
 export interface FreezeToggleRequest {
   frozen: boolean;
   actual_start_week?: number;
+  /** P47 (ADR 0059 C1): the value as read of each field sent; `{}` = no check. */
+  base?: EditBase;
 }
 
 /** `POST /gantt/projects/{project_id}/freeze` response — the updated project

@@ -933,7 +933,15 @@ class TestOpenApiFrontendContract:
                 # `tests/test_p13_region_filter.py::test_facets_shape`.
                 "ProjectFacets",
             },
-            _MATRIX_TS: {"DimensionMeta"},
+            _MATRIX_TS: {
+                "DimensionMeta",
+                # P47 (ADR 0059): the `base` object of `PriorityScoreUpdateRequest`
+                # / `ScenarioPriorityScoreChange` (`{scores, hard_gates}`). `base`
+                # is a free JSON object in OpenAPI (`EditBase`), so no component
+                # schema; the backend side is pinned by
+                # `tests/test_p47_endpoint_conflicts.py`.
+                "PriorityScoreBase",
+            },
             # P19-T04: UI state for the Resource load analytics filter bar
             # (combobox option, the six selected filters), never a response.
             _PLANNING_TS: {
@@ -1019,7 +1027,8 @@ def test_steps_update_request_shape() -> None:
     props, required = _backend_fields("StepsUpdateRequest")
     assert props == {"steps"} and required == {"steps"}
     props, required = _backend_fields("StepPrecedenceUpdate")
-    assert props == {"step_id", "kind", "predecessor_ids"}
+    # P47 (ADR 0059): plus the optional per-step `base`.
+    assert props == {"step_id", "kind", "predecessor_ids", "base"}
     assert required == {"step_id", "kind", "predecessor_ids"}
 
 

@@ -86,6 +86,7 @@ from services.audit_helpers import priority_score_audit_state
 from services.capacity_hubs import capacity_rows_for_request
 from services.category_type_filter import any_of, category_type_filter
 from services.currency import rate_to_eur as _currency_rate_to_eur
+from services.edit_conflict import priority_score_conflicts, raise_edit_conflict
 from services.hub_scope import (
     HubIdsArg,
     RegionsArg,
@@ -659,11 +660,29 @@ async def upsert_priority_score(
 
     await lock_rubric(db, exclusive=False)
     rubric = await load_rubric(db)
-    existing = (
-        await db.execute(select(PriorityScore).where(PriorityScore.project_id == project_id))
-    ).scalar_one_or_none()
+    existing_stmt = select(PriorityScore).where(PriorityScore.project_id == project_id)
+    if body.base:
+        # P47 (ADR 0059 C1): the score row `FOR UPDATE`, re-read.
+        existing_stmt = existing_stmt.with_for_update().execution_options(
+            populate_existing=True
+        )
+    existing = (await db.execute(existing_stmt)).scalar_one_or_none()
 
     before_state = priority_score_audit_state(existing, rubric) if existing else None
+    await raise_edit_conflict(
+        db,
+        current_user,
+        priority_score_conflicts(
+            project_id=project.id,
+            project_name=project.name,
+            hub_id=project.hub_id,
+            score_id=existing.id if existing is not None else None,
+            stored=before_state,
+            base=body.base,
+            scores=body.scores,
+            hard_gates=body.hard_gates if "hard_gates" in body.model_fields_set else None,
+        ),
+    )
     action = "priority_score.update" if existing else "priority_score.create"
 
     score = existing or PriorityScore(project_id=project_id, dimension_scores=[])
@@ -675,7 +694,11 @@ async def upsert_priority_score(
             code="UNKNOWN_DIMENSION_KEY",
             detail=f"Not an active scoring dimension: {', '.join(exc.keys)}.",
         ) from exc
-    score.hard_gates = body.hard_gates
+    # P47-R02: the gates are written only when sent, so a scores-only save
+    # keeps the stored list (a new score row starts with `[]`); an
+    # explicit `[]` still clears them.
+    if "hard_gates" in body.model_fields_set:
+        score.hard_gates = body.hard_gates
     score.scored_at = func.now()
     score.scored_by_user_id = current_user.user_id
     if existing is None:

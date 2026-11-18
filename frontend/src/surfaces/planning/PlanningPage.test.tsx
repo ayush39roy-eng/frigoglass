@@ -295,7 +295,11 @@ describe('PlanningPage (P19-T04 Overview)', () => {
 
     await user.click(save);
     expect(updateEngineer).toHaveBeenCalledTimes(1);
-    expect(updateEngineer).toHaveBeenCalledWith({ engineerId: 'e1', body: { allowed_categories: ['A+', 'C'] } });
+    // P47 (ADR 0059 C1): with the served value the edit started from.
+    expect(updateEngineer).toHaveBeenCalledWith({
+      engineerId: 'e1',
+      body: { allowed_categories: ['A+', 'C'], base: { allowed_categories: ['A+', 'B'] } },
+    });
     // Back to read mode.
     expect(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' })).toBeInTheDocument();
     expect(screen.queryAllByRole('button', { name: /^Allow / })).toHaveLength(0);
@@ -314,7 +318,7 @@ describe('PlanningPage (P19-T04 Overview)', () => {
     expect(updateEngineer).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Save R&D-Greece Hub' }));
     expect(updateEngineer).toHaveBeenCalledTimes(1);
-    expect(updateEngineer).toHaveBeenCalledWith({ engineerId: 'e1', body: { fte: 0.8 } });
+    expect(updateEngineer).toHaveBeenCalledWith({ engineerId: 'e1', body: { fte: 0.8, base: { fte: 1 } } });
 
     await user.click(screen.getByRole('button', { name: 'Edit Greece labs' }));
     const plat = screen.getByRole('spinbutton', { name: 'Platforms for GR-CH1' });
@@ -325,7 +329,10 @@ describe('PlanningPage (P19-T04 Overview)', () => {
     expect(updateChamber).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Save Greece labs' }));
     expect(updateChamber).toHaveBeenCalledTimes(1);
-    expect(updateChamber).toHaveBeenCalledWith({ chamberId: 'c1', body: { platforms: 3, allowed_stages: ['PDD-F', 'PDD-H'] } });
+    expect(updateChamber).toHaveBeenCalledWith({
+      chamberId: 'c1',
+      body: { platforms: 3, allowed_stages: ['PDD-F', 'PDD-H'], base: { platforms: 1, allowed_stages: ['PDD-F'] } },
+    });
   });
 
   it('Cancel restores the saved values and sends nothing', async () => {
@@ -381,8 +388,14 @@ describe('PlanningPage (P19-T04 Overview)', () => {
     await user.click(screen.getByRole('button', { name: 'Save R&D-Greece Hub' }));
 
     expect(updateEngineer).toHaveBeenCalledTimes(2);
-    expect(updateEngineer).toHaveBeenNthCalledWith(1, { engineerId: 'e1', body: { allowed_categories: ['A+', 'B', 'C'] } });
-    expect(updateEngineer).toHaveBeenNthCalledWith(2, { engineerId: 'e3', body: { fte: 2 } });
+    expect(updateEngineer).toHaveBeenNthCalledWith(1, {
+      engineerId: 'e1',
+      body: { allowed_categories: ['A+', 'B', 'C'], base: { allowed_categories: ['A+', 'B'] } },
+    });
+    expect(updateEngineer).toHaveBeenNthCalledWith(2, {
+      engineerId: 'e3',
+      body: { fte: 2, base: { fte: 1 } },
+    });
     const failedRow = screen.getByTestId('engineer-row-e3');
     expect(await within(failedRow).findByRole('alert')).toHaveTextContent('Not saved: fte exceeds the hub limit');
     expect(within(failedRow).getByText('Unsaved')).toBeInTheDocument();
@@ -397,7 +410,8 @@ describe('PlanningPage (P19-T04 Overview)', () => {
     updateEngineer.mockResolvedValue({});
     await user.click(screen.getByRole('button', { name: 'Save R&D-Greece Hub' }));
     expect(updateEngineer).toHaveBeenCalledTimes(1);
-    expect(updateEngineer).toHaveBeenCalledWith({ engineerId: 'e3', body: { fte: 2 } });
+    // The retry keeps the base the edit started from.
+    expect(updateEngineer).toHaveBeenCalledWith({ engineerId: 'e3', body: { fte: 2, base: { fte: 1 } } });
     expect(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' })).toBeInTheDocument();
   });
 
@@ -722,7 +736,7 @@ describe('PlanningPage (P38-T06 deactivate / reactivate)', () => {
     await user.clear(name);
     await user.type(name, 'Theoni K.');
     await user.click(within(dialog).getByRole('button', { name: 'Save changes' }));
-    expect(updateEngineer).toHaveBeenCalledWith({ engineerId: 'e9', body: { name: 'Theoni K.' } });
+    expect(updateEngineer).toHaveBeenCalledWith({ engineerId: 'e9', body: { name: 'Theoni K.', base: { name: 'Theoni' } } });
   });
 
   it('has no serious axe violations with inactive rows and the Show filter', async () => {

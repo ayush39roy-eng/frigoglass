@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from models.checkin import CHECKIN_NOTE_MAX_LENGTH
 from models.enums import HubName, WorkflowStepKind, WorkflowStepStatus
+from schemas.edit_conflict import EditBase
 from services.tracking import TrackingStatus
 
 #: At most this many stages in one submission (contract §5).
@@ -45,6 +46,10 @@ class CheckInEntry(BaseModel):
     percent_complete: int = Field(ge=0, le=100)
     blocked_reason: str | None = Field(default=None, max_length=BLOCKED_REASON_MAX_LENGTH)
     note: str | None = Field(default=None, max_length=CHECKIN_NOTE_MAX_LENGTH)
+    #: P47 (ADR 0059): the stage's `{"status", "percent_complete",
+    #: "blocked_reason"}` as the user read them. Optional; a field this entry
+    #: leaves as stored is never checked.
+    base: EditBase = Field(default_factory=dict)
 
 
 class CheckInRequest(BaseModel):

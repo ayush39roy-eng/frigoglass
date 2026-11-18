@@ -197,7 +197,16 @@ describe('CheckInPage — form validation and batch submit', () => {
     await waitFor(() =>
       expect(client.apiSend).toHaveBeenCalledWith('POST', '/check-ins', {
         entries: [
-          { project_id: 'p1', step_id: 'PDD-E', status: 'Blocked', percent_complete: 40, blocked_reason: 'Waiting for supplier', note: null },
+          {
+            project_id: 'p1',
+            step_id: 'PDD-E',
+            status: 'Blocked',
+            percent_complete: 40,
+            blocked_reason: 'Waiting for supplier',
+            note: null,
+            // P47 (ADR 0059 C1): the stage as read when the row was first changed.
+            base: { status: 'In Progress', percent_complete: 40, blocked_reason: null },
+          },
         ],
       }),
     );
@@ -216,8 +225,24 @@ describe('CheckInPage — form validation and batch submit', () => {
     await waitFor(() => expect(client.apiSend).toHaveBeenCalledTimes(1));
     expect(client.apiSend).toHaveBeenCalledWith('POST', '/check-ins', {
       entries: [
-        { project_id: 'p1', step_id: 'PDD-E', status: 'In Progress', percent_complete: 60, blocked_reason: null, note: 'Drawings sent' },
-        { project_id: 'p2', step_id: 'OEM-A', status: 'In Progress', percent_complete: 40, blocked_reason: null, note: null },
+        {
+          project_id: 'p1',
+          step_id: 'PDD-E',
+          status: 'In Progress',
+          percent_complete: 60,
+          blocked_reason: null,
+          note: 'Drawings sent',
+          base: { status: 'In Progress', percent_complete: 40, blocked_reason: null },
+        },
+        {
+          project_id: 'p2',
+          step_id: 'OEM-A',
+          status: 'In Progress',
+          percent_complete: 40,
+          blocked_reason: null,
+          note: null,
+          base: { status: 'In Progress', percent_complete: 40, blocked_reason: null },
+        },
       ],
     });
     const panel = await screen.findByTestId('check-in-result');

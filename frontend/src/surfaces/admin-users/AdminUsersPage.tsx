@@ -12,6 +12,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ApiError } from '@/lib/api/client';
+import { changedKeys, EditConflictDismissedError, sendEditWithBase } from '@/lib/api/edit-conflict';
+import { useEditConflict } from '@/lib/use-edit-conflict';
+import { useAnyEditInProgress, useEditSession } from '@/stores/edit-session';
+import { editFreshness } from '@/lib/use-edit-freshness';
 import { useHubs } from '@/lib/api/reference';
 import { formatInteger } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
@@ -56,12 +60,17 @@ export default function AdminUsersPage(): React.JSX.Element {
   const permission = usePermission('user_role_admin');
   const callerIsSuperAdmin = me?.roles.includes('Super Admin') ?? false;
 
-  const usersQuery = useUsers({ q: q || undefined, limit: PAGE_SIZE, offset });
+  // P47 (ADR 0059): refetch on focus and every 60 s while no form is open.
+  const editInProgress = useAnyEditInProgress();
+  const usersQuery = useUsers({ q: q || undefined, limit: PAGE_SIZE, offset }, editFreshness(editInProgress));
   const rolesQuery = useRoles();
   const hubsQuery = useHubs();
   const engineersQuery = useEngineerOptions(undefined);
   const createMut = useCreateUser();
   const updateMut = useUpdateUser();
+  const conflict = useEditConflict();
+  const askConflict = conflict.ask;
+  useEditSession(formOpen);
 
   const title = ADMIN_SURFACE?.title ?? 'User / Role Admin';
   const description =
@@ -94,10 +103,22 @@ export default function AdminUsersPage(): React.JSX.Element {
       if (formMode === 'create') {
         await createMut.mutateAsync(body as UserCreateRequest);
       } else if (editUser) {
-        await updateMut.mutateAsync({ userId: editUser.id, body });
+        // P47 (ADR 0059): only the changed fields, each with the value the
+        // form opened with; a 409 EDIT_CONFLICT asks whose value to keep.
+        const changes = Object.fromEntries(
+          changedKeys(editUser, body).map((k) => [k, (body as Record<string, unknown>)[k]]),
+        ) as UserUpdateRequest;
+        if (Object.keys(changes).length === 0) return;
+        const sent = await sendEditWithBase({
+          body: changes,
+          original: editUser,
+          send: (withBase) => updateMut.mutateAsync({ userId: editUser.id, body: withBase }),
+          ask: askConflict,
+        });
+        if (sent.outcome === 'dismissed') throw new EditConflictDismissedError();
       }
     },
-    [formMode, editUser, createMut, updateMut],
+    [formMode, editUser, createMut, updateMut, askConflict],
   );
 
   return (
@@ -267,6 +288,7 @@ export default function AdminUsersPage(): React.JSX.Element {
         managerOptions={usersQuery.data?.items ?? []}
         onSubmit={handleSubmit}
       />
+      {conflict.dialog}
     </>
   );
 }

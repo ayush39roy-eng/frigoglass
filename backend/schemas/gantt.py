@@ -27,6 +27,7 @@ from models.enums import (
 )
 from schemas.category import CategoryCodeOut
 from schemas.dashboard import ScheduleOutcome
+from schemas.edit_conflict import EditBase
 
 
 class GanttStepRow(BaseModel):
@@ -249,3 +250,6 @@ class FreezeToggleRequest(BaseModel):
 
     frozen: bool
     actual_start_week: int | None = Field(default=None, ge=1)
+    #: P47 (ADR 0059): `{"frozen": <bool>, "actual_start_week": <int|null>}` as
+    #: the user read them; only the fields this request changes are checked.
+    base: EditBase = Field(default_factory=dict)

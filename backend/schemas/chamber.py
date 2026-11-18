@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from models.enums import LabRegion
 from schemas.capacity import YearRemaining
+from schemas.edit_conflict import EditBase
 from schemas.engineer import reject_explicit_null
 
 #: P19-R01 (S19-L2): every chamber column is NOT NULL, so an explicit `null`
@@ -112,6 +113,8 @@ class ChamberUpdateRequest(BaseModel):
     breakdown_weeks: float | None = Field(default=None, ge=0, le=_YEARLY_WEEKS_CEILING)
     calibration_weeks: float | None = Field(default=None, ge=0, le=_YEARLY_WEEKS_CEILING)
     allowed_stages: list[str] | None = None
+    #: P47 (ADR 0059): the values the user started from, per changed field.
+    base: EditBase = Field(default_factory=dict)
 
 
 class ChamberRead(BaseModel):

@@ -208,7 +208,8 @@ describe('Compare dialog score editing (P21-T04)', () => {
     // P26: only the edited dimensions are sent, with the project's hard gates.
     expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/a', {
       scores: { strategic_project: 5, new_customer: 5, regulatory_compliance: 5 },
-      hard_gates: [GATE],
+      // P47 (ADR 0059 C1): the values the cells started from, and the gates.
+      base: { scores: { strategic_project: 3, new_customer: 3, regulatory_compliance: 3 } },
     });
     // 177 + 30 = 207 / 295 → 70 → P1, read back from the server.
     await waitFor(() => expect(within(totalCell(0)).getByTestId('compare-served-score')).toHaveTextContent('70/100'));
@@ -234,7 +235,10 @@ describe('Compare dialog score editing (P21-T04)', () => {
     const saveBtn = within(actionsOf('a')).getByRole('button', { name: 'Save changes (1) for Alpha' });
     await waitFor(() => expect(saveBtn).toHaveAttribute('aria-disabled', 'false'));
     await user.click(saveBtn);
-    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/a', { scores: { strategic_project: 0 }, hard_gates: [GATE] });
+    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/a', {
+      scores: { strategic_project: 0 },
+      base: { scores: { strategic_project: 3 } },
+    });
     // 177 − 15 = 162 / 295 → 55.
     await waitFor(() => expect(within(totalCell(0)).getByTestId('compare-served-score')).toHaveTextContent('55/100'));
   });
@@ -346,7 +350,10 @@ describe('Compare dialog score editing (P21-T04)', () => {
     const saveBtn = within(actionsOf('b')).getByRole('button', { name: 'Save changes (1) for Beta' });
     await waitFor(() => expect(saveBtn).toHaveAttribute('aria-disabled', 'false'));
     await user.click(saveBtn);
-    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/b', { scores: { strategic_project: 4 }, hard_gates: [] });
+    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/b', {
+      scores: { strategic_project: 4 },
+      base: { scores: { strategic_project: null } },
+    });
     await waitFor(() => expect(within(totalCell(1)).getByTestId('compare-served-score')).toHaveTextContent('7/100'));
     // The served score is incomplete: 12 dimensions are still unscored.
     expect(within(totalCell(1)).getByTestId('incomplete-marker')).toHaveAccessibleName(/^Incomplete: 12 dimensions not scored/);
@@ -359,7 +366,10 @@ describe('Compare dialog score editing (P21-T04)', () => {
     const saveBtn = within(actionsOf('a')).getByRole('button', { name: 'Save changes (1) for Alpha' });
     await waitFor(() => expect(saveBtn).toHaveAttribute('aria-disabled', 'false'));
     await user.click(saveBtn);
-    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/a', { scores: { capex_investment: null }, hard_gates: [GATE] });
+    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/a', {
+      scores: { capex_investment: null },
+      base: { scores: { capex_investment: 3 } },
+    });
     await waitFor(() =>
       expect(within(totalCell(0)).getByTestId('incomplete-marker')).toHaveAccessibleName(
         'Incomplete: 1 dimension not scored (CAPEX Investment (inverted)); each counts 0 points',

@@ -117,7 +117,11 @@ export async function createSavedScenario(body: SaveScenarioBody): Promise<Saved
 }
 
 /** `PATCH /whatif/import/scenarios/{id}` (creator, Admin, Super Admin). */
-export async function patchSavedScenario(id: string, body: { name?: string; note?: string | null }): Promise<unknown> {
+export async function patchSavedScenario(
+  id: string,
+  /** P47 (ADR 0059 C1): `base` = the name / note as read when the rename started. */
+  body: { name?: string; note?: string | null; base?: Record<string, unknown> },
+): Promise<unknown> {
   return apiSend<unknown>('PATCH', `${SCENARIOS_PATH}/${encodeURIComponent(id)}`, body);
 }
 

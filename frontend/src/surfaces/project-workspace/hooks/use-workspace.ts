@@ -8,6 +8,8 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
+import { isEditConflict } from '@/lib/api/edit-conflict';
+import type { QueryFreshness } from '@/lib/use-edit-freshness';
 import { queryKeys } from '@/lib/query-keys';
 
 import {
@@ -26,11 +28,13 @@ import {
 } from '../api/workspace-api';
 import type { FilePatchRequest, FileUploadInput, StagePatchRequest, WorkspaceResponse } from '../api/types';
 
-export function useWorkspace(projectId: string) {
+export function useWorkspace(projectId: string, freshness?: QueryFreshness) {
   return useQuery({
     queryKey: queryKeys.projectWorkspace(projectId),
     queryFn: ({ signal }) => fetchWorkspace(projectId, { signal }),
     retry: retryUnlessAuth,
+    // P47 (ADR 0059): focus refetch + 60 s poll while nobody edits.
+    ...freshness,
   });
 }
 
@@ -53,6 +57,8 @@ export function useStagePatch(projectId: string) {
       // Gantt after this page loaded. Refetch so `project.frozen` arrives and the
       // Progress panel switches to read-only with the "Unfreeze on the Gantt" note.
       if (err instanceof ApiError && err.code === 'PROJECT_FROZEN') refreshWorkspace(queryClient, projectId);
+      // P47 (ADR 0059): someone else saved this stage meanwhile; reload it.
+      if (isEditConflict(err)) refreshWorkspace(queryClient, projectId);
     },
   });
 }

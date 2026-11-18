@@ -141,6 +141,8 @@ function SavedCard({ s }: { s: SavedScenarioSummary }): React.JSX.Element {
   const [error, setError] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(s.name);
+  /** P47 (ADR 0059): the name when Rename was pressed (`base.name`). */
+  const [nameAtEdit, setNameAtEdit] = React.useState(s.name);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
 
   const load = async (what: 'open' | 'compare') => {
@@ -166,7 +168,7 @@ function SavedCard({ s }: { s: SavedScenarioSummary }): React.JSX.Element {
     const name = draft.trim();
     if (name === '') return;
     rename.mutate(
-      { id: s.id, name },
+      { id: s.id, name, from: { name: nameAtEdit } },
       {
         onSuccess: () => {
           syncStored(s.id, { name });
@@ -298,6 +300,7 @@ function SavedCard({ s }: { s: SavedScenarioSummary }): React.JSX.Element {
               variant="ghost"
               onClick={() => {
                 setDraft(s.name);
+                setNameAtEdit(s.name);
                 setEditing(true);
               }}
               aria-label={`Rename ${s.name}`}

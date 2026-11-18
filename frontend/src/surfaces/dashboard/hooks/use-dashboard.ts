@@ -14,6 +14,7 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
+import type { QueryFreshness } from '@/lib/use-edit-freshness';
 import { queryKeys, sortedKeyList, type DashboardProjectFilters } from '@/lib/query-keys';
 import { NO_HUB_SELECTION, type HubSelection } from '@/stores/hub-filter';
 
@@ -150,7 +151,12 @@ export function useProjectFacets(
   });
 }
 
-export function useDashboardProjects(params: ProjectFilterParams) {
+export function useDashboardProjects(
+  params: ProjectFilterParams,
+  /** P47 (ADR 0059): the Projects register's freshness (focus + 60 s poll
+   *  while nobody edits). Absent elsewhere (the Dashboard keeps its defaults). */
+  freshness?: QueryFreshness,
+) {
   // Every changeable filter is in the key (P4-T04 review lesson).
   // P31: category / type are SORTED lists in the key (absent when empty).
   // Multi-select contract: every other list filter likewise (sorted, absent when empty).
@@ -176,6 +182,7 @@ export function useDashboardProjects(params: ProjectFilterParams) {
     queryFn: ({ signal }) => fetchDashboardProjects(params, { signal }),
     retry: retryUnlessAuth,
     placeholderData: keepPreviousData,
+    ...freshness,
   });
 }
 

@@ -10,6 +10,7 @@
  */
 
 import { ApiError, apiGet, apiSend, type ApiRequestOptions } from '@/lib/api/client';
+import type { EditBase } from '@/lib/api/edit-conflict';
 import type { RecalcStatus } from '@/lib/api/priority-move';
 import type { Id, WeekNumber } from '@/types/common';
 import type { ProjectStatus, WorkflowStepKind, WorkflowStepStatus } from '@/types/enums';
@@ -45,6 +46,10 @@ export interface RegisterEditPatch {
   /** The step the project is on now (§2.2): the server marks the earlier steps
    *  Done and the later ones Not Started. `null` = no change. */
   current_step_code?: string | null;
+  /** P47 (ADR 0059 C1): per row, the value the user started from for each
+   *  field this patch changes (`step_exclusions` lists the served flag of each
+   *  step it changes). A differing stored value is a 409 `EDIT_CONFLICT`. */
+  base?: EditBase;
 }
 
 /** A step's status on the register read (contract §1): the stored stage

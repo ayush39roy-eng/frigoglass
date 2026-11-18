@@ -6,6 +6,7 @@
  * `backend/api/routers/projects.py`.
  */
 
+import type { EditBase } from '@/lib/api/edit-conflict';
 import { apiGet, apiSend, apiSendWithHeaders, type ApiRequestOptions } from '@/lib/api/client';
 import { readRecalcHeaders, type PatchRecalcSignal } from '@/lib/api/priority-move';
 
@@ -82,7 +83,8 @@ export interface ProjectUpdateResult {
  *  headers, read verbatim here. */
 export async function updateProject(
   projectId: string,
-  body: ProjectUpdateRequest,
+  /** P47 (ADR 0059 C1): `base` = the starting value of each changed field. */
+  body: ProjectUpdateRequest & { base?: EditBase },
 ): Promise<ProjectUpdateResult> {
   const { data, headers } = await apiSendWithHeaders<ProjectRead>('PATCH', `/projects/${encodeURIComponent(projectId)}`, body);
   return { project: data, recalc: readRecalcHeaders(headers) };

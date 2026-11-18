@@ -3,6 +3,7 @@
 // P9-T03; reconciled against the regenerated OpenAPI in the P9 gate (P3-T07
 // contract test). Same convention as every per-surface `api/types.ts`.
 
+import type { EditBase } from '@/lib/api/edit-conflict';
 import type { RoleName } from '@/types/enums';
 import type { Id } from '@/types/common';
 
@@ -50,6 +51,8 @@ export interface UserCreateRequest {
 export interface UserUpdateRequest extends Partial<UserCreateRequest> {
   is_active?: boolean;
   manager_id?: Id | null;
+  /** P47 (ADR 0059 C1): the value as read of each field sent; `{}` = no check. */
+  base?: EditBase;
 }
 
 /** One row of `GET /roles`. `assignable` is false for Admin / Super Admin when

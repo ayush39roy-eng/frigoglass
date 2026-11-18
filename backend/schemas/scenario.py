@@ -19,6 +19,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from models.enums import HardGateReason, ProjectPriority, ScenarioEntityType
+from schemas.edit_conflict import EditBase
 from schemas.priority import MAX_SCORE_KEYS, DimensionScoreValue
 
 
@@ -35,7 +36,12 @@ class ScenarioPriorityScoreChange(BaseModel):
     scores: dict[
         Annotated[str, StringConstraints(min_length=1, max_length=64)], DimensionScoreValue
     ] = Field(max_length=MAX_SCORE_KEYS)
+    #: P47-R02: omitted = the stored gates are kept (a new score starts with
+    #: none); `[]` clears them.
     hard_gates: list[HardGateReason] = Field(default_factory=list)
+    #: P47 (ADR 0059): this row's `{"scores": {...}, "hard_gates": [...]}` as
+    #: the user read them. Optional.
+    base: EditBase = Field(default_factory=dict)
 
 
 class ScenarioApplyRequest(BaseModel):

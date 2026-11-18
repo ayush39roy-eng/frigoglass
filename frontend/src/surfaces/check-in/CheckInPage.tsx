@@ -11,7 +11,15 @@ import { ErrorState } from '@/components/shared/error-state';
 import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { CHECKIN_BATCH_MAX, type CheckInDueProject, type CheckInDueSummary } from '@/lib/api/check-ins';
+import {
+  CHECKIN_BATCH_MAX,
+  type CheckInDueProject,
+  type CheckInDueStage,
+  type CheckInDueSummary,
+} from '@/lib/api/check-ins';
+import { conflictLeafField, type EditBase } from '@/lib/api/edit-conflict';
+import { editFreshness } from '@/lib/use-edit-freshness';
+import { useAnyEditInProgress, useEditSession } from '@/stores/edit-session';
 import { formatInteger, formatWeek } from '@/lib/format';
 import { usePlanClock } from '@/lib/plan-clock';
 import { useHubSelection } from '@/stores/hub-filter';
@@ -21,8 +29,16 @@ import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { useCheckInsDue } from './api';
 import { CheckInResultPanel } from './components/check-in-result-panel';
 import { StageCheckInRow } from './components/stage-check-in-row';
-import { useCheckInSubmit } from './hooks/use-check-in-submit';
-import { initialDraft, planBatch, stageKey, type CheckInDraft, type CheckInErrors } from './lib/check-in-draft';
+import { conflictMatchesEntry, useCheckInSubmit } from './hooks/use-check-in-submit';
+import {
+  initialDraft,
+  planBatch,
+  stageKey,
+  stageRead,
+  withTheirValues,
+  type CheckInDraft,
+  type CheckInErrors,
+} from './lib/check-in-draft';
 
 const SURFACE = SURFACES.find((s) => s.path === '/check-in');
 /** Above this many project groups the list is virtualized (CLAUDE.md: any list over 100). */
@@ -165,22 +181,35 @@ function VirtualGroups({ projects, props }: { projects: CheckInDueProject[]; pro
  */
 export default function CheckInPage(): React.JSX.Element {
   const hub = useHubSelection();
-  const query = useCheckInsDue(hub, true);
+  // P47 (ADR 0059): refetch on focus and every 60 s while nobody edits.
+  const editInProgress = useAnyEditInProgress();
+  const query = useCheckInsDue(hub, true, editFreshness(editInProgress));
   const submitFlow = useCheckInSubmit();
   // P37 R37-10: while the planning year is closed the server refuses every
   // check-in (409 PLAN_YEAR_CLOSED); the page says so and offers no submit.
   const yearClosed = usePlanClock()?.closed ?? false;
   const [drafts, setDrafts] = React.useState<Record<string, CheckInDraft>>({});
+  /** P47 (ADR 0059): each row's stage values when the user first changed it (`base`). */
+  const [reads, setReads] = React.useState<Record<string, EditBase>>({});
   const [showErrors, setShowErrors] = React.useState(false);
   const [serverErrors, setServerErrors] = React.useState<Record<string, string>>({});
   const [formError, setFormError] = React.useState<string | null>(null);
 
   const projects = React.useMemo(() => query.data?.projects ?? [], [query.data]);
-  const plan = React.useMemo(() => planBatch(projects, drafts), [projects, drafts]);
+  const plan = React.useMemo(() => planBatch(projects, drafts, reads), [projects, drafts, reads]);
+  const stageByKey = React.useMemo(() => {
+    const out = new Map<string, CheckInDueStage>();
+    for (const p of projects) for (const st of p.stages) out.set(stageKey(p.project_id, st.step_id), st);
+    return out;
+  }, [projects]);
+  // A row with a draft is an edit in progress: the poll waits until it is submitted.
+  useEditSession(Object.keys(drafts).length > 0);
   const anyWritable = projects.some((p) => p.stages.some((s) => s.can_check_in));
   const invalidCount = Object.keys(plan.errors).length;
 
   const onChange = React.useCallback((key: string, next: CheckInDraft) => {
+    const stage = stageByKey.get(key);
+    if (stage) setReads((cur) => (key in cur ? cur : { ...cur, [key]: stageRead(stage) }));
     setDrafts((cur) => ({ ...cur, [key]: next }));
     setServerErrors((cur) => {
       if (!(key in cur)) return cur;
@@ -188,16 +217,22 @@ export default function CheckInPage(): React.JSX.Element {
       delete copy[key];
       return copy;
     });
-  }, []);
+  }, [stageByKey]);
 
   const onSubmit = async (): Promise<void> => {
     setFormError(null);
     setShowErrors(true);
     if (plan.entries.length === 0 || invalidCount > 0 || plan.entries.length > CHECKIN_BATCH_MAX) return;
     const keys = plan.keys;
-    const result = await submitFlow.submit(plan.entries);
+    const entries = plan.entries;
+    const result = await submitFlow.submit(entries);
     if (result.ok) {
       setDrafts((cur) => {
+        const copy = { ...cur };
+        for (const key of keys) delete copy[key];
+        return copy;
+      });
+      setReads((cur) => {
         const copy = { ...cur };
         for (const key of keys) delete copy[key];
         return copy;
@@ -215,6 +250,32 @@ export default function CheckInPage(): React.JSX.Element {
       setServerErrors(mapped);
       setFormError(`${formatInteger(result.entryErrors.length)} of ${formatInteger(keys.length)} stages were rejected. Nothing was saved; fix them and submit again.`);
       return;
+    }
+    if (result.conflictChoice === 'theirs' && result.conflicts) {
+      // P47 (ADR 0059 C2): the stored values replace mine for the conflicting
+      // fields only; every other row and field stays in the form, unsaved.
+      const theirsByKey = new Map<string, Record<string, unknown>>();
+      entries.forEach((entry, i) => {
+        const key = keys[i];
+        if (!key) return;
+        for (const c of result.conflicts ?? []) {
+          if (!conflictMatchesEntry(c, entry)) continue;
+          theirsByKey.set(key, { ...(theirsByKey.get(key) ?? {}), [conflictLeafField(c.field)]: c.current_value });
+        }
+      });
+      setDrafts((cur) => {
+        const copy = { ...cur };
+        for (const [key, stored] of theirsByKey) {
+          const draft = copy[key];
+          if (draft) copy[key] = withTheirValues(draft, stored);
+        }
+        return copy;
+      });
+      setReads((cur) => {
+        const copy = { ...cur };
+        for (const [key, stored] of theirsByKey) copy[key] = { ...(copy[key] ?? {}), ...stored };
+        return copy;
+      });
     }
     setFormError(result.message);
   };
@@ -323,6 +384,7 @@ export default function CheckInPage(): React.JSX.Element {
         </>
       )}
 
+      {submitFlow.conflictDialog}
       <CheckInResultPanel
         flow={submitFlow.flow}
         runState={submitFlow.runState}

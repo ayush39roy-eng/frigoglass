@@ -280,13 +280,16 @@ describe('VIP edit mode (MATRIX WRITE only)', () => {
 
     const famControls = within(dialog).getByRole('group', { name: 'Edit Family Fridge for Commercial Appliances' });
     await user.click(within(famControls).getByRole('button', { name: 'VIP' }));
-    await waitFor(() => expect(client.apiSend).toHaveBeenCalledWith('PATCH', '/vip-items/fam', { highlighted: false }));
+    // P47 (ADR 0059 C1): each item write carries the value as read.
+    await waitFor(() =>
+      expect(client.apiSend).toHaveBeenCalledWith('PATCH', '/vip-items/fam', { highlighted: false, base: { highlighted: true } }),
+    );
 
     client.apiSend.mockClear();
     await user.click(within(famControls).getByRole('button', { name: 'Move Family Fridge for Commercial Appliances down' }));
     await waitFor(() => expect(client.apiSend).toHaveBeenCalledTimes(2));
-    expect(client.apiSend).toHaveBeenNthCalledWith(1, 'PATCH', '/vip-items/fam', { sort_order: 2 });
-    expect(client.apiSend).toHaveBeenNthCalledWith(2, 'PATCH', '/vip-items/monster', { sort_order: 1 });
+    expect(client.apiSend).toHaveBeenNthCalledWith(1, 'PATCH', '/vip-items/fam', { sort_order: 2, base: { sort_order: 1 } });
+    expect(client.apiSend).toHaveBeenNthCalledWith(2, 'PATCH', '/vip-items/monster', { sort_order: 1, base: { sort_order: 2 } });
     expect(within(famControls).getByRole('button', { name: 'Move Family Fridge for Commercial Appliances up' })).toBeDisabled();
 
     client.apiSend.mockClear();

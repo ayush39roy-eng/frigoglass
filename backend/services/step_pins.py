@@ -68,6 +68,7 @@ from schemas.step_pin import (
     StepPinErrorCode,
     StepPinItem,
 )
+from services.edit_conflict import FieldConflict, raise_edit_conflict, step_conflicts
 from services.hub_scope import hub_scope_filter, is_hub_in_scope
 from services.priority_move import (
     AutoRecalcOutcome,
@@ -376,6 +377,33 @@ async def save_step_pins(
             unchanged_count += 1
             continue
         changed.append((i, item, row))
+
+    # P47 (ADR 0059 C1): under the row locks, before any rule or write: a
+    # changed pair whose stored weeks are no longer the item's `base` refuses
+    # the whole batch (409 `EDIT_CONFLICT`); nothing is written or dispatched.
+    edit_conflicts: list[FieldConflict] = []
+    for _i, item, row in changed:
+        if item.base:
+            project = projects[item.project_id]
+            edit_conflicts.extend(
+                step_conflicts(
+                    project_id=project.id,
+                    project_name=project.name,
+                    hub_id=project.hub_id,
+                    step_id=row.step_template_id,
+                    step_row_id=row.id,
+                    base=item.base,
+                    requested={
+                        "manual_start_week": item.manual_start_week,
+                        "manual_end_week": item.manual_end_week,
+                    },
+                    current={
+                        "manual_start_week": row.manual_start_week,
+                        "manual_end_week": row.manual_end_week,
+                    },
+                )
+            )
+    await raise_edit_conflict(db, principal, edit_conflicts)
 
     range_errors: list[StepPinError] = []
     for i, item, _row in changed:

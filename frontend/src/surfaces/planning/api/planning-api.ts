@@ -11,6 +11,7 @@
  * module docstring for why it is not wired in this task.
  */
 
+import type { EditBase } from '@/lib/api/edit-conflict';
 import { apiGet, apiSend, ApiError, type ApiRequestOptions } from '@/lib/api/client';
 
 import type {
@@ -60,7 +61,8 @@ export function createEngineer(body: EngineerCreateRequest): Promise<EngineerRea
 
 export function updateEngineer(
   engineerId: string,
-  body: EngineerUpdateRequest,
+  /** P47 (ADR 0059 C1): with `base`, the starting value of each changed field. */
+  body: EngineerUpdateRequest & { base?: EditBase },
 ): Promise<EngineerRead> {
   return apiSend<EngineerRead>('PATCH', `/engineers/${engineerId}`, body);
 }
@@ -98,7 +100,8 @@ export function createChamber(body: ChamberCreateRequest): Promise<ChamberRead> 
 
 export function updateChamber(
   chamberId: string,
-  body: ChamberUpdateRequest,
+  /** P47 (ADR 0059 C1): with `base`, the starting value of each changed field. */
+  body: ChamberUpdateRequest & { base?: EditBase },
 ): Promise<ChamberRead> {
   return apiSend<ChamberRead>('PATCH', `/chambers/${chamberId}`, body);
 }

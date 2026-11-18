@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from schemas.edit_conflict import EditBase
 from schemas.project import RecalcStatus
 
 #: Items per batch: 236 projects × 14 steps fit the Gantt's whole page in a
@@ -48,6 +49,9 @@ class StepPinItem(BaseModel):
     step_template_id: str = Field(min_length=1, max_length=64)
     manual_start_week: int | None
     manual_end_week: int | None
+    #: P47 (ADR 0059): `{"manual_start_week": <int|null>, "manual_end_week":
+    #: <int|null>}` as the user read them. Optional.
+    base: EditBase = Field(default_factory=dict)
 
 
 class StepPinsRequest(BaseModel):

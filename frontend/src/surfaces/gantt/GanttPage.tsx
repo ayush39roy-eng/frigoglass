@@ -12,6 +12,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { PriorityMoveProvider } from '@/components/shared/priority-move/priority-move-provider';
 import { ApiError } from '@/lib/api/client';
+import { editFreshness } from '@/lib/use-edit-freshness';
+import { useAnyEditInProgress, useEditSession } from '@/stores/edit-session';
 import { hasHubSelection, useHubFilter, useHubSelection, type HubSelection } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { PlanWeekNotice } from '@/components/shared/plan-week-notice';
@@ -36,7 +38,8 @@ import type { FreezeToggleRequest, GanttProjectRow } from './api/types';
 import { ZOOM_DEFAULT_PX } from './lib/gantt-coordinates';
 import { STEP_PINS_MAX } from './api/step-pins-api';
 import { StepPinEditProvider, useStepPinDraftState } from './hooks/use-step-pin-edit';
-import { useStepPinSave } from './hooks/use-step-pin-save';
+import { conflictMatchesPin, useStepPinSave } from './hooks/use-step-pin-save';
+import { pinKey } from './lib/step-pin-drafts';
 import { StepPinDiscardDialog, StepPinEditBar, StepPinLeaveGuard } from './components/step-pin-edit-bar';
 import { StepPinSavePanel } from './components/step-pin-save-panel';
 import { StepCountChips } from './components/step-count-chips';
@@ -198,7 +201,9 @@ export default function GanttPage(): React.JSX.Element {
     () => toQueryParams(hub, filters, debouncedQ),
     [hub, filters, debouncedQ],
   );
-  const ganttQuery = useGantt(queryParams);
+  // P47 (ADR 0059): refetch on focus and every 60 s while no step week is drafted.
+  const editInProgress = useAnyEditInProgress();
+  const ganttQuery = useGantt(queryParams, editFreshness(editInProgress));
   const hasRun = ganttQuery.data?.has_active_schedule_run === true;
   const activeRun = useActiveScheduleRun(hasRun);
   const freezeMut = useToggleFreeze();
@@ -231,20 +236,32 @@ export default function GanttPage(): React.JSX.Element {
     locked: pinSave.saving,
   });
   const [pinBarError, setPinBarError] = React.useState<string | null>(null);
+  useEditSession(pinDrafts.list.length > 0);
   const [confirmPinCancel, setConfirmPinCancel] = React.useState(false);
   const pinTooMany =
     pinDrafts.list.length > STEP_PINS_MAX
       ? `One save takes at most ${formatInteger(STEP_PINS_MAX)} steps. Save fewer at a time.`
       : null;
-  const { list: pinList, reset: resetPins, applyServerErrors } = pinDrafts;
+  const { list: pinList, reset: resetPins, applyServerErrors, dropKeys: dropPinKeys } = pinDrafts;
   const { save: savePins } = pinSave;
   const handlePinSave = React.useCallback(async () => {
     const sent = pinList;
     setPinBarError(null);
-    const result = await savePins({ items: pinDrafts.items() });
+    const items = pinDrafts.items();
+    const result = await savePins({ items });
     if (result.ok) {
       resetPins();
       return;
+    }
+    if (result.conflictChoice === 'theirs' && result.conflicts) {
+      // P47 (ADR 0059 C2): their stored weeks win for the conflicting steps
+      // only; every other drafted step stays, unsaved.
+      const conflicts = result.conflicts;
+      dropPinKeys(
+        items
+          .filter((item) => conflicts.some((c) => conflictMatchesPin(c, item)))
+          .map((item) => pinKey(item.project_id, item.step_template_id)),
+      );
     }
     applyServerErrors(result.itemErrors, sent);
     setPinBarError(result.message);
@@ -256,7 +273,7 @@ export default function GanttPage(): React.JSX.Element {
         return next;
       });
     }
-  }, [pinList, savePins, pinDrafts, resetPins, applyServerErrors]);
+  }, [pinList, savePins, pinDrafts, resetPins, applyServerErrors, dropPinKeys]);
   const discardPins = React.useCallback(() => {
     resetPins();
     setPinBarError(null);
@@ -529,6 +546,7 @@ export default function GanttPage(): React.JSX.Element {
       )}
 
       <StepPinLeaveGuard when={pinDrafts.list.length > 0} />
+      {pinSave.conflictDialog}
       <StepPinDiscardDialog
         open={confirmPinCancel}
         title="Discard your step weeks?"

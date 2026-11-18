@@ -30,6 +30,7 @@ from models.enums import (
     ScoringTag,
 )
 from schemas.category import CategoryCodeOut
+from schemas.edit_conflict import EditBase
 
 
 class DimensionPoints(BaseModel):
@@ -83,7 +84,12 @@ class PriorityScoreUpdateRequest(BaseModel):
     scores: dict[
         Annotated[str, StringConstraints(min_length=1, max_length=64)], DimensionScoreValue
     ] = Field(max_length=MAX_SCORE_KEYS)
+    #: P47-R02: omitted = the stored gates are kept (a new score starts with
+    #: none); `[]` clears them.
     hard_gates: list[HardGateReason] = Field(default_factory=list)
+    #: P47 (ADR 0059): `{"scores": {key: 0..5|null}, "hard_gates": [...]}` as
+    #: the user read them, for the keys this request sends. Optional.
+    base: EditBase = Field(default_factory=dict)
 
 
 class PriorityScoreRead(BaseModel):

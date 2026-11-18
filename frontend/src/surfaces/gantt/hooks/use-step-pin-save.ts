@@ -2,7 +2,9 @@ import * as React from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
+import { CONFLICT_COPY, conflictFieldPrefix, editConflicts, keepMineBase, type EditConflict } from '@/lib/api/edit-conflict';
 import { apiErrorMessage } from '@/lib/api/error-messages';
+import { useEditConflict } from '@/lib/use-edit-conflict';
 import { fetchScheduleRunChanges } from '@/lib/api/priority-move';
 import { queryKeys } from '@/lib/query-keys';
 import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
@@ -10,7 +12,7 @@ import { invalidateRunDerivedQueries, useScheduleRunFollow } from '@/lib/use-sch
 import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
 
 import { saveStepPins, stepPinErrors } from '../api/step-pins-api';
-import type { StepPinError, StepPinsRequest } from '../api/types';
+import type { StepPinError, StepPinItem, StepPinsRequest, StepPinsResponse } from '../api/types';
 
 /**
  * P40-T03c (ADR 0054 R40-11, docs/API_CONTRACT_P40.md §1): save the drafted
@@ -62,6 +64,27 @@ export interface StepPinSaveResult {
   itemErrors: StepPinError[];
   /** A batch-level message for the edit bar. */
   message: string | null;
+  /** P47 (ADR 0059): the 409 `EDIT_CONFLICT` fields after "Use theirs" (the
+   *  page drops those steps' drafts only) or a closed dialog. */
+  conflicts?: EditConflict[];
+  conflictChoice?: 'theirs' | 'dismissed';
+}
+
+/** The batch item a conflict names: `entity: project_step`, `id` = the
+ *  project, `field` = `<step>.manual_start_week` / `.manual_end_week`. */
+export function conflictMatchesPin(conflict: EditConflict, item: StepPinItem): boolean {
+  const step = conflictFieldPrefix(conflict.field);
+  return conflict.id === item.project_id && (step === null || step === item.step_template_id);
+}
+
+function keepMinePins(body: StepPinsRequest, conflicts: readonly EditConflict[]): StepPinsRequest {
+  return {
+    items: body.items.map((item) => {
+      const mine = conflicts.filter((c) => conflictMatchesPin(c, item));
+      if (mine.length === 0 || !item.base) return item;
+      return { ...item, base: keepMineBase(item.base, mine) };
+    }),
+  };
 }
 
 function invalidatePinWrite(queryClient: QueryClient): void {
@@ -81,13 +104,39 @@ export function useStepPinSave() {
   const watcher = useFollowUpRunWatcher();
   const { start: startWatcher } = watcher;
   const [flow, setFlow] = React.useState<StepPinSaveFlow>({ kind: 'idle' });
+  const conflict = useEditConflict();
+  const { ask } = conflict;
 
   const save = React.useCallback(
     async (body: StepPinsRequest): Promise<StepPinSaveResult> => {
       setFlow({ kind: 'saving' });
-      let res;
+      let res: StepPinsResponse;
+      let sent = body;
       try {
-        res = await saveStepPins(body);
+        for (;;) {
+          try {
+            res = await saveStepPins(sent);
+            break;
+          } catch (err) {
+            const conflicts = editConflicts(err);
+            if (conflicts === null) throw err;
+            // P47 (ADR 0059 C2): nothing was written; ask whose weeks to keep.
+            const choice = await ask(conflicts, sent.items.length > 1 ? CONFLICT_COPY.batchNote : undefined);
+            if (choice === 'mine') {
+              sent = keepMinePins(sent, conflicts);
+              continue;
+            }
+            if (choice === 'theirs') invalidatePinWrite(queryClient);
+            setFlow({ kind: 'idle' });
+            return {
+              ok: false,
+              itemErrors: [],
+              message: choice === 'theirs' ? CONFLICT_COPY.batchTheirs : CONFLICT_COPY.dismissed,
+              conflicts,
+              conflictChoice: choice === 'theirs' ? 'theirs' : 'dismissed',
+            };
+          }
+        }
       } catch (err) {
         const itemErrors = stepPinErrors(err);
         const isApi = err instanceof ApiError;
@@ -161,7 +210,7 @@ export function useStepPinSave() {
       });
       return ok;
     },
-    [begin, follow, queryClient, startWatcher],
+    [begin, follow, queryClient, startWatcher, ask],
   );
 
   const close = React.useCallback(() => {
@@ -187,5 +236,7 @@ export function useStepPinSave() {
     saving: flow.kind === 'saving',
     save,
     close,
+    /** P47: the 409 dialog; render once on the page. */
+    conflictDialog: conflict.dialog,
   };
 }

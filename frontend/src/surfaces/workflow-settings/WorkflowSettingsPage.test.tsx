@@ -219,6 +219,14 @@ describe('WorkflowSettingsPage — lead times, calendars, chambers', () => {
         medical_leave_days: 0,
         casual_leave_days: 0,
         annual_leave_days: 20,
+        // P47 (ADR 0059 C1): the PUT writes all five, so all five carry their cached value.
+        base: {
+          weekdays_per_week: 5,
+          national_holiday_days: 12,
+          medical_leave_days: 0,
+          casual_leave_days: 0,
+          annual_leave_days: 25,
+        },
       },
     });
   });
@@ -235,7 +243,10 @@ describe('WorkflowSettingsPage — lead times, calendars, chambers', () => {
     await user.type(breakdown, '5');
     expect(within(row).getByTestId('preview-working')).toHaveTextContent('41 preview');
     await user.click(within(row).getByRole('button', { name: 'Save IN-CH-2' }));
-    expect(hooks.saveChamber).toHaveBeenCalledWith({ chamberId: 'ch-2', body: { breakdown_weeks: 5 } });
+    expect(hooks.saveChamber).toHaveBeenCalledWith({
+      chamberId: 'ch-2',
+      body: { breakdown_weeks: 5, base: { breakdown_weeks: 11 } },
+    });
   });
 });
 

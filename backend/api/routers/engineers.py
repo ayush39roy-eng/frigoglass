@@ -74,6 +74,7 @@ from services.capacity_supply import (
     to_days,
 )
 from services.categories import check_eligibility_codes, load_catalog
+from services.edit_conflict import check_base, field_refs
 from services.engineer_status import (
     CAUSE_ENGINEER_DEACTIVATED,
     ENGINEER_DEACTIVATED_TRIGGER,
@@ -369,9 +370,23 @@ async def update_engineer(
     await lock_engineers(db, [engineer.id], share=False)
     engineer = await _get_engineer_or_404(db, engineer_id, current_user)
     _require_name_only_if_inactive(engineer, body)
+    updates = body.model_dump(exclude_unset=True, exclude={"base"})
+    # P47 (ADR 0059 C1): compared on the locked, re-read row.
+    await check_base(
+        db,
+        current_user,
+        entity="engineer",
+        entity_id=engineer.id,
+        label=engineer.name,
+        base=body.base,
+        requested=updates,
+        current=lambda name: getattr(engineer, name, None),
+        refs=field_refs("Engineer", str(engineer.id)),
+        hub_id=engineer.hub_id,
+    )
 
     before_state = engineer_audit_state(engineer)
-    for field_name, value in body.model_dump(exclude_unset=True).items():
+    for field_name, value in updates.items():
         setattr(engineer, field_name, value)
     try:
         await db.flush()
@@ -427,7 +442,7 @@ DEACTIVATION_PREVIEW_RATE_LIMIT = TokenBucketLimiter(capacity=20, refill_per_sec
 
 
 def _require_name_only_if_inactive(engineer: Engineer, body: EngineerUpdateRequest) -> None:
-    if not engineer.active and body.model_fields_set - {"name"}:
+    if not engineer.active and body.model_fields_set - {"name", "base"}:
         raise CodedHTTPException(
             status.HTTP_409_CONFLICT,
             "ENGINEER_INACTIVE",

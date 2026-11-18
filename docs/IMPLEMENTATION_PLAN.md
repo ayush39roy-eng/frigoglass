@@ -2682,8 +2682,24 @@ Render demo (dev mode).
 
 | ID | Task | Owner | Depends on | Acceptance | Status |
 |---|---|---|---|---|---|
-| P46-T01 | ADR 0058, plan, OQ #107 | orchestrator | — | docs | DONE (MEMORY 2026-11-18 P46-T01) |
+| P46-T01 | ADR 0058, plan, OQ #113 | orchestrator | — | docs | DONE (MEMORY 2026-11-18 P46-T01) |
 | P46-T02 | Backend: dev-mode startup provisioning of the 2 accounts, `/me/dev-users` = those 2, `POST /me/dev-login` (constant-time, generic 401, rate limit), `SUPER_ADMIN_ONLY` guards per ADR 0058 D1 on every write path; tests | backend-builder | T01 | 403 probes as Admin + positive as Super Admin for every D1 item; login tests; pytest/ruff/mypy; MEMORY | DONE (MEMORY 2026-11-18 P46-T02) |
 | P46-T03 | Frontend: login screen with the 2 accounts via `/me/dev-login` (username or email), retire the shared password; hide/disable D1 controls for non-Super-Admin ("Super Admin only"); tests | frontend-builder | T01 | tsc/eslint/vitest; MEMORY | DONE (MEMORY 2026-11-18 P46-T03) |
 | P46-T04 | Gate: qa, workflow, security | three gatekeepers | T02, T03 | three PASSes | DONE (MEMORY 2026-11-18 P46-T04 gate closed) |
 | P46-R01 | Security follow-ups: M-1 revoke delegate bypass (global Admin always `SUPER_ADMIN_ONLY`; ADR 0012 delegate kept for non-Admin managers), L-1 dev-login limiter keyed on left-most `X-Forwarded-For`, bucket dict bounded (LRU 10k) | backend-builder | T04 | chain test + delegate tests; XFF / LRU tests; p46, project_access, user-admin suites; ruff/mypy; MEMORY | DONE (MEMORY 2026-11-18 P46-R01) |
+
+## P47 — Concurrent edits: field-level conflict check, no silent overwrite (ADR 0059)
+
+Opened 2026-11-18 (owner): several users now edit the hosted demo at once. Two people saving the
+same field must not silently overwrite each other. No schema or data change is allowed (standing
+decision, 2026-11-18).
+
+| ID | Task | Owner | Depends on | Acceptance | Status |
+|---|---|---|---|---|---|
+| P47-T01 | ADR 0059, plan, OQ #114 | orchestrator | — | docs | DONE (MEMORY 2026-11-18 P47-T01) |
+| P47-T02 | Backend: `services/edit_conflict.py`; optional `base` + 409 `EDIT_CONFLICT` on every C3 endpoint (inventory them), financial values hidden, `changed_by/at` from audit; tests incl. two-client races, different-field edits both succeed, batch atomic, no-base = old behaviour | backend-builder | T01 | pytest/ruff/mypy; endpoint inventory in MEMORY | DONE (MEMORY 2026-11-18 P47-T02) |
+| P47-T03 | Frontend: send `base` on every C3 edit; shared conflict dialog (Use theirs / Keep mine), batch keeps non-conflicting edits; refetch on focus + 60 s poll when idle on editable grids/forms; tests | frontend-builder | T01 (contract in ADR) | tsc/eslint/vitest; MEMORY | DONE (MEMORY 2026-11-18 P47-T03) |
+| P47-T04 | Gate: qa, workflow, security | three gatekeepers | T02, T03 | three PASSes | DONE (MEMORY 2026-11-18 P47-T04 gate closed) |
+| P47-R01 | Security gate follow-ups: M-1 authorise before `check_base` on every C3 endpoint (users PATCH, project PATCH cancel / hub move, unfreeze, chamber region); M-2 financial fields `null` in PATCH / freeze responses and 422 `FINANCIAL_FIELDS_HIDDEN` in edit or `base` for a caller without Project Registration READ; L-1 VIP link `changed_by` only from rows naming a visible project, no entity fallback; I-1 VIP pin re-authorised after the lock | backend-builder | T04 (security) | `tests/test_p47_r01_security.py`; p47 + related suites; ruff/mypy; MEMORY | DONE (MEMORY 2026-11-18 P47-R01) |
+| P47-R02 | `hard_gates` written only when sent (`PUT /priorities/{id}`, `POST /scenarios/apply`): a scores-only save keeps the stored gates, `[]` clears, a new score starts with none | backend-builder | T02 | `tests/test_p47_r02_hard_gates.py`; priorities / scenario / matrix / p47 suites; ruff/mypy; MEMORY | DONE (MEMORY 2026-11-18 P47-R02) |
+| P47-R03 | Frontend QA fixes: QA-1 stage-row PATCH sends only the changed fields, each with its `base`; QA-2 `hard_gates` in body and `base` only when the gates change (served list as base), else omitted (Matrix grid, compare dialog, workspace scoring, scenario Apply); test that a concurrent gate change survives a scores-only save | frontend-builder | T04 (qa), R02 | Matrix / workspace / scoring vitest; tsc/eslint; MEMORY | DONE (MEMORY 2026-11-18 P47-R03) |

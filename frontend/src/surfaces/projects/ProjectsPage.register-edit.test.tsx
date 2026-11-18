@@ -104,9 +104,13 @@ function rowEl(name: string): HTMLElement {
   return el;
 }
 
-const saveBody = () => {
+/** The batch body; P47 `base` is stripped unless asked for (the tests that
+ *  pin `base` pass `true`). */
+const saveBody = (withBase = false) => {
   const call = http.send.mock.calls.find((c) => c[1] === '/projects/register-edits');
-  return call?.[2] as { edits: Record<string, unknown>[] } | undefined;
+  const body = call?.[2] as { edits: Record<string, unknown>[] } | undefined;
+  if (!body || withBase) return body;
+  return { ...body, edits: body.edits.map(({ base: _base, ...rest }) => rest) };
 };
 
 const NOT_NEEDED = {
@@ -211,10 +215,16 @@ describe('Projects register — Edit mode (D35-2)', () => {
 
     await user.click(screen.getByTestId('register-edit-save'));
     await waitFor(() => expect(saveBody()).toBeDefined());
-    expect(saveBody()).toEqual({
+    // P47 (ADR 0059 C1): each row carries the served value of each field it changes.
+    expect(saveBody(true)).toEqual({
       edits: [
-        { project_id: 'a', status: 'On Hold', leader_engineer_id: 'eng-2' },
-        { project_id: 'b', actual_end_week: 10 },
+        {
+          project_id: 'a',
+          status: 'On Hold',
+          leader_engineer_id: 'eng-2',
+          base: { status: 'In Development', leader_engineer_id: 'eng-1' },
+        },
+        { project_id: 'b', actual_end_week: 10, base: { actual_end_week: null } },
       ],
     });
   });
@@ -438,7 +448,14 @@ describe('Projects register — P35-T08 extras', () => {
     await user.click(screen.getByTestId('register-edit-save'));
     await waitFor(() => expect(saveBody()).toBeDefined());
     const staged = { status: 'Commercialized', lab_effort_weeks: 3.5, leader_engineer_id: null };
-    expect(saveBody()).toEqual({ edits: [{ project_id: 'a', ...staged }, { project_id: 'c', ...staged }] });
+    // P47: the bulk edit carries a per-row base, as read for each row.
+    const base = { status: 'In Development', lab_effort_weeks: null, leader_engineer_id: 'eng-1' };
+    expect(saveBody(true)).toEqual({
+      edits: [
+        { project_id: 'a', ...staged, base },
+        { project_id: 'c', ...staged, base },
+      ],
+    });
   });
 
   it('select-all ticks every editable row shown', async () => {
@@ -751,7 +768,7 @@ describe('Projects register — P44-T01 the row Edit edits in place', () => {
     await user.click(screen.getByTestId('register-edit-save'));
     await waitFor(() => expect(saveBody()).toBeDefined());
     expect(http.send.mock.calls.filter((c) => c[1] === '/projects/register-edits')).toHaveLength(1);
-    expect(saveBody()).toEqual({
+    expect(saveBody(true)).toEqual({
       edits: [
         {
           project_id: 'a',
@@ -760,6 +777,8 @@ describe('Projects register — P44-T01 the row Edit edits in place', () => {
             { step_code: 'PDD-F', step_excluded: true },
             { step_code: 'PDD-G', step_excluded: true },
           ],
+          // P47: the served flag of each step the patch changes.
+          base: { step_exclusions: { 'PDD-C': true, 'PDD-F': false, 'PDD-G': false } },
         },
       ],
     });

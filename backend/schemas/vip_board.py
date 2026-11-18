@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 from models.enums import HubName, ProjectPriority, ProjectStatus
 from models.vip import VIP_NOTE_MAX, VIP_TITLE_MAX, VipArea, VipPillar, VipStatusTag
+from schemas.edit_conflict import EditBase
 from services.project_cards import CardHealth
 
 VipTitle = Annotated[
@@ -134,6 +135,8 @@ class VipItemUpdateRequest(BaseModel):
     highlighted: bool | None = None
     parent_id: uuid.UUID | None = Field(default=None, strict=False)
     sort_order: int | None = Field(default=None, ge=0, le=SORT_ORDER_MAX)
+    #: P47 (ADR 0059): the values the user started from, per changed field.
+    base: EditBase = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _reject_null_required(self) -> Self:
@@ -162,6 +165,9 @@ class VipItemLinksRequest(BaseModel):
     project_ids: list[Annotated[uuid.UUID, Field(strict=False)]] = Field(
         max_length=VIP_LINKS_MAX
     )
+    #: P47 (ADR 0059): `{"project_ids": [...]}`, the linked projects the user
+    #: saw (a set). Optional.
+    base: EditBase = Field(default_factory=dict)
 
 
 class VipItemDeleteResponse(BaseModel):

@@ -278,8 +278,8 @@ function ItemControls({
   const swap = (other: VipItem | undefined) => {
     if (!other) return;
     run(async () => {
-      await write.mutateAsync({ kind: 'update', itemId: item.id, body: { sort_order: other.sort_order } });
-      await write.mutateAsync({ kind: 'update', itemId: other.id, body: { sort_order: item.sort_order } });
+      await write.mutateAsync({ kind: 'update', itemId: item.id, body: { sort_order: other.sort_order }, original: item });
+      await write.mutateAsync({ kind: 'update', itemId: other.id, body: { sort_order: item.sort_order }, original: other });
     });
   };
   const busy = write.isPending;
@@ -293,7 +293,9 @@ function ItemControls({
         type="button"
         className={ICON_BUTTON}
         aria-pressed={item.highlighted}
-        onClick={() => run(() => write.mutateAsync({ kind: 'update', itemId: item.id, body: { highlighted: !item.highlighted } }))}
+        onClick={() =>
+          run(() => write.mutateAsync({ kind: 'update', itemId: item.id, body: { highlighted: !item.highlighted }, original: item }))
+        }
         disabled={busy}
       >
         <Star className="size-3" aria-hidden="true" />

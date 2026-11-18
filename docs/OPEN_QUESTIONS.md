@@ -1334,7 +1334,7 @@ an hours-per-week figure for engineers and for chambers.
 The hub cards read Capacity. **Assuming:** Executive Viewer may see these hub-level figures (no
 engineer-level data is shown, so GDPR OQ #8 is not touched).
 
-### 107. The hosted demo runs in dev mode with weak test logins *(2026-11-18, P46, ADR 0058, non-blocking for the dev stage, BLOCKING for go-live)*
+### 113. The hosted demo runs in dev mode with weak test logins *(2026-11-18, P46, ADR 0058, non-blocking for the dev stage, BLOCKING for go-live)*
 
 During development the client signs in with two test accounts whose password equals the username
 (`superadmin` / `admin`). In dev mode the API can also be told to act as any seeded user. The demo
@@ -1342,3 +1342,11 @@ URL is public, so anyone who finds it can sign in and change the data.
 **Assuming until answered:** acceptable while in development, with no real or confidential data on
 the demo. Before go-live, OIDC SSO (Entra ID) replaces the test logins (OQ #9).
 **Who must answer:** owner and client IT.
+
+### 114. Should the app show who else is editing a project right now? *(2026-11-18, P47, ADR 0059 C4, non-blocking)*
+
+Since P47, a second person who saves the same field gets a conflict dialog instead of silently
+overwriting the first person's change. Should the app also show a live "Maria is editing this
+project" marker, so people find out before they start typing?
+**Assuming until answered:** no. The conflict check is enough for v1.
+**Who must answer:** owner and client.

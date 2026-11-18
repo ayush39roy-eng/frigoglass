@@ -13,9 +13,12 @@ import { applyFormPriorityMove } from '@/components/shared/priority-move/form-pr
 import type { PriorityMoveApi } from '@/components/shared/priority-move/priority-move-context';
 import { hubsInScope } from '@/components/shared/hub-filter/hub-scope';
 import { ApiError } from '@/lib/api/client';
+import { CONFLICT_COPY, sendEditWithBase } from '@/lib/api/edit-conflict';
 import type { Hub } from '@/lib/api/reference';
 import { queryKeys } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
+import { useEditConflict } from '@/lib/use-edit-conflict';
+import { useProjectConflictFormat } from '@/lib/use-project-conflict-format';
 import { useSessionStore } from '@/stores/session';
 import type { ProjectStatus } from '@/types/enums';
 
@@ -38,7 +41,16 @@ import {
 } from '../api/register-edits';
 import type { RegisterSaveResult } from '../hooks/use-register-save';
 import { identityChanges } from '../lib/identity-patch';
-import { buildPopupPatch, popupBase, popupChanged, projectStepLock, type PopupDraft } from '../lib/register-popup';
+import { withoutConflictFields } from '../lib/register-edit';
+import {
+  buildPopupPatch,
+  popupBase,
+  popupChanged,
+  popupPatchBase,
+  projectStepLock,
+  type PopupBase,
+  type PopupDraft,
+} from '../lib/register-popup';
 import { RegisterPopupSection } from './register-popup-section';
 
 /**
@@ -323,16 +335,27 @@ function EditBody({
   const [formDirty, setFormDirty] = React.useState(false);
   const loaded = query.data;
   const base = React.useMemo(() => (loaded ? popupBase(loaded, steps.data) : null), [loaded, steps.data]);
+  // P47 (ADR 0059): what the user started from. The identity form starts from
+  // the project as first loaded; the register fields from the values shown
+  // when the first one was changed (re-taken after "Use theirs").
+  const [opened, setOpened] = React.useState<ProjectRead | null>(null);
+  if (loaded && opened === null) setOpened(loaded);
+  const [regStart, setRegStart] = React.useState<PopupBase | null>(null);
+  const conflict = useEditConflict(useProjectConflictFormat());
   const regDirty = base !== null && popupChanged(base, regDraft);
   const anyDirty = formDirty || regDirty;
   React.useEffect(() => {
     onDirtyChange(anyDirty);
   }, [anyDirty, onDirtyChange]);
   const handleFormDirty = React.useCallback((next: boolean) => setFormDirty(next), []);
-  const onRegDraft = React.useCallback((next: PopupDraft) => {
-    setRegDraft(next);
-    setRegErrors([]);
-  }, []);
+  const onRegDraft = React.useCallback(
+    (next: PopupDraft) => {
+      setRegStart((prev) => prev ?? base);
+      setRegDraft(next);
+      setRegErrors([]);
+    },
+    [base],
+  );
   const scopedHubs = React.useMemo(() => hubsInScope(me, hubs) ?? hubs, [me, hubs]);
 
   if (query.isPending) {
@@ -385,10 +408,25 @@ function EditBody({
       // The identity fields that changed, through the existing PATCH. The
       // register fields (hub, leader, actual start, lab testing, times) are not
       // in it: they go in the register batch below.
-      const identity: ProjectUpdateRequest = identityChanges(rest, project);
+      const startedFrom = opened ?? project;
+      let refreshed: ProjectRead | undefined;
+      const identity: ProjectUpdateRequest = identityChanges(rest, startedFrom);
       if (Object.keys(identity).length > 0) {
-        const result = await updateMut.mutateAsync({ projectId: project.id, body: identity });
+        // P47 (ADR 0059): `base` = the form's starting values of the changed fields.
+        const sent = await sendEditWithBase({
+          body: identity,
+          original: startedFrom,
+          send: (withBase) => updateMut.mutateAsync({ projectId: project.id, body: withBase }),
+          ask: conflict.ask,
+          onUseTheirs: async () => {
+            refreshed = (await query.refetch()).data;
+          },
+        });
+        if (sent.outcome === 'dismissed') throw new FormSubmitError(CONFLICT_COPY.dismissed);
         saved = true;
+        const result = sent.outcome === 'saved' ? sent.data : null;
+        // A later Save of this popup starts from what is stored now.
+        setOpened(result?.project ?? refreshed ?? startedFrom);
         // P11 (ADR 0015): a PATCH that changed priority reports the recalc in its
         // X-Schedule-* headers; show the same progress / "Timeline updated" panel.
         if (result?.recalc) {
@@ -415,8 +453,13 @@ function EditBody({
       );
       if (patch) {
         setRegErrors([]);
-        const res = await registerSave({ edits: [patch] });
+        const res = await registerSave({ edits: [{ ...patch, base: popupPatchBase(patch, regStart ?? popupBaseValues) }] });
         if (!res.ok) {
+          if (res.conflictChoice === 'theirs') {
+            // P47: drop my value for the conflicting fields; the others stay.
+            setRegDraft((d) => withoutConflictFields(d, res.conflicts.map((c) => c.field)));
+            setRegStart(null);
+          }
           if (res.forbidden) onForbidden();
           setRegErrors(res.rowErrors);
           const message = res.message ?? 'The status and progress fields were not saved.';
@@ -444,6 +487,8 @@ function EditBody({
   };
 
   return (
+    <>
+    {conflict.dialog}
     <ProjectForm
       key={project.id}
       mode="edit"
@@ -486,6 +531,7 @@ function EditBody({
         />
       }
     />
+    </>
   );
 }
 

@@ -15,7 +15,7 @@ import { saveErrorMessage } from './save-error';
  * the server's; edits show a labelled preview. Booking is still gated by
  * platform count only — downtime is a supply-reporting input.
  */
-type Editable = Required<ChamberSettingUpdateRequest>;
+type Editable = Required<Omit<ChamberSettingUpdateRequest, 'base'>>;
 const FIELDS: { key: keyof Editable; label: string; step: string }[] = [
   { key: 'platforms', label: 'Platforms', step: '1' },
   { key: 'efficiency', label: 'Efficiency', step: '0.05' },

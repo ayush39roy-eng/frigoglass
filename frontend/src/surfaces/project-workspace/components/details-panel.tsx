@@ -8,15 +8,21 @@ import { usePriorityMoveHost } from '@/components/shared/priority-move/priority-
 import { applyFormPriorityMove } from '@/components/shared/priority-move/form-priority-move';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { CONFLICT_COPY, sendEditWithBase } from '@/lib/api/edit-conflict';
 import { useHubs } from '@/lib/api/reference';
 import { formatCurrency, formatDecimal, formatPlanWeek } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { invalidateScoreReaders } from '@/lib/score-readers';
 import { scoringTagsText } from '@/lib/scoring-tags';
+import { useEditConflict } from '@/lib/use-edit-conflict';
+import { useProjectConflictFormat } from '@/lib/use-project-conflict-format';
+import { useEditSession } from '@/stores/edit-session';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
 import { updateProject } from '@/surfaces/registration/api/registration-api';
 import type { ProjectCreateRequest } from '@/surfaces/registration/api/types';
+import { FormSubmitError } from '@/surfaces/registration/components/form-submit-error';
 import { ProjectForm } from '@/surfaces/registration/components/project-form';
+import { identityChanges } from '@/surfaces/projects/lib/identity-patch';
 
 import type { WorkspaceResponse } from '../api/types';
 import { RESTRICTED } from '../lib/people';
@@ -45,6 +51,11 @@ export function DetailsPanel({
   const p = data.project;
   const money = (v: string): string => (financialsVisible ? v : RESTRICTED);
   const [editing, setEditing] = React.useState(false);
+  /** P47 (ADR 0059): the project as it was when "Edit details" was pressed:
+   *  the form starts from it, so it is each changed field's `base`. */
+  const [opened, setOpened] = React.useState<typeof p | null>(null);
+  const conflict = useEditConflict(useProjectConflictFormat());
+  useEditSession(editing);
   const queryClient = useQueryClient();
   const hubsQuery = useHubs();
   const moveHost = usePriorityMoveHost();
@@ -57,7 +68,20 @@ export function DetailsPanel({
         { projectId: p.id, projectName: p.name, priority: p.priority, status: p.status },
         body,
       );
-      return updateProject(p.id, rest);
+      const startedFrom = opened ?? p;
+      // Only the changed fields, each with the value it started from: a field
+      // left as is never overwrites someone else's newer value.
+      const changes = identityChanges(rest, startedFrom, false);
+      if (Object.keys(changes).length === 0) return null;
+      const sent = await sendEditWithBase({
+        body: changes,
+        original: startedFrom,
+        send: (withBase) => updateProject(p.id, withBase),
+        ask: conflict.ask,
+        onUseTheirs: () => queryClient.invalidateQueries({ queryKey: queryKeys.projectWorkspace(p.id) }),
+      });
+      if (sent.outcome === 'dismissed') throw new FormSubmitError(CONFLICT_COPY.dismissed);
+      return sent.outcome === 'saved' ? sent.data : null;
     },
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projectWorkspace(p.id) });
@@ -67,7 +91,7 @@ export function DetailsPanel({
       invalidateScoreReaders(queryClient);
       // P11 (ADR 0015): a priority change in this form schedules by itself; the
       // page's priority-move flow shows the progress and what moved.
-      if (result.recalc && moveHost) {
+      if (result?.recalc && moveHost) {
         moveHost.followPatch(
           { projectId: p.id, projectName: result.project.name, priority: p.priority, status: result.project.status },
           result.recalc,
@@ -83,13 +107,22 @@ export function DetailsPanel({
       <CardHeader>
         <CardTitle>Details</CardTitle>
         {canEditDetails && !editing ? (
-          <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setOpened(p);
+              setEditing(true);
+            }}
+          >
             <Pencil />
             Edit details
           </Button>
         ) : null}
       </CardHeader>
       <CardContent className="space-y-5">
+        {conflict.dialog}
         {editing ? (
           <ProjectForm
             variant="inline"

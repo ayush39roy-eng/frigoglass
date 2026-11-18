@@ -40,6 +40,7 @@ from models.project import Project
 from models.scenario import ScenarioApplyChange, ScenarioApplyRun
 from schemas.scenario import ScenarioPriorityScoreChange
 from services.audit_helpers import priority_score_audit_state
+from services.edit_conflict import FieldConflict, priority_score_conflicts, raise_edit_conflict
 from services.hub_scope import hub_scope_filter
 from services.scoring_rubric import (
     UnknownDimensionKeyError,
@@ -161,9 +162,38 @@ async def apply_priority_score_changes(
         .options(selectinload(PriorityScore.project))
         .where(PriorityScore.project_id.in_(project_ids))
     )
+    if any(c.base for c in changes):
+        # P47 (ADR 0059 C1): the score rows `FOR UPDATE` in id order, re-read.
+        existing_scores_stmt = (
+            existing_scores_stmt.order_by(PriorityScore.id)
+            .with_for_update(of=PriorityScore)
+            .execution_options(populate_existing=True)
+        )
     existing_by_project = {
         s.project_id: s for s in (await db.execute(existing_scores_stmt)).scalars().all()
     }
+    # P47: every row's `base` before anything is staged; any conflict refuses
+    # the whole Apply (409 `EDIT_CONFLICT`), so no version is created.
+    conflicts: list[FieldConflict] = []
+    for change in changes:
+        if change.base:
+            project = projects_by_id[change.project_id]
+            stored = existing_by_project.get(change.project_id)
+            conflicts.extend(
+                priority_score_conflicts(
+                    project_id=project.id,
+                    project_name=project.name,
+                    hub_id=project.hub_id,
+                    score_id=stored.id if stored is not None else None,
+                    stored=priority_score_audit_state(stored, rubric) if stored else None,
+                    base=change.base,
+                    scores=change.scores,
+                    hard_gates=(
+                        change.hard_gates if "hard_gates" in change.model_fields_set else None
+                    ),
+                )
+            )
+    await raise_edit_conflict(db, principal, conflicts)
 
     # --- Everything validated; now stage the run + every change. ---------
     run = ScenarioApplyRun(
@@ -191,7 +221,11 @@ async def apply_priority_score_changes(
             write_project_scores(rubric, score, change.scores)
         except UnknownDimensionKeyError as exc:  # pragma: no cover - validated above
             raise ScenarioApplyValidationError(str(exc)) from exc
-        score.hard_gates = change.hard_gates
+        # P47-R02: the gates are written only when sent, so a scores-only save
+        # keeps the stored list (a new score row starts with `[]`); an
+        # explicit `[]` still clears them.
+        if "hard_gates" in change.model_fields_set:
+            score.hard_gates = change.hard_gates
         score.scored_by_user_id = principal.user_id
         if existing is None:
             db.add(score)
