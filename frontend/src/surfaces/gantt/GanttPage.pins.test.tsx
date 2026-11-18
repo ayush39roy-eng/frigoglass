@@ -175,6 +175,7 @@ async function expand(user: ReturnType<typeof userEvent.setup>, name = 'Cooler A
 }
 
 beforeEach(() => {
+  window.localStorage.removeItem('rpd.gantt.showDetails');
   vi.clearAllMocks();
   useHubFilterStore.getState().setSelection([], []);
   hooks.useActiveScheduleRun.mockReturnValue({ data: null });
@@ -361,9 +362,7 @@ describe('P40-T03c step Start / End weeks', () => {
   });
 
   it('stacks the activity strip by step and shows the served per-step count chips', async () => {
-    const user = userEvent.setup();
     renderWithProviders(<GanttPage />);
-    await user.click(screen.getByRole('button', { name: /Legend & stats/i }));
     const strip = screen.getByTestId('gantt-activity-strip');
     const rects = strip.querySelectorAll('rect[data-step]');
     expect([...rects].map((r) => [r.getAttribute('data-step'), r.getAttribute('data-count')])).toEqual([

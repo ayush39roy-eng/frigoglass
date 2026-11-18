@@ -42922,3 +42922,273 @@ follow-ups are fixed in two passes:
   every drawn Gantt, and the planner Summary reconciles to its headline. No classifier change.
 
 Full backend suite: 3574 passed, 4 known non-P43 failures. Open: OQ #112.
+
+## [2026-11-18] P44-T00 — owner: the Projects row Edit edits in place, no popup (orchestrator)
+
+The owner, with a screenshot of the Projects page showing the "Edit <name>" side sheet opened from a
+row: a row's Edit should allow editing on the list itself (design time, lab time and all), with no
+popup and no second Edit button. The details stay in the project folder. Opened plan P44.
+
+This replaces the 2026-11-17 popup-from-row choice for the Projects list. The project folder's Edit
+popup is kept.
+
+## [2026-11-18] Gantt charts shown by default (owner)
+
+The owner said: "there were bar graphs here showing the type of project and the number completing in that week; bring that back." The charts were not deleted. They were hidden behind `showDetails`, which P40-T01 made off by default. That covers the timeline summary, the step legend, StepCountChips, and GanttChart `showStats`, which draws the PDD / OEM weekly count rows, the activity load strip and the completion markers.
+- I checked `git show` for ed96e6f, 4669e54 and e8872b1, plus the deletion history of the gantt folder. No chart component was removed. The only removals were layout and toggle refactors (`hideStats` became `showDetails`, and the View card became the compact toolbar), so nothing needed restoring.
+- `GanttPage.tsx`: `showDetails` now defaults to true and is kept in localStorage under `rpd.gantt.showDetails`. Reads and writes are wrapped in try/catch and fall back to true.
+- `components/gantt-toolbar.tsx`: the button's accessible name and tooltip now say what a click does: "Hide charts" or "Show charts". aria-pressed was dropped because the name changes with state.
+- Tests: GanttPage.test.tsx was updated, with new default-shown and persistence tests. GanttPage.pins.test.tsx no longer clicks the toggle. Both clear the storage key in beforeEach.
+- Results: tsc clean; eslint on gantt clean; vitest on gantt 20 files / 252 tests pass. app.test.tsx "Project Execution Timeline" still fails on its known, unrelated Zoom slider query. Not fixed.
+
+## [2026-11-18] P45 opened — hub demand cards: P1/P2 shading, need-to-finish, Executive dashboard — orchestrator
+
+Owner request with a screenshot of the Priority board hub strip. Plan P45-T01..T03, D45-1..D45-4.
+OQ #86 (weeks vs hours) and #87 (Executive read of Capacity) are non-blocking assumptions. T01 and
+T02 run in parallel against the field names fixed in the plan.
+
+## [2026-11-18] P45-T02 — hub demand strip: P1/P2 shading, "To finish" lines, on the Executive dashboard — frontend-builder: DONE
+
+**Types and fixtures.** `HubCapacityRow` (`capacity/api/types.ts`) gained the P45-T01 contract fields as named in the plan: `design_demand_by_priority`, `lab_demand_by_priority`, `design_remaining_by_priority`, `lab_remaining_by_priority` (`PriorityLoadSplit`), and `design_need_p1_weeks`, `design_need_p1_p2_weeks`, `lab_need_p1_weeks`, `lab_need_p1_p2_weeks` (number). `capacity/test-fixtures.ts` `hubRow` / `greeceRow` serve them; Greece serves design need P1 = 0 and P1 + P2 = 26.39.
+
+**Strip (`priority-board/components/hub-load-strip.tsx`).**
+- Each Design / Lab bar is five segments from the served `*_demand_by_priority` (P1, P2, P3, P4, Queue), in the bar's booking-status hue: P1 full tone, P2 `/55`, P3, P4 and Queue `/25`. The total width is still the served booked % capped at 100. Each segment is `width × split[k] / served load`, which is drawing only. P3, P4 and Queue are drawn as separate same-tone segments, so the browser never adds served buckets together.
+- The numbers text is unchanged. Screen-reader text adds "P1 X wks, P2 Y wks" from the served split. There is a "P1 · P2 · other" legend.
+- The "To finish" list per D45-3 uses the served need fields, in this order: design P1, design P1 + P2, lab P1, lab P1 + P2. A line shows only when its figure is > 0. When all four are 0 it says "P1 and P2 fit in the remaining capacity". Whole weeks (owner rule 2026-11-13); a positive figure that rounds to 0 prints "<1".
+- One info button per strip ("About the To finish figures") opens a Radix tooltip with the D45-2 text (`TO_FINISH_TOOLTIP`).
+- New props: `heading` (visible h2 that names the section; without it the old aria-label stays), `layout` (`wrap` | `grid`), `className`, `testId`.
+
+**Executive (`dashboard/components/executive/executive-view.tsx`).**
+- The strip renders under the KPI strip, before the type / category donuts, with heading "Hub demand and capacity", grid layout, and the view's `hub` selection.
+- It mounts only when `usePermission('capacity').read` is true, the same gate as the Priority board. Without that permission there is no strip and no `/capacity/hub-load` request.
+- The Executive Viewer role does read Capacity, both in `backend/core/rbac.py` (`Surface.CAPACITY: _R`) and in the PROJECT_AND_STACK §5 matrix, so an Executive Viewer sees the strip. OQ #87 is still the backend's call.
+- The DashboardPage comment and the Detailed-view assertions are kept: the Detailed view still never requests hub-load.
+
+**Tests:**
+- New `hub-load-strip.test.tsx` (9 tests): segment widths from the served figures (capped, and at 50 %), shades, SR text, legend; P1 line hidden when 0; all four lines; the both-zero message; "<1"; the tooltip; heading vs aria-label; disabled; axe.
+- `DashboardPage.test.tsx`: the Executive switch now expects the hub-load read. Two new tests: placement with the India filter, using an Executive Viewer session; and the no-Capacity case (no strip, no request).
+- `executive-view.a11y.test.tsx`: the capacity hook is mocked with fixtures, so the whole-view axe run covers the strip.
+
+**Results:**
+- `tsc -b`: clean.
+- eslint on the touched files: clean.
+- vitest on dashboard, priority-board and capacity: 66 files, 496 tests pass.
+
+Gantt, projects and project-workspace were not touched; their uncommitted changes belong to other sessions. Not committed.
+
+## [2026-11-18] P45-T01 — hub demand cards: priority splits and "to finish" figures on `HubCapacityRow` — backend-builder: DONE
+
+**Fields added to `HubCapacityRow`** (`GET /capacity/hub-load` and `/capacity/hubs`):
+- `design_demand_by_priority`, `lab_demand_by_priority`: `{P1,P2,P3,P4,Queue}` weeks on the full-year demand basis (I25). They sum to `design_load_weeks` / `lab_load_weeks` via `split_to_total`. They are the same object as the existing `*_load_by_priority`.
+- `design_remaining_by_priority`, `lab_remaining_by_priority`: the same split on the remaining-demand basis. They sum to `*_load_remaining_weeks`. A non-frozen P4/Q project contributes 0 (R42-6). A null-priority project stays in the remaining split, in bucket `Queue`, because `scheduling.demand` excludes only P4/Q.
+- `design_need_p1_weeks`, `design_need_p1_p2_weeks`, `lab_need_p1_weeks`, `lab_need_p1_p2_weeks`: D45-2, 2 dp, computed by `services.capacity_priority.need_to_finish` on the SERVED values, so a reader can re-derive them from the response: `max(0, R.P1 − C_rem)` and `max(0, R.P1 + R.P2 − C_rem)`, where R is `*_remaining_by_priority` and C_rem is `*_capacity_remaining`.
+- Design is per capacity hub (own + members, ADR 0042). Lab is per lab region, repeated on each hub of the region.
+
+**Implementation:**
+- `api/routers/capacity.py` accumulates the remaining split in the existing loop over `load_demand`'s per-project figures, with the same `in_full_year` predicate as `members`. No new query: 15 statements per request at HEAD and after, measured on the P13 fixture through a throwaway worktree.
+- `services/capacity_priority.py`: `need_to_finish` added. The module docstring is corrected; see the inconsistency below.
+- `services/export_builder.py`: readable labels for the 20 new Capacity export columns, which keeps `test_capacity_headers_are_human` green. The `*_demand_by_priority_*` columns duplicate `*_load_by_priority_*` in the export.
+
+**Inconsistency found (reported; served meaning unchanged):**
+- The `services/capacity_priority.py` docstring said every split figure came from the active run's stored rows (I6/I7). That has not been true for the hub rows since ADR 0041 R12: `*_load_by_priority` already splits live full-year demand. Only the docstring was wrong, and it now states both bases.
+- The Priority board column `design_weeks` / `lab_weeks` (`remaining_run_load_by_project`) is still run-booked remaining. Σ of the P1 column therefore need not equal `design_remaining_by_priority.P1` summed over hubs.
+
+**RBAC:** Executive Viewer has `Surface.CAPACITY: _R` (all hubs) in `core/rbac.py`, so it can read this endpoint. Pinned by a test. Not changed (OQ #87 holds as assumed).
+
+**Tests:** `backend/tests/test_p45_hub_demand_cards.py`, 8 tests:
+- the pure helper;
+- exact values and reconciliation on both bases;
+- need 0 when P1 fits and positive when it doesn't (add a 1.0 FTE engineer and a chamber);
+- need_p1_p2 ≥ need_p1;
+- lab repeated per region, with an OEM-HCK member;
+- hub scoping;
+- Executive read;
+- constant statement count;
+- seed reconciliation unfiltered and per region.
+
+**Contract:** comment on the `HubCapacityRow` exact row in `test_openapi_frontend_contract.py`. It is red against backend alone, but it is green in the working tree because the parallel P45-T02 session has already mirrored the eight fields in `capacity/api/types.ts`. The only failure in that file is the known P37 `PlanWeek` allowlist item.
+
+**Seed values** (`seed_demo_data` + greedy at W31; R = remaining P1/P2, then C_rem, need_p1/need_p1_p2):
+
+| Hub | Design | Lab |
+|---|---|---|
+| R&D-Greece | 10/18, 50.43, 0/0 | 6/10, 29.62, 0/0 |
+| R&D-India | 10/18, 35.67, 0/0 | 28/22 (India region), 76.04, 0/0 |
+| PD-India | 38/20, 80.26, 0/0 | same as R&D-India |
+| PD-Romania | 0/28, 49.75, 0/0 | 0/16, 87.35, 0/0 |
+
+Every need figure on this seed is 0. The dev DB is at p41a, behind code head, so it was not read.
+
+**Checks:**
+- Suites (capacity, P13, P19, P25, P27, P29, P30, priority board / VIP / P42, P43 export, contract): 589 passed, 1 failed (the pre-existing PlanWeek item).
+- ruff on touched files: clean apart from the pre-existing E501 at contract test line 1160.
+- mypy: no errors in the four touched source files.
+
+Not committed.
+
+## [2026-11-18] P45-T01/T02 reviewed — orchestrator
+
+DOMAIN_RULES gains "Hub demand cards" (display only). OQ #87 answered by the code: Executive Viewer
+has Capacity read (rbac `Surface.CAPACITY: _R`). Known basis difference left as is: the Priority
+board column totals use run-booked load, the cards use live demand. Follow-up candidate: drop the
+duplicated full-year by-priority columns from the Capacity export. T03 (workflow-auditor) opened.
+
+## [2026-11-18] P44-T01 — the Projects row Edit edits in place; step chips in the row (frontend-builder): DONE (not committed)
+
+Owner 2026-11-18: the row "Edit" no longer opens the side sheet; it edits the row in the list. Scope addition
+from the owner the same day (old-tool screenshots): the step-exclusion chips sit in the row, in a "Steps (click to
+exclude)" column. Frontend only; no backend change (`POST /projects/register-edits`, `GET /projects/{id}`,
+`GET /projects/{id}/register-steps` as they are).
+
+**Built (frontend/src/surfaces/projects).**
+- **Per-row Edit/Done toggle** (`components/projects-table.tsx`, Actions column): native button, `aria-pressed`,
+  `aria-label` "Edit <name>" / "Done editing <name>" (visible "Edit"/"Done" starts the name). Shown only for rows
+  the caller may write (Registration write + row hub in `/me` scope + not refused this session); others get the
+  lock ("Read-only: you cannot edit <name>"). Read-only roles: no toggle, unchanged. Several rows may be in edit.
+  Edit focuses the row's first enabled editable cell (Hub, in column order); Done and Escape (inside the row DOM
+  only, not portalled menus) leave the row, keep its draft and return focus to the toggle.
+- **Row cells in edit**: Hub (in-scope hubs, `hub_id`), Status (Draft keeps its badge), Leader (list follows the
+  draft hub), Actual start / end, Design / Lab time (green calculated / orange manual + reset), "Needs lab testing"
+  checkbox under Lab time, Current step (served steps not Skipped and not (draft-)excluded; forward/back note;
+  locked while a PDD↔OEM hub change is pending or the project is frozen), Priority via the existing
+  `PriorityMoveControl` → the page's preview dialog (a priority move is NOT in the draft; it applies on its own),
+  Steps chips. New cells in `register-edit-cells.tsx`: `HubSelect`, `LabTestingToggle`, `CurrentStepSelect`.
+- **Steps column** ("Steps (click to exclude)", after Current step, hideable in Columns): `StepChips` gains
+  `compact` (3 per line, code over a 9-char name, ✓ / "off" / "N/A" / "0 wk", N/A dashed and greyed, current ringed)
+  and `readOnly` (spans with sr-only "<code> <name>: <state>", no buttons). Outside edit the chips display the served
+  state (plus an unsaved draft, dotted as changed). In edit they are native toggle buttons (`aria-pressed`), same
+  locks as the popup (served N/A / Done / frozen / closed / not excludable, then "the new hub uses another workflow",
+  "lab testing change not saved yet"); toggling the lab flag drops staged lab exclusions; a PDD↔OEM hub change drops
+  all staged exclusions and the staged current step; excluding the staged current step drops it (popup rules).
+  Data: each rendered chip cell runs `useQuery(projectRegisterSteps(id))` (staleTime 30 s, no retry), so only the
+  virtualizer's rows (visible + overscan 12, ~25–30 on first paint) fetch; the page observes the same keys for rows
+  in edit or holding a draft. Read-only display only with Registration read (else "—").
+- **Draft model** (`lib/register-edit.ts`): fields + `hub_id`, `certification_testing_required`, `current_step_code`
+  and a per-step `excluded` map; `RegisterRow` = list row + served hub id (hub name → served hub list), lab flag
+  (`GET /projects/{id}`, fetched for rows in edit or with a draft), served exclusion flags and step order
+  (register-steps). Body: only changed keys; `step_exclusions` in workflow order (the popup's key); current step never
+  sent as null. New: `excludedFor`, `toggleDraftExclusion`, `dropDraftExclusions`, `exclusionsChanged`.
+- **Page** (`ProjectsPage.tsx`): toolbar "Edit" removed; the edit "session" is derived (some row in edit or a changed
+  draft) and drives the tick-box column, bulk bar, wider cells, pencil cues, the save bar, the Cards-tab lock and the
+  leave guard. The save bar is unchanged: one batch, one recalculation, per-row errors (step-related codes mark the
+  changed chips), discard dialog, 403 row lockout; a successful Save leaves every row's edit. Rows not in edit show an
+  "Unsaved" badge and their drafted values marked as changed. The table is wrapped in `PriorityMoveContext.Provider`
+  with the page's existing `moveFlow`. The row no longer opens the drawer; "Register project" still does (create).
+  The folder's Edit popup is untouched.
+- **`?edit=<id>` (decision):** opens that row in inline edit, scrolls to it (virtualizer) and focuses its first
+  editable cell. If the project is not in the list shown (filters / hub) or not editable here, a status note says so
+  with a link "Open its project folder". `useEditDeepLink` (UUID check, Registration-write gate) reused.
+- **Left to the project folder** (the popup): name, external code, category, type, financials, comments, charter
+  read-outs, Draft submit (hard gate). The row in edit keeps a "More fields in the project folder" link for these.
+
+**Tests.** New in `ProjectsPage.register-edit.test.tsx` (P44 describe, 11): no toolbar Edit + per-row toggle
+(aria-pressed, name, focus to first cell, other rows read-only, folder link); Done keeps draft (Unsaved badge,
+changed marker, focus back, re-edit shows draft, saved); multi-row (one Done, one in edit) → ONE request with both;
+Escape; hub + lab flag + current step → one patch; `?edit=` opens row in edit / miss note with folder link; axe with
+a row in edit and a drafted row; chips read-only outside edit; chip toggle (click, Space, re-include) → `step_exclusions`
+in workflow order, draft-excluded step leaves the current-step pick, Done shows it; N/A / Done disabled + lab flag
+lock drops staged lab exclusion; frozen locks every chip. Updated: P35 grid tests use the per-row Edit; read-only
+role asserts no row toggle; popup tests (`ProjectsPage.register-popup.test.tsx`, 16) and the drawer edit tests in
+`ProjectsPage.test.tsx` now open the popup through the folder host (`test-folder-edit.tsx` → `WorkspaceEditHost`),
+plus a test that the row Edit opens no popup; deep-link tests rewritten; pencil cues 6 → 10.
+- projects: 6 files / 115 passed. Full vitest: 274 files, 2276 passed, 1 failed = the known app.test.tsx Gantt
+  "Zoom" slider (unrelated; Gantt files are another session's uncommitted work). tsc (`-p tsconfig.app.json`) clean;
+  eslint 0 errors (warnings pre-existing: `useVirtualizer` incompatible-library etc.). Bundle (built to a scratch
+  outDir, not `dist/`): 195.9 KB gzip initial / 400. No `dangerouslySetInnerHTML`, no three.js, no new dependency.
+
+**Notes for the gate (P44-T02).** (1) Steps column makes rows tall (~5 chip lines); it is hideable per user.
+(2) Read-only chip display fetches register-steps per rendered row (cache-shared, ~25–30 requests on first paint,
+more while scrolling); hide the column to avoid it. (3) Comment-only edits in `project-workspace/components/
+workspace-edit-host.tsx` and `workspace-header.tsx`. (4) `StepChips` N/A chips now have a dashed border in the popup
+too (old-tool look). (5) Hub change is gated client-side only by the `/me` hub scope list; the server decides (403).
+
+_Correction to the P44-T01 entry above (frontend-builder): the projects run is 6 files / **111** passed, not 115._
+
+## [2026-11-18] P44-T02 — security-auditor gate: PASS (P44-T01, UI only)
+
+Reviewed the uncommitted P44-T01 diff (projects surface + GanttPage localStorage toggle). Read-only review.
+- Row Edit gated by `isWritable` (Registration write + row hub in `/me` scope or `hub_scope_all` + not 403-refused); server still enforces per row: `POST /projects/register-edits` scoped lookup, 403 `REGISTER_EDITS_FORBIDDEN` (out-of-scope and nonexistent indistinguishable). UI gate is UX only.
+- `GET /projects/{id}/register-steps` uses `_read` + `_get_project_or_404` (404 out of scope); chip fetches only from virtualizer-mounted rows (overscan 12), staleTime 30 s, no retry; page-level queries limited to rows in edit/with a draft. No amplification beyond what scrolling already does.
+- No `dangerouslySetInnerHTML`/innerHTML in changed files.
+- `rpd.gantt.showDetails` localStorage: display-only boolean, parsed as `!== 'false'`, try/catch; no security use.
+- `?edit=<id>`: UUID regex before fetch, fetch only with Registration write, server-scoped `GET /projects/{id}`, edit opened only if the row is in the loaded list AND `isWritable`; param stripped (replace) afterwards; invalid/out-of-scope ids yield no edit and no data.
+Findings: Info only (I-1: fast scrolling can mount many rows over time, each one cached read of an already-readable resource; acceptable, rate limiting stays server-side). No High/Critical/Medium.
+
+## [2026-11-18] P45-T03 — workflow-auditor: PASS
+
+**Scope.** The uncommitted P45-T01 code (`api/routers/capacity.py`, `services/capacity_priority.need_to_finish`, `schemas/capacity.py`, `tests/test_p45_hub_demand_cards.py`) checked against DOMAIN_RULES I19, I25, R42-6 and "Hub demand cards". The check was a temporary audit test, deleted after the run. It re-derived everything from raw ORM rows (Project, ProjectWorkflowStep, WorkflowStepTemplate.kind, Hub.capacity_hub_id, Engineer, HubWorkCalendar, Chamber) using only the rule text: `eff` per §B (excluded → 0, lab without certification → 0, own-effort kind → `effort_weeks ?? 0`, else `plan_weeks`), `rem` per I25 / "Derived remaining duration", remaining scope = schedulable ∧ (priority ∉ {P4, Q} ∨ frozen), bucket Q/null → Queue, design per capacity hub (own + members), lab per region, and ADR 0008 supply at W31. It used no code from `services.demand_load`, `scheduling.demand` or `capacity_supply`. Run: `COVERAGE_FILE=<scratchpad>`, `--no-cov`.
+
+**What was asserted on every row:**
+- Served `*_demand_by_priority` = `*_load_by_priority` = my full-year split.
+- Served `*_remaining_by_priority` = my remaining split.
+- The raw, unadjusted Σ of my buckets = served `*_load_weeks` / `*_load_remaining_weeks`, so the `split_to_total` residual is 0 and hides no gap.
+- Served `*_capacity_remaining` = my ADR 0008 figure.
+- `need_p1` / `need_p1_p2` = `max(0, R(P1) − C_rem)` / `max(0, R(P1)+R(P2) − C_rem)`. They are identical whether `C_rem` is rounded or not.
+- Lab fields are identical on every hub of a region.
+- `/capacity/hubs` = `/capacity/hub-load`.
+- Region filters (Greece, India, Romania) and an OEM-HCK `hub_id` filter serve the same split and need figures as the unfiltered response.
+
+**Seed** (`_seeded`: seed_demo_data + greedy, W31; 61 projects; 1 frozen; 0 inactive-engineer periods; Greece members R&D-Greece / OEM-HCK / OEM-Seitek). Full-year split P1/P2/P3/P4/Queue → total; remaining split → total; C_rem; need P1 / P1+P2:
+
+| Row | Design full | Design rem | C_rem | need | Lab full | Lab rem | C_rem | need |
+|---|---|---|---|---|---|---|---|---|
+| R&D-Greece | 10/28/15/12/27 → 92 | 10/18/15/0/0 → 43 | 50.43 | 0/0 | 6/16/12/14/20 → 68 | 6/10/12/0/0 → 28 | 29.62 | 0/0 |
+| R&D-India | 10/18/10/10/24 → 72 | 10/18/10/0/0 → 38 | 35.67 | 0/0 | 28/22/20/25/43 → 138 | 28/22/20/0/0 → 70 | 76.04 | 0/0 |
+| PD-India | 38/20/32/36/62 → 188 | 38/20/32/0/0 → 90 | 80.26 | 0/0 | same as R&D-India (India region) | | | |
+| PD-Romania | 0/28/10/16/22 → 76 | 0/28/10/0/0 → 38 | 49.75 | 0/0 | 0/16/6/7/8 → 37 | 0/16/6/0/0 → 22 | 87.35 | 0/0 |
+
+These match the T01 entry. Seed P4/Queue remaining is 0 everywhere: the seed's one frozen project is not P4/Q. The seed has no null-priority project.
+
+**Edge cases** (`_capacity_fixture` + OEM-HCK and OEM-Seitek as Greece members, a 0.5 FTE Greece engineer, a not-counted HCK engineer, one Greece chamber). The expectations were written by hand before reading the response; all hold. Greece row:
+- **Frozen P4**, In Development, design 8 In Progress 50 %: full 8, remaining 4 in bucket P4. Frozen keeps it in remaining demand, and stored progress applies.
+- **Frozen P1**: PDD-A 6 is Done (rem 0) and PDD-E 4; lab 5 is Blocked with override 2, so remaining is 2.
+- **On Hold P1** (9 design / 3 lab) and **Commercialized P2 on OEM-HCK** (4): full-year only.
+- **Non-frozen Q** (5 and 2) and **R&D-India P4** (3 / 1): full-year only.
+- **Null priority, In Queue** (3 / 1): bucket Queue on both bases.
+- **Cancelled and Draft P1** (11, 12): in neither basis.
+- **Certification off** (lab 7): lab 0.
+- **OEM-Seitek P1** (5) and **OEM-HCK P2, In Queue** (3): in Greece design.
+- Design full 35/7/0/8/10 → 60. Remaining 20/3/0/4/3 → 30. C_rem = 21 × 0.5 = 10.5 (no calendar; the HCK engineer is not counted). **need_p1 = 9.5, need_p1_p2 = 12.5.**
+- Lab full 12/0/0/2/1 → 15. Remaining 6/0/0/2/1 → 9. C_rem 19.79. Need 0/0.
+- India lab, repeated on PD-India and R&D-India: remaining 0/3/0/0/6, C_rem 0, need 0/3.
+
+**Other checks:**
+- I9/I19: the strip and the Executive view draw the served split and print the served need fields (`hub-load-strip.tsx`). The browser does no arithmetic on need or totals.
+- Suites: `test_p45_hub_demand_cards`, `test_p13_capacity_priority_board`, and the p29/p30 capacity/demand and p42 files: 72 passed.
+- Greedy vs CP-SAT: not applicable. This is display only, and nothing in `scheduling/` changed.
+- The three P2 prototype defects are not touched.
+
+**Findings (non-blocking):**
+- F1: The hub-load design supply still uses plain Σ fte (`counted_fte_by_capacity_hub`) without R38-1 `A_e`. This is P38-T05, which is still TODO, and is not a P45 defect. It has no effect here (0 inactive periods). The need figures read the served `C_rem`, so they will follow when T05 lands. T05's tests should include a need figure.
+- F2: `split_to_total` puts any residual on the largest bucket, so the T01 tests' "Σ served split = served total" holds by construction. This audit confirmed that the raw sums equal the totals. Advisory: the T01 tests could assert the unadjusted sum.
+- F3: The seed has no positive need and no null-priority project. Positive need is covered by fixtures only: the T01 tests and this audit.
+- The known basis difference between the Priority board column (run-booked) and the cards (live demand) is already recorded by the orchestrator.
+
+**Verdict: PASS.**
+
+## [2026-11-18] P44-T02 — qa-inspector gate
+
+**Verdict: PASS.** No tests added; every acceptance point already had a direct test, so there was no material gap. No feature code was changed.
+
+- Frontend tsc (`-p tsconfig.app.json`) clean. eslint: 0 errors and 9 warnings, all pre-existing (`useVirtualizer` incompatible-library etc.).
+- Full vitest: 274 files, 2277 tests. 2276 passed and 1 failed. The failure is the known, unrelated `app.test.tsx` "navigates to the Project Execution Timeline surface" (the Gantt Zoom slider query).
+- `backend/tests/test_openapi_frontend_contract.py`: 267 passed and 1 failed. The failure is the known P37 one: `test_every_p4_surface_types_file_is_covered` reports `PlanWeek` in `frontend/src/lib/api/session.ts` as unaccounted. The single-file run's coverage fail-under message is an artefact of running one file and is not a gate signal.
+- Acceptance points and the tests that cover them:
+  - Row Edit edits in place with no drawer: `ProjectsPage.register-popup.test.tsx` "the Projects row Edit edits the row in place: no popup, no GET of the popup".
+  - No toolbar Edit, and a per-row toggle: `ProjectsPage.register-edit.test.tsx` L547.
+  - Several rows saved in ONE register-edits request: L598.
+  - Chips toggle `step_exclusions` in workflow order (click and Space), N/A and Done are disabled, and the lab-flag lock and frozen state lock chips: L768 and the neighbouring chip tests.
+  - Chips are read-only outside edit (0 buttons): L701.
+  - Read-only role sees no Edit: L346.
+  - `?edit=` opens the row in edit, and a project missing from the list gets a folder link: L666.
+  - axe with a row in edit and a drafted row: covered in the P44 describe.
+  - Gantt charts shown by default: `GanttPage.test.tsx` L705.
+  - Gantt chart choice persists in localStorage `rpd.gantt.showDetails`: L726.
+- Advisory (non-blocking): the Steps column fetches register-steps for each rendered row (about 25–30 requests on first paint). This is acceptable because the data is cache-shared and the column can be hidden.
+
+## [2026-11-18] P44 gate CLOSED (orchestrator)
+
+qa-inspector and security-auditor both PASS. Workflow is N/A: there is no scheduling, KPI or data
+change. The save path is unchanged.
+
+Also shipped: the Gantt charts are shown by default again (owner, 2026-11-18).

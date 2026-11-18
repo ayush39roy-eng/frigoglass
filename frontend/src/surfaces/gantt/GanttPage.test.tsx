@@ -127,6 +127,7 @@ function ganttData(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.removeItem('rpd.gantt.showDetails');
   useHubFilterStore.getState().setSelection([], []);
   hooks.useActiveScheduleRun.mockReturnValue({ data: null });
   hooks.useToggleFreeze.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
@@ -613,7 +614,8 @@ describe('GanttPage', () => {
     it('P40-T01: toolbar, legend & stats and Forest view have no serious axe violation', async () => {
       const user = userEvent.setup();
       const { container } = renderWithProviders(<GanttPage />);
-      await user.click(screen.getByRole('button', { name: 'Legend & stats' }));
+      // Owner 2026-11-18: the charts are on by default.
+      expect(screen.getByRole('button', { name: 'Hide charts' })).toBeInTheDocument();
       expect(await seriousAxeViolations(container)).toEqual([]);
       await user.click(screen.getByRole('button', { name: 'Forest view' }));
       expect(await seriousAxeViolations(container)).toEqual([]);
@@ -632,7 +634,7 @@ describe('GanttPage', () => {
       expect(within(bar).getByRole('button', { name: 'Forest view' })).toBeInTheDocument();
       expect(within(bar).getByRole('button', { name: 'Expand all' })).toBeInTheDocument();
       expect(within(bar).getByRole('button', { name: 'Collapse all' })).toBeInTheDocument();
-      expect(within(bar).getByRole('button', { name: 'Legend & stats' })).toHaveAttribute('aria-pressed', 'false');
+      expect(within(bar).getByRole('button', { name: 'Hide charts' })).toBeInTheDocument();
       expect(within(bar).getByRole('button', { name: /Download/ })).toBeInTheDocument();
       // No chip rows and no label line any more.
       expect(screen.queryByRole('group', { name: 'Type' })).not.toBeInTheDocument();
@@ -700,14 +702,10 @@ describe('GanttPage', () => {
       expect(within(d).getByTestId('no-leader-left-out')).toHaveTextContent('Left out: no leader assigned');
     });
 
-    it('Legend & stats (off by default) shows the summary, the step legend and the served weekly PDD / OEM counts', async () => {
+    it('charts are shown by default (owner 2026-11-18): summary, step legend and the served weekly PDD / OEM counts; Hide charts hides them', async () => {
       const user = userEvent.setup();
       renderWithProviders(<GanttPage />);
-      expect(screen.queryByTestId('gantt-weekly-stats')).not.toBeInTheDocument();
-      expect(screen.queryByRole('group', { name: 'Timeline summary' })).not.toBeInTheDocument();
-      expect(screen.queryByTestId('gantt-legend')).not.toBeInTheDocument();
-      await user.click(screen.getByRole('button', { name: 'Legend & stats' }));
-      expect(screen.getByRole('button', { name: 'Legend & stats' })).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByRole('button', { name: 'Hide charts' })).toBeInTheDocument();
       // The step legend names each step's colour from the served step names.
       const legend = screen.getByTestId('gantt-step-legend-pdd');
       expect(within(legend).getAllByRole('listitem')).toHaveLength(14);
@@ -718,10 +716,26 @@ describe('GanttPage', () => {
       expect(screen.getByTestId('gantt-count-row-oem').querySelector('[data-week="12"]')).toHaveTextContent('1');
       expect(screen.getByRole('group', { name: 'Timeline summary' })).toBeInTheDocument();
 
-      await user.click(screen.getByRole('button', { name: 'Legend & stats' }));
-      expect(screen.getByRole('button', { name: 'Legend & stats' })).toHaveAttribute('aria-pressed', 'false');
+      await user.click(screen.getByRole('button', { name: 'Hide charts' }));
+      expect(screen.getByRole('button', { name: 'Show charts' })).toBeInTheDocument();
       expect(screen.queryByTestId('gantt-weekly-stats')).not.toBeInTheDocument();
       expect(screen.queryByRole('group', { name: 'Timeline summary' })).not.toBeInTheDocument();
+      expect(screen.queryByTestId('gantt-legend')).not.toBeInTheDocument();
+    });
+
+    it('remembers the charts toggle in localStorage across mounts (owner 2026-11-18)', async () => {
+      const user = userEvent.setup();
+      const first = renderWithProviders(<GanttPage />);
+      await user.click(screen.getByRole('button', { name: 'Hide charts' }));
+      expect(window.localStorage.getItem('rpd.gantt.showDetails')).toBe('false');
+      first.unmount();
+
+      renderWithProviders(<GanttPage />);
+      expect(screen.getByRole('button', { name: 'Show charts' })).toBeInTheDocument();
+      expect(screen.queryByTestId('gantt-weekly-stats')).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Show charts' }));
+      expect(window.localStorage.getItem('rpd.gantt.showDetails')).toBe('true');
+      expect(screen.getByTestId('gantt-weekly-stats')).toBeInTheDocument();
     });
 
     it('Forest view is the name and one line per project only; the px zoom resizes the axis only', async () => {

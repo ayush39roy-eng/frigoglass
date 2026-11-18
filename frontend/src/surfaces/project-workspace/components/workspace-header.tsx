@@ -32,7 +32,8 @@ export function WorkspaceHeader({
   canRecalculate: boolean;
   recalc: { state: RecalcState; start: () => void; busy: boolean };
   /** Register popup (owner 2026-11-17): opens the project's one "Edit" popup,
-   *  the same one the Projects list's row Edit opens. Absent = no write. */
+   *  the only place it opens since P44-T01 (the Projects row edits in place).
+   *  Absent = no write. */
   onEdit?: ((trigger: HTMLElement) => void) | undefined;
 }): React.JSX.Element {
   const p = data.project;

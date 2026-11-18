@@ -12,7 +12,13 @@ import type { ProjectRead } from '@/surfaces/registration/api/types';
 import type { RegisterStepsResponse } from './api/register-edits';
 
 /**
- * Register popup (owner 2026-11-17): the row "Edit" opens ONE popup with the
+ * P44-T01 (owner 2026-11-18): the Projects row "Edit" edits the row in place
+ * and no longer opens this popup; the popup stays as the project folder's
+ * "Edit". These tests open it through the folder's host
+ * (`test-folder-edit.tsx` → `WorkspaceEditHost`), and pin that the Projects
+ * row does not open it.
+ *
+ * Register popup (owner 2026-11-17): the folder's "Edit" opens ONE popup with the
  * identity fields AND the register fields (status, hub, leader, actual dates,
  * design / lab time, lab testing, current step, step chips). One Save: the
  * changed identity fields through `PATCH /projects/{id}`, the register fields
@@ -64,6 +70,7 @@ vi.mock('@/lib/api/client', async () => {
 
 import { ApiError } from '@/lib/api/client';
 import ProjectsPage from './ProjectsPage';
+import { FolderEditHarness } from './test-folder-edit';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -187,8 +194,8 @@ beforeEach(() => {
 });
 
 async function openPopup(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
-  renderWithProviders(<ProjectsPage />);
-  await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
+  renderWithProviders(<FolderEditHarness projectId={P1} projectName="Cooler A" />);
+  await user.click(screen.getByTestId('folder-edit'));
   const dialog = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
   await within(dialog).findAllByTestId('step-chip');
   return dialog;
@@ -197,7 +204,16 @@ async function openPopup(user: ReturnType<typeof userEvent.setup>): Promise<HTML
 const chip = (dialog: HTMLElement, code: string): HTMLElement =>
   within(dialog).getByRole('button', { name: new RegExp(`^Exclude ${code} `) });
 
-describe('Register popup — opens from the row Edit with the register fields', () => {
+describe('Register popup — opens from the project folder Edit, not from the Projects row', () => {
+  it('the Projects row Edit edits the row in place: no popup, no GET of the popup', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProjectsPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit Cooler A' }));
+    expect(screen.getByRole('button', { name: 'Done editing Cooler A' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Status of Cooler A' })).toBeInTheDocument();
+  });
+
   it('shows identity AND register fields; the form no longer has its own hub / leader / start inputs', async () => {
     const user = userEvent.setup();
     const dialog = await openPopup(user);
@@ -496,13 +512,14 @@ describe('Register popup — server errors and guards', () => {
   });
 });
 
-describe('Register grid Edit mode — editable affordance', () => {
-  it('editable column headers carry a pencil cue; selects have a chevron', async () => {
+describe('Register row edit — editable affordance', () => {
+  it('editable column headers carry a pencil cue while a row is in edit; selects have a chevron', async () => {
     const user = userEvent.setup();
     renderWithProviders(<ProjectsPage />);
     expect(screen.queryAllByTestId('editable-column-cue')).toHaveLength(0);
-    await user.click(screen.getByTestId('register-edit-start'));
-    expect(screen.getAllByTestId('editable-column-cue')).toHaveLength(6);
+    await user.click(screen.getByRole('button', { name: 'Edit Cooler A' }));
+    // Hub, status, leader, actual start / end, design / lab time, current step, steps, priority.
+    expect(screen.getAllByTestId('editable-column-cue')).toHaveLength(10);
     const status = screen.getByRole('combobox', { name: 'Status of Cooler A' });
     expect(status).toHaveClass('appearance-none');
     expect(status).toHaveClass('hover:border-primary/60');

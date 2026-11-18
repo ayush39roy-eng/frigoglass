@@ -2623,3 +2623,49 @@ Opened 2026-11-17 (owner request). Presentation only.
 | P43-T02 | Backend: styled workbook writer for every xlsx export; drawn Gantt sheet in the Gantt, What-if import result, saved scenario and comparison exports; What-if planner export if missing; contract note `docs/API_CONTRACT_P43.md`; tests | backend-builder | T01 | pytest green; openpyxl round-trip tests (styles, fills per week, legend, frozen panes, formula guard); MEMORY entry | DONE (MEMORY 2026-11-17 P43-T02) |
 | P43-T03 | Frontend: export buttons wherever a Gantt / scenario result is shown and none exists; tests | frontend-builder | T02 contract | tsc, eslint, vitest; MEMORY entry | DONE (MEMORY 2026-11-17 P43-T03) |
 | P43-T04 | Gate: qa, workflow (reconciliation: drawn bars = served weeks), security | three gatekeepers | T02, T03 | three PASSes | DONE (MEMORY 2026-11-18 P43-T04: qa, workflow, security PASS; R01, R02 fixed) |
+
+## P44 — Projects list: the row Edit button edits in place (owner request 2026-11-18)
+
+The owner: "on clicking Edit in each project list row it shouldn't open this popup; it should allow
+editing there on the list (design time, lab time and all), so no 2 edit buttons. Anyone who needs
+the details opens the project folder."
+
+This supersedes the 2026-11-17 "row Edit opens the popup" choice for the Projects list only. The
+popup stays as the project folder's Edit. Frontend only: the save path is unchanged (one
+`POST /projects/register-edits`, one recalculation).
+
+| ID | Task | Owner | Depends on | Acceptance | Status |
+|---|---|---|---|---|---|
+| P44-T01 | Row Edit puts that row in inline edit (the P35 grid cells), a per-row Edit/Done toggle, several rows allowed, one shared Save bar; toolbar "Edit" removed; row Edit no longer opens the drawer; the project name / folder link stays; "Register project" still opens the create drawer; `?edit=<id>` deep link goes to the folder Edit or opens the row in edit; tests | frontend-builder | — | tsc, eslint, vitest, axe; MEMORY entry | DONE (MEMORY 2026-11-18 P44-T01; scope addition: step chips in the row) |
+| P44-T02 | Gate: qa, security (UI only; workflow N/A — no scheduling or KPI change, recorded as such) | gatekeepers | T01 | PASSes | DONE (MEMORY 2026-11-18 P44-T02: qa, security PASS; workflow N/A) |
+
+## P45 — Hub demand cards: P1/P2 shading, "required to finish P1 / P2", on the Executive dashboard (owner request 2026-11-18)
+
+Asks (screenshot of the Priority board hub strip, `priority-board/components/hub-load-strip.tsx`):
+(1) show the P1 and P2 parts of each Design / Lab demand bar in different shades; (2) show the same
+cards on the Executive dashboard; (3) on both, show how much design and lab is still needed to
+finish the remaining P1 projects and then the P2 projects. If the P1 projects all fit, don't show a
+P1 line, only what is still missing to get through P2.
+
+Decisions (orchestrator, 2026-11-18):
+- D45-1: shading splits the bar's existing figure (full-year demand, I25) by live priority band:
+  P1 darkest, P2 mid, the rest (P3, P4, Q) lightest, all in the bar's booking-status hue. The split
+  is served and sums to the served total (I19 style); the browser draws, never derives.
+- D45-2: "required to finish" works on REMAINING demand vs REMAINING capacity of the year (both
+  already served, `*_load_remaining_weeks` / `*_capacity_remaining`):
+  `need_p1 = max(0, R(P1) − C_rem)`, `need_p1_p2 = max(0, R(P1) + R(P2) − C_rem)`, per kind. Design
+  per capacity hub; lab per lab region (repeated on each hub of the region, as today). This is the
+  aggregate capacity view, not the scheduler's verdict: the run can still leave a project out
+  because of sequencing or eligibility. The UI says so in a tooltip.
+- D45-3: display: if `need_p1 > 0` show "To finish P1: +X wks"; always show "To finish P1 + P2: +Y
+  wks" when Y > 0; when both are 0, show "P1 and P2 fit in the remaining capacity". Units are weeks
+  (man-weeks for design, chamber-weeks for lab), like the bars (OQ #86 asks if the client wants
+  hours).
+- D45-4: the Executive dashboard shows the same component, hub-filtered like the rest of the view,
+  if the Executive role can read Capacity; otherwise the backend gate decides (OQ #87).
+
+| ID | Task | Owner | Depends on | Acceptance | Status |
+|---|---|---|---|---|---|
+| P45-T01 | Backend: on `HubCapacityRow` (`GET /capacity/hub-load`): `design_demand_by_priority` / `lab_demand_by_priority` (`{P1,P2,P3,P4,Queue}` weeks, full-year demand basis, summing to `design_load_weeks` / `lab_load_weeks` via `split_to_total`), `design_remaining_by_priority` / `lab_remaining_by_priority` (remaining-demand basis, summing to `*_load_remaining_weeks`), and `design_need_p1_weeks`, `design_need_p1_p2_weeks`, `lab_need_p1_weeks`, `lab_need_p1_p2_weeks` per D45-2 (2 dp); one grouped query, no N+1; DOMAIN_RULES note (orchestrator); RBAC check of Executive read on this endpoint reported | backend-builder | — | Tests: sums reconcile; need is 0 when P1 fits and positive otherwise; P1+P2 ≥ P1; lab repeated per region; hub scoping; statement count; contract test row; MEMORY entry | DONE |
+| P45-T02 | Frontend: shaded P1 / P2 / rest segments in each bar (legend "P1 · P2 · other", accessible text); "To finish" lines per D45-3 with the D45-2 tooltip; the strip also on the Executive dashboard | frontend-builder | P45-T01 (field names fixed here) | Tests: segment widths from served figures, hidden P1 line when 0, both-zero message, Executive placement, axe; tsc, eslint, vitest; MEMORY entry | DONE |
+| P45-T03 | Workflow-auditor check: the demand split reconciles with I25 and the Capacity surface; need figures re-derived independently on the seed | workflow-auditor | P45-T01 | PASS in MEMORY | DONE (MEMORY 2026-11-18 P45-T03: PASS; need_p1 9.5 / need_p1_p2 12.5 on the edge fixture, seed all 0) |

@@ -79,6 +79,7 @@ vi.mock('@/lib/api/priority-move', async () => {
 
 import { ApiError } from '@/lib/api/client';
 import ProjectsPage from './ProjectsPage';
+import { FolderEditHarness } from './test-folder-edit';
 
 // P23: create tests fill seven required fields through Radix selects.
 vi.setConfig({ testTimeout: 30_000 });
@@ -188,7 +189,7 @@ beforeEach(() => {
 });
 
 describe('Projects page — list and header', () => {
-  it('a writer gets the list, the count, Register project and an Edit registration action per row', () => {
+  it('a writer gets the list, the count, Register project and a row Edit toggle per row (P44-T01)', () => {
     useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha cooler' }), row('b')]));
     renderWithProviders(<ProjectsPage />);
 
@@ -197,17 +198,18 @@ describe('Projects page — list and header', () => {
     expect(screen.getByRole('button', { name: 'Register project' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Alpha cooler' })).toHaveAttribute('href', '/projects/a');
     expect(screen.getByRole('link', { name: 'Open Alpha cooler' })).toHaveAttribute('href', '/projects/a');
-    expect(screen.getByRole('button', { name: 'Edit registration of Alpha cooler' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit Alpha cooler' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('button', { name: /Edit registration/ })).not.toBeInTheDocument();
     expect(screen.queryByTestId('read-only-notice')).not.toBeInTheDocument();
   });
 
-  it('a read-only role (Executive Viewer) gets the list without Register or Edit registration', () => {
+  it('a read-only role (Executive Viewer) gets the list without Register or a row Edit', () => {
     useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha cooler' })]));
     renderWithProviders(<ProjectsPage />, { session: READ_ONLY });
 
     expect(screen.getByRole('link', { name: 'Alpha cooler' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Register project' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Edit registration/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Edit / })).not.toBeInTheDocument();
     expect(screen.getByTestId('read-only-notice')).toHaveTextContent('Registering or editing projects');
   });
 
@@ -479,15 +481,16 @@ describe('Projects page — registration drawer', () => {
     expect(drawer).toBeInTheDocument();
   });
 
-  it('Edit registration loads GET /projects/{id}, PATCHes the edited body and highlights the row', async () => {
+  // P44-T01: the edit popup opens from the project folder's Edit only (the
+  // Projects row edits in place); these drawer tests go through the folder's host.
+  it('the folder Edit loads GET /projects/{id}, PATCHes the edited body and returns focus', async () => {
     const user = userEvent.setup();
     const inQueue = { ...project, status: 'In Queue' as const, priority: 'P1' as const };
     serveGets(inQueue);
     http.sendWithHeaders.mockResolvedValue({ data: { ...inQueue, name: 'Cooler A2' }, headers: new Headers() });
-    useDashboardProjects.mockReturnValue(ok([row(P1, { project_name: 'Cooler A' })]));
-    renderWithProviders(<ProjectsPage />);
+    renderWithProviders(<FolderEditHarness projectId={P1} projectName="Cooler A" />);
 
-    const edit = screen.getByRole('button', { name: 'Edit registration of Cooler A' });
+    const edit = screen.getByTestId('folder-edit');
     await user.click(edit);
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     expect(http.get).toHaveBeenCalledWith(`/projects/${P1}`, expect.anything());
@@ -504,16 +507,14 @@ describe('Projects page — registration drawer', () => {
     // fields that changed; hub / leader / dates / times go in the register batch.
     expect(body).toEqual({ name: 'Cooler A2' });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(screen.getByTestId('projects-saved-status')).toHaveTextContent('Saved the registration of “Cooler A2”.');
-    expect(screen.getByTestId('row-highlight-badge')).toHaveTextContent('Updated');
     await waitFor(() => expect(edit).toHaveFocus());
   });
 
   it('a Draft shows the served hard gate: missing fields listed, Submit disabled', async () => {
     const user = userEvent.setup();
     useDashboardProjects.mockReturnValue(ok([row(P1, { project_name: 'Cooler A', status: 'Draft' })]));
-    renderWithProviders(<ProjectsPage />);
-    await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
+    renderWithProviders(<FolderEditHarness projectId={P1} projectName="Cooler A" />);
+    await user.click(screen.getByTestId('folder-edit'));
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     expect(await within(drawer).findByText('Required fields missing before this project can leave Draft:')).toBeInTheDocument();
     expect(within(drawer).getByText('leader_engineer_id')).toBeInTheDocument();
@@ -526,8 +527,8 @@ describe('Projects page — registration drawer', () => {
     serveGets(project, { can_leave_draft: true, missing_fields: [] });
     http.send.mockResolvedValue({ ...project, status: 'In Queue' });
     useDashboardProjects.mockReturnValue(ok([row(P1, { project_name: 'Cooler A', status: 'Draft' })]));
-    renderWithProviders(<ProjectsPage />);
-    await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
+    renderWithProviders(<FolderEditHarness projectId={P1} projectName="Cooler A" />);
+    await user.click(screen.getByTestId('folder-edit'));
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     const submit = await within(drawer).findByRole('button', { name: 'Submit — leave Draft' });
     await waitFor(() => expect(submit).toBeEnabled());
@@ -540,8 +541,8 @@ describe('Projects page — registration drawer', () => {
     const user = userEvent.setup();
     serveGets({ ...project, status: 'In Queue', frozen: true, schedule_stale: true, workflow_id: 'OEM' });
     useDashboardProjects.mockReturnValue(ok([row(P1, { project_name: 'Cooler A' })]));
-    renderWithProviders(<ProjectsPage />);
-    await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
+    renderWithProviders(<FolderEditHarness projectId={P1} projectName="Cooler A" />);
+    await user.click(screen.getByTestId('folder-edit'));
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     const status = within(drawer).getByRole('region', { name: 'Registration status' });
     expect(status).toHaveTextContent('Workflow OEM');
@@ -596,7 +597,7 @@ describe('Projects page — registration drawer', () => {
     await user.click(within(drawer).getByRole('button', { name: 'Register project' }));
     expect(await screen.findByText(/read-only access to Project Registration/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Register project' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Edit registration/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Edit / })).not.toBeInTheDocument();
   });
 
   it('P11: an edit whose PATCH reports X-Schedule-Recalc shows the honest outcome (deferred)', async () => {
@@ -608,8 +609,8 @@ describe('Projects page — registration drawer', () => {
       headers: new Headers({ 'X-Schedule-Recalc': 'deferred' }),
     });
     useDashboardProjects.mockReturnValue(ok([row(P1, { project_name: 'Cooler A' })]));
-    renderWithProviders(<ProjectsPage />);
-    await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
+    renderWithProviders(<FolderEditHarness projectId={P1} projectName="Cooler A" />);
+    await user.click(screen.getByTestId('folder-edit'));
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     expect(within(drawer).getByText('Changing priority recalculates the timeline.')).toBeInTheDocument();
     // Only a changed identity field is PATCHed (register popup, 2026-11-17).
@@ -636,8 +637,8 @@ describe('Projects page — registration drawer', () => {
       schedule_run_id: 'run-2', baseline_run_id: 'run-1', task_id: null, changes: [], hidden_count: 0,
     });
     useDashboardProjects.mockReturnValue(ok([row(P1, { project_name: 'Cooler A' })]));
-    renderWithProviders(<ProjectsPage />);
-    await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
+    renderWithProviders(<FolderEditHarness projectId={P1} projectName="Cooler A" />);
+    await user.click(screen.getByTestId('folder-edit'));
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     await user.click(within(drawer).getByRole('combobox', { name: /^Priority/ }));
     await user.click(await screen.findByRole('option', { name: /^P2 · / }));
@@ -670,8 +671,8 @@ describe('Projects page — registration drawer', () => {
       changes: [], hidden_count: 0, elapsed_ms: 3,
     });
     useDashboardProjects.mockReturnValue(ok([row(P1, { project_name: 'Cooler A' })]));
-    renderWithProviders(<ProjectsPage />);
-    await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
+    renderWithProviders(<FolderEditHarness projectId={P1} projectName="Cooler A" />);
+    await user.click(screen.getByTestId('folder-edit'));
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     await user.click(within(drawer).getByRole('combobox', { name: /^Priority/ }));
     await user.click(await screen.findByRole('option', { name: /^P3 · / }));
@@ -738,8 +739,8 @@ describe('Projects page — P24-T02 workbook fields and "No leader" (ADR 0035)',
     serveGets(charter);
     http.sendWithHeaders.mockResolvedValue({ data: charter, headers: new Headers() });
     useDashboardProjects.mockReturnValue(ok([row(P1, { project_name: 'Cooler A' })]));
-    renderWithProviders(<ProjectsPage />);
-    await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
+    renderWithProviders(<FolderEditHarness projectId={P1} projectName="Cooler A" />);
+    await user.click(screen.getByTestId('folder-edit'));
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     const block = within(drawer).getByRole('group', { name: 'From the client workbook' });
     expect(block).toHaveTextContent('PlantKato Achaia');
@@ -771,10 +772,13 @@ describe('Projects page — deep link', () => {
     );
   }
 
-  it('?edit=<id> opens the drawer for that project', async () => {
+  // P44-T01: the deep link opens the row in inline edit, not the drawer.
+  it('?edit=<id> opens that row in inline edit (no drawer)', async () => {
     useDashboardProjects.mockReturnValue(ok([row(P1, { project_name: 'Cooler A' })]));
     renderAt(`/projects?edit=${P1}`);
-    expect(await screen.findByRole('dialog', { name: 'Edit Cooler A' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Done editing Cooler A' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('combobox', { name: 'Status of Cooler A' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(http.get).toHaveBeenCalledWith(`/projects/${P1}`, expect.anything());
   });
 
@@ -783,6 +787,7 @@ describe('Projects page — deep link', () => {
     renderAt(`/projects?edit=${P1}`, READ_ONLY);
     await screen.findByRole('heading', { level: 1, name: 'Projects' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Done editing/ })).not.toBeInTheDocument();
     expect(http.get).not.toHaveBeenCalledWith(`/projects/${P1}`, expect.anything());
   });
 });
@@ -807,8 +812,8 @@ describe('Projects page — accessibility', () => {
   it('the open edit drawer for a Draft has no serious/critical axe violations', async () => {
     const user = userEvent.setup();
     useDashboardProjects.mockReturnValue(ok([row(P1, { project_name: 'Cooler A', status: 'Draft' })]));
-    renderWithProviders(<ProjectsPage />);
-    await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
+    renderWithProviders(<FolderEditHarness projectId={P1} projectName="Cooler A" />);
+    await user.click(screen.getByTestId('folder-edit'));
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     await within(drawer).findByRole('button', { name: 'Submit — leave Draft' });
     expect(await seriousAxeViolations(drawer)).toEqual([]);

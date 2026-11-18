@@ -292,10 +292,15 @@ export function ViewToggles({
         variant={showDetails ? 'primary' : 'secondary'}
         size="sm"
         className="h-7 w-7 px-0"
-        aria-pressed={showDetails}
-        aria-label="Legend & stats"
+        // Owner 2026-11-18: the label says what a click does (the name changes,
+        // so no aria-pressed as well).
+        aria-label={showDetails ? 'Hide charts' : 'Show charts'}
         onClick={() => onShowDetailsChange(!showDetails)}
-        title="Legend & stats: the summary, the step-colour legend and the weekly PDD / OEM counts"
+        title={
+          showDetails
+            ? 'Hide charts: the summary, the step-colour legend, the weekly PDD / OEM counts and completion markers'
+            : 'Show charts: the summary, the step-colour legend, the weekly PDD / OEM counts and completion markers'
+        }
       >
         <BarChart3 aria-hidden="true" />
       </Button>

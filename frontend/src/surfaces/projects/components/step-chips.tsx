@@ -19,6 +19,11 @@ import type { RegisterStep } from '../api/register-edits';
  * A chip is a native toggle button (`aria-pressed` = excluded), so click,
  * Space and Enter toggle it. Every flag is served; the chips never decide on
  * their own whether a step applies (I9).
+ *
+ * P44-T01 (owner 2026-11-18): the Projects list's "Steps (click to exclude)"
+ * column uses `compact` (3 per line, code above a short name, like the old
+ * tool) and, outside a row's edit, `readOnly` (a display of the served state:
+ * no buttons, one text per chip).
  */
 
 export interface StepChipState {
@@ -50,8 +55,8 @@ const KIND_HOVER: Record<RegisterStep['kind'], string> = {
 };
 const KIND_LABEL: Record<RegisterStep['kind'], string> = { design: 'Design', lab: 'Lab', elapsed: 'Elapsed' };
 
-function shortName(name: string): string {
-  return name.length > 22 ? `${name.slice(0, 21)}…` : name;
+function shortName(name: string, max = 22): string {
+  return name.length > max ? `${name.slice(0, max - 1)}…` : name;
 }
 
 export function StepChips({
@@ -59,31 +64,52 @@ export function StepChips({
   onToggle,
   describedBy,
   invalid = false,
+  compact = false,
+  readOnly = false,
+  label,
 }: {
   chips: readonly StepChipState[];
   onToggle: (stepCode: string) => void;
   describedBy?: string | undefined;
   invalid?: boolean;
+  /** The list row's column: 3 per line, smaller chips. */
+  compact?: boolean;
+  /** A display only (a row not in edit): no buttons. */
+  readOnly?: boolean;
+  /** Accessible name of the list (the list row names its project). */
+  label?: string;
 }): React.JSX.Element {
   return (
     <ul
       className={cn(
-        'grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4',
+        compact ? 'grid w-full grid-cols-3 gap-1' : 'grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4',
         invalid && 'rounded-md p-1 ring-2 ring-danger/60',
       )}
+      aria-label={label}
       aria-describedby={describedBy}
       data-testid="step-chips"
+      data-readonly={readOnly ? 'true' : undefined}
     >
       {chips.map((chip) => (
         <li key={chip.step.step_code} className="min-w-0">
-          <StepChip chip={chip} onToggle={onToggle} />
+          <StepChip chip={chip} onToggle={onToggle} compact={compact} readOnly={readOnly} />
         </li>
       ))}
     </ul>
   );
 }
 
-function StepChip({ chip, onToggle }: { chip: StepChipState; onToggle: (stepCode: string) => void }): React.JSX.Element {
+function StepChip({
+  chip,
+  onToggle,
+  compact,
+  readOnly,
+}: {
+  chip: StepChipState;
+  onToggle: (stepCode: string) => void;
+  compact: boolean;
+  readOnly: boolean;
+}): React.JSX.Element {
   const { step, excluded, changed, current, lockedReason, invalid } = chip;
   const na = !step.applicable;
   const done = step.status === 'Done';
@@ -109,6 +135,63 @@ function StepChip({ chip, onToggle }: { chip: StepChipState; onToggle: (stepCode
     disabled ? '' : excluded ? ' — click to include' : ' — click to exclude'
   }`;
 
+  const readTitle = `${step.step_code} · ${step.step_name} — ${kindLabel} — ${state}${current ? ' — current step' : ''}`;
+  const className = cn(
+    compact
+      ? 'relative flex h-9 w-full min-w-0 flex-col items-start justify-center rounded border px-1 text-left text-[0.625rem] leading-tight transition-colors'
+      : 'relative flex h-12 w-full min-w-0 flex-col items-start justify-center rounded-md border px-2 text-left text-2xs transition-colors',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface',
+    na
+      ? 'cursor-not-allowed border-dashed border-border-strong bg-surface-sunken/60 text-text-subtle opacity-60'
+      : excluded
+        ? 'border-dashed border-border-strong bg-surface-sunken text-text-subtle'
+        : KIND_ON[step.kind],
+    !readOnly && !disabled && !excluded && KIND_HOVER[step.kind],
+    !readOnly && !disabled && excluded && 'hover:border-primary/60 hover:bg-primary-subtle/30',
+    (readOnly || (disabled && !na)) && 'cursor-default',
+    current && 'ring-2 ring-primary ring-offset-1 ring-offset-surface',
+    invalid && 'border-danger ring-2 ring-danger',
+  );
+  const body = (
+    <>
+      <span className="flex w-full min-w-0 items-center justify-between gap-0.5">
+        <span className={cn('truncate font-bold', excluded && 'line-through')}>{step.step_code}</span>
+        <span className="flex shrink-0 items-center gap-0.5 font-semibold" aria-hidden="true">
+          {changed ? <span className="size-1.5 rounded-full bg-warning" title="Changed, not saved" /> : null}
+          {na ? 'N/A' : excluded ? 'off' : splitZero ? (compact ? '0 wk' : '0 wk (split)') : done && !compact ? (
+            <>
+              <Check className="size-3" />
+              Done
+            </>
+          ) : (
+            <Check className={compact ? 'size-2.5' : 'size-3'} />
+          )}
+        </span>
+      </span>
+      <span className={cn('w-full truncate', excluded && 'line-through')} aria-hidden="true">
+        {shortName(step.step_name, compact ? 9 : 22)}
+      </span>
+    </>
+  );
+
+  if (readOnly) {
+    return (
+      <span
+        className={className}
+        title={readTitle}
+        data-testid="step-chip"
+        data-step={step.step_code}
+        data-kind={step.kind}
+        data-state={na ? 'na' : excluded ? 'excluded' : done ? 'done' : 'on'}
+        data-current={current ? 'true' : undefined}
+        data-changed={changed ? 'true' : undefined}
+      >
+        {body}
+        <span className="sr-only">{`${step.step_code} ${step.step_name}: ${state}${current ? ', current step' : ''}${changed ? ', unsaved change' : ''}`}</span>
+      </span>
+    );
+  }
+
   return (
     <button
       type="button"
@@ -124,38 +207,9 @@ function StepChip({ chip, onToggle }: { chip: StepChipState; onToggle: (stepCode
       data-current={current ? 'true' : undefined}
       data-changed={changed ? 'true' : undefined}
       onClick={() => onToggle(step.step_code)}
-      className={cn(
-        'relative flex h-12 w-full min-w-0 flex-col items-start justify-center rounded-md border px-2 text-left text-2xs transition-colors',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface',
-        na
-          ? 'cursor-not-allowed border-border bg-surface-sunken/60 text-text-subtle opacity-60'
-          : excluded
-            ? 'border-dashed border-border-strong bg-surface-sunken text-text-subtle'
-            : KIND_ON[step.kind],
-        !disabled && !excluded && KIND_HOVER[step.kind],
-        !disabled && excluded && 'hover:border-primary/60 hover:bg-primary-subtle/30',
-        disabled && !na && 'cursor-default',
-        current && 'ring-2 ring-primary ring-offset-1 ring-offset-surface',
-        invalid && 'border-danger ring-2 ring-danger',
-      )}
+      className={className}
     >
-      <span className="flex w-full min-w-0 items-center justify-between gap-1">
-        <span className={cn('truncate font-bold', excluded && 'line-through')}>{step.step_code}</span>
-        <span className="flex shrink-0 items-center gap-0.5 font-semibold" aria-hidden="true">
-          {changed ? <span className="size-1.5 rounded-full bg-warning" title="Changed, not saved" /> : null}
-          {na ? 'N/A' : excluded ? 'off' : splitZero ? '0 wk (split)' : done ? (
-            <>
-              <Check className="size-3" />
-              Done
-            </>
-          ) : (
-            <Check className="size-3" />
-          )}
-        </span>
-      </span>
-      <span className={cn('w-full truncate', excluded && 'line-through')} aria-hidden="true">
-        {shortName(step.step_name)}
-      </span>
+      {body}
     </button>
   );
 }

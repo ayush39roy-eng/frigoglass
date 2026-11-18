@@ -1,13 +1,17 @@
 import * as React from 'react';
 import { ChevronDown, RotateCcw, TriangleAlert } from 'lucide-react';
 
+import { Checkbox } from '@/components/ui/checkbox';
+import type { Hub } from '@/lib/api/reference';
 import { formatPlanWeek } from '@/lib/format';
+import { hubPickerLabel } from '@/lib/hub-labels';
 import { usePlanYear } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
 import { UI_PROJECT_STATUSES, type ProjectStatus } from '@/types/enums';
 
 import type { EngineerOption } from '@/surfaces/registration/api/engineers-api';
 
+import type { RegisterStep } from '../api/register-edits';
 import { dateInputToPlanWeek, planDateBounds, planWeekToDateInput } from '../lib/plan-week-date';
 import { parseEffortInput } from '../lib/register-edit';
 import { statusMismatchText } from '../lib/status-mismatch';
@@ -404,6 +408,186 @@ export function WeekDateInput({
         <span id={warnId} className="flex items-center gap-1 text-2xs font-semibold text-danger" data-testid="week-warning">
           <TriangleAlert className="size-3 shrink-0" aria-hidden="true" />
           {message}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/**
+ * P44-T01: the row's hub (`hub_id` in the batch, contract §2). The served hub
+ * stays selectable even if it is outside the caller's scope list; the server
+ * decides whether the move is allowed (403 names the row).
+ */
+export function HubSelect({
+  value,
+  hubs,
+  allHubs,
+  changed,
+  label,
+  invalid = false,
+  note = null,
+  onChange,
+}: {
+  /** The draft hub id; null while the served hub is not known. */
+  value: string | null;
+  /** The hubs the caller may pick (in scope). */
+  hubs: readonly Hub[];
+  /** Every served hub, for the "(Greece)" picker label. */
+  allHubs: readonly Hub[];
+  changed: boolean;
+  label: string;
+  invalid?: boolean;
+  /** Shown under the select (another workflow), or null. */
+  note?: string | null;
+  onChange: (next: string) => void;
+}): React.JSX.Element {
+  const noteId = React.useId();
+  const listed = value !== null && hubs.some((h) => h.id === value);
+  return (
+    <span className={cn('flex min-w-0 flex-col gap-0.5 p-0.5', changed && CHANGED)}>
+      <NativeSelect
+        wrapperClassName="w-full"
+        value={value ?? ''}
+        disabled={value === null}
+        aria-label={`Hub of ${label}`}
+        aria-invalid={invalid ? true : undefined}
+        aria-describedby={note ? noteId : undefined}
+        data-changed={changed ? 'true' : undefined}
+        data-testid="hub-select"
+        onChange={(e) => {
+          if (e.currentTarget.value !== '') onChange(e.currentTarget.value);
+        }}
+      >
+        {value === null ? <option value="">Loading…</option> : null}
+        {value !== null && !listed ? <option value={value}>{allHubs.find((h) => h.id === value)?.name ?? 'Current hub'}</option> : null}
+        {hubs.map((h) => (
+          <option key={h.id} value={h.id}>
+            {hubPickerLabel(h, allHubs)}
+          </option>
+        ))}
+      </NativeSelect>
+      {note ? (
+        <span id={noteId} className="text-2xs font-semibold text-warning-subtle-fg">
+          {note}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** P44-T01: "Needs lab testing" (certification testing; off skips every lab
+ *  step, ADR 0007 §5). Disabled until the served value is known. */
+export function LabTestingToggle({
+  checked,
+  changed,
+  label,
+  onChange,
+}: {
+  /** null = the served value is not known yet. */
+  checked: boolean | null;
+  changed: boolean;
+  label: string;
+  onChange: (next: boolean) => void;
+}): React.JSX.Element {
+  return (
+    <label
+      className={cn(
+        'flex w-fit cursor-pointer items-center gap-1 rounded px-1 text-2xs text-text-muted hover:bg-primary-subtle/30',
+        changed && CHANGED,
+        checked === null && 'cursor-not-allowed opacity-60',
+      )}
+      title="Certification testing. Lab steps are skipped when off."
+    >
+      <Checkbox
+        checked={checked ?? false}
+        disabled={checked === null}
+        onCheckedChange={(next) => onChange(next === true)}
+        aria-label={`Needs lab testing for ${label}`}
+        data-changed={changed ? 'true' : undefined}
+        data-testid="lab-testing-toggle"
+        className="size-3.5"
+      />
+      Needs lab testing
+    </label>
+  );
+}
+
+/**
+ * P44-T01: the step the project is on now (contract §2.2): the served steps
+ * that can be current (not `Skipped`, not excluded), in workflow order. The
+ * note says what the server will do; the server decides.
+ */
+export function CurrentStepSelect({
+  value,
+  served,
+  steps,
+  excluded,
+  pending,
+  unavailable,
+  lockReason,
+  move,
+  changed,
+  label,
+  invalid = false,
+  onChange,
+}: {
+  value: string | null;
+  served: string | null;
+  steps: readonly RegisterStep[] | undefined;
+  /** The row draft's exclusion flags (a draft-excluded step cannot be current). */
+  excluded: Readonly<Record<string, boolean>>;
+  pending: boolean;
+  unavailable: boolean;
+  /** Why the pick is locked (another workflow pending, frozen), or null. */
+  lockReason: string | null;
+  move: 'forward' | 'back' | null;
+  changed: boolean;
+  label: string;
+  invalid?: boolean;
+  onChange: (next: string) => void;
+}): React.JSX.Element {
+  const noteId = React.useId();
+  if (unavailable || (!pending && !steps)) {
+    return <span className="text-2xs text-text-muted">Steps not available</span>;
+  }
+  const options = (steps ?? []).filter((s) => s.status !== 'Skipped' && !(excluded[s.step_code] ?? s.step_excluded));
+  const listed = value !== null && options.some((s) => s.step_code === value);
+  const note =
+    lockReason ??
+    (move === 'forward'
+      ? 'Earlier steps will be marked Done.'
+      : move === 'back'
+        ? 'Earlier steps Done; later steps back to Not Started.'
+        : null);
+  return (
+    <span className={cn('flex min-w-0 flex-col gap-0.5 p-0.5', changed && CHANGED)}>
+      <NativeSelect
+        wrapperClassName="w-full"
+        value={listed ? (value ?? '') : ''}
+        disabled={pending || lockReason !== null || options.length === 0}
+        aria-busy={pending ? true : undefined}
+        aria-label={`Current step of ${label}`}
+        aria-invalid={invalid ? true : undefined}
+        aria-describedby={note ? noteId : undefined}
+        data-changed={changed ? 'true' : undefined}
+        data-testid="current-step-select"
+        onChange={(e) => {
+          if (e.currentTarget.value !== '') onChange(e.currentTarget.value);
+        }}
+      >
+        {listed ? null : (
+          <option value="">{pending ? 'Loading…' : value === null && served === null ? 'All steps done' : (value ?? 'Not set')}</option>
+        )}
+        {options.map((s) => (
+          <option key={s.step_code} value={s.step_code}>
+            {`${s.step_code} · ${s.step_name}`}
+          </option>
+        ))}
+      </NativeSelect>
+      {note ? (
+        <span id={noteId} className="text-2xs font-semibold text-warning-subtle-fg" data-testid="current-step-note">
+          {note}
         </span>
       ) : null}
     </span>

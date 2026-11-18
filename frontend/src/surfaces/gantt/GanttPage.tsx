@@ -41,6 +41,26 @@ import { StepPinDiscardDialog, StepPinEditBar, StepPinLeaveGuard } from './compo
 import { StepPinSavePanel } from './components/step-pin-save-panel';
 import { StepCountChips } from './components/step-count-chips';
 
+/** Owner 2026-11-18: the Gantt charts toggle is remembered per browser. */
+const SHOW_DETAILS_STORAGE_KEY = 'rpd.gantt.showDetails';
+
+function readShowDetails(): boolean {
+  try {
+    const v = window.localStorage.getItem(SHOW_DETAILS_STORAGE_KEY);
+    return v === null ? true : v !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+function writeShowDetails(next: boolean): void {
+  try {
+    window.localStorage.setItem(SHOW_DETAILS_STORAGE_KEY, String(next));
+  } catch {
+    // Storage unavailable (private mode, quota): the choice lasts for this view only.
+  }
+}
+
 /** Space the timeline card keeps below its chart (card padding + page gutter). */
 const CHART_BOTTOM_RESERVE_PX = 56;
 const CHART_MIN_HEIGHT_PX = 320;
@@ -160,8 +180,13 @@ export default function GanttPage(): React.JSX.Element {
   const [filtersEl, setFiltersEl] = React.useState<HTMLDivElement | null>(null);
   const chartHeight = useChartHeightBelow(filtersEl);
   // P40-T01: the summary, the legend and the weekly counts sit behind one
-  // small toggle ("Legend & stats"), off by default, so the timeline gets the room.
-  const [showDetails, setShowDetails] = React.useState(false);
+  // small toggle. Owner 2026-11-18: shown by default ("bring the charts back");
+  // the user's choice is remembered in localStorage.
+  const [showDetails, setShowDetailsState] = React.useState<boolean>(readShowDetails);
+  const setShowDetails = React.useCallback((next: boolean) => {
+    setShowDetailsState(next);
+    writeShowDetails(next);
+  }, []);
   const debouncedQ = useDebouncedValue(filters.q, 300);
   const [expandedIds, setExpandedIds] = React.useState<ReadonlySet<string>>(new Set());
   const [freezeProject, setFreezeProject] = React.useState<GanttProjectRow | null>(null);

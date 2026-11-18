@@ -118,8 +118,9 @@ const NOT_NEEDED = {
   task_id: null,
 };
 
-async function startEdit(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-  await user.click(screen.getByTestId('register-edit-start'));
+/** P44-T01: each row's own "Edit" puts that row in inline edit (no toolbar Edit). */
+async function startEdit(user: ReturnType<typeof userEvent.setup>, ...names: string[]): Promise<void> {
+  for (const name of names) await user.click(screen.getByRole('button', { name: `Edit ${name}` }));
   expect(screen.getByTestId('register-edit-mode')).toBeInTheDocument();
 }
 
@@ -164,7 +165,7 @@ describe('Projects register — design / lab time (D35-1)', () => {
       ok([row('a', { project_name: 'Alpha' }), row('b', { project_name: 'Beta', design_effort_weeks: 4 })]),
     );
     renderWithProviders(<ProjectsPage />);
-    await startEdit(user);
+    await startEdit(user, 'Alpha', 'Beta');
 
     const [alphaDesign] = within(rowEl('Alpha')).getAllByTestId('effort-input');
     expect(alphaDesign).toHaveAttribute('data-source', 'calculated');
@@ -199,7 +200,7 @@ describe('Projects register — Edit mode (D35-2)', () => {
       ok([row('a', { project_name: 'Alpha' }), row('b', { project_name: 'Beta', actual_start_week: 10 }), row('c', { project_name: 'Gamma' })]),
     );
     renderWithProviders(<ProjectsPage />);
-    await startEdit(user);
+    await startEdit(user, 'Alpha', 'Beta');
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Alpha' }), 'On Hold');
     const leader = screen.getByRole('combobox', { name: 'Design resource (leader) of Alpha' });
@@ -222,7 +223,7 @@ describe('Projects register — Edit mode (D35-2)', () => {
     const user = userEvent.setup();
     useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha', actual_start_week: 10 })]));
     renderWithProviders(<ProjectsPage />);
-    await startEdit(user);
+    await startEdit(user, 'Alpha');
     const end = screen.getByLabelText(/^Actual end of Alpha/);
     fireEvent.change(end, { target: { value: '2026-02-02' } }); // W6
     expect(within(rowEl('Alpha')).getByTestId('week-warning')).toHaveTextContent('End is before start');
@@ -249,7 +250,7 @@ describe('Projects register — Edit mode (D35-2)', () => {
       ),
     );
     renderWithProviders(<ProjectsPage />);
-    await startEdit(user);
+    await startEdit(user, 'Alpha', 'Beta');
     fireEvent.change(screen.getByLabelText(/^Actual end of Alpha/), { target: { value: '2026-02-02' } });
     await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Beta' }), 'On Hold');
     await user.click(screen.getByTestId('register-edit-save'));
@@ -269,7 +270,7 @@ describe('Projects register — Edit mode (D35-2)', () => {
     useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha' })]));
     http.send.mockRejectedValue(new ApiError(429, 'slow down', 'Too many', 'RATE_LIMITED', 4));
     renderWithProviders(<ProjectsPage />);
-    await startEdit(user);
+    await startEdit(user, 'Alpha');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Alpha' }), 'On Hold');
     await user.click(screen.getByTestId('register-edit-save'));
     expect(await screen.findByTestId('register-edit-error')).toHaveTextContent('wait 4 s and save again');
@@ -280,7 +281,7 @@ describe('Projects register — Edit mode (D35-2)', () => {
     useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha' })]));
     http.send.mockRejectedValue(new ApiError(503, 'Service Unavailable', 'busy', 'BAND_RANK_BUSY', 5));
     renderWithProviders(<ProjectsPage />);
-    await startEdit(user);
+    await startEdit(user, 'Alpha');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Alpha' }), 'On Hold');
     await user.click(screen.getByTestId('register-edit-save'));
     expect(await screen.findByTestId('register-edit-error')).toHaveTextContent(
@@ -306,7 +307,7 @@ describe('Projects register — Edit mode (D35-2)', () => {
       ),
     );
     renderWithProviders(<ProjectsPage />);
-    await startEdit(user);
+    await startEdit(user, 'Alpha', 'Beta');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Alpha' }), 'On Hold');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Beta' }), 'On Hold');
     await user.click(screen.getByTestId('register-edit-save'));
@@ -328,7 +329,7 @@ describe('Projects register — Edit mode (D35-2)', () => {
       ]),
     );
     renderWithProviders(<ProjectsPage />, { session: { hub_scope_all: false, hub_ids: ['hub-1'] } });
-    await startEdit(user);
+    await startEdit(user, 'Alpha', 'Gamma');
 
     const beta = rowEl('Beta');
     expect(beta).toHaveAttribute('data-readonly');
@@ -342,25 +343,28 @@ describe('Projects register — Edit mode (D35-2)', () => {
     expect(within(gamma).getByRole('combobox', { name: 'Design resource (leader) of Gamma' })).toBeInTheDocument();
   });
 
-  it('a read-only role gets no Edit button', () => {
+  it('a read-only role gets no Edit button (no row toggle, no toolbar Edit)', () => {
     useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha' })]));
     renderWithProviders(<ProjectsPage />, {
       session: { roles: ['Executive Viewer'], permissions: ROLE_MATRIX['Executive Viewer'] },
     });
     expect(screen.queryByTestId('register-edit-start')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('row-edit-toggle')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Edit / })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Status of Alpha' })).not.toBeInTheDocument();
   });
 
   it('Cancel with unsaved edits asks first; reload is guarded while edits are unsaved', async () => {
     const user = userEvent.setup();
     useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha' })]));
     renderWithProviders(<ProjectsPage />);
-    await startEdit(user);
+    await startEdit(user, 'Alpha');
 
     // No edits yet: Cancel just leaves.
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByTestId('register-edit-bar')).not.toBeInTheDocument();
 
-    await startEdit(user);
+    await startEdit(user, 'Alpha');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Alpha' }), 'On Hold');
     const unload = new Event('beforeunload', { cancelable: true });
     act(() => {
@@ -389,7 +393,7 @@ describe('Projects register — Edit mode (D35-2)', () => {
     http.send.mockResolvedValue({ ...NOT_NEEDED, recalc_status: 'queued', schedule_run_id: 'run-9', task_id: 't' });
     sse.stream.mockResolvedValue({ status: 'completed' });
     renderWithProviders(<ProjectsPage />);
-    await startEdit(user);
+    await startEdit(user, 'Alpha');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Alpha' }), 'On Hold');
     await user.click(screen.getByTestId('register-edit-save'));
     const panel = await screen.findByTestId('register-save-panel');
@@ -406,7 +410,7 @@ describe('Projects register — P35-T08 extras', () => {
       ok([row('a', { project_name: 'Alpha' }), row('b', { project_name: 'Beta' }), row('c', { project_name: 'Gamma' })]),
     );
     renderWithProviders(<ProjectsPage />);
-    await startEdit(user);
+    await startEdit(user, 'Alpha', 'Beta', 'Gamma');
     expect(screen.queryByTestId('bulk-edit-bar')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('checkbox', { name: 'Select Alpha' }));
@@ -443,7 +447,7 @@ describe('Projects register — P35-T08 extras', () => {
       ok([row('a', { project_name: 'Alpha' }), row('b', { project_name: 'Beta', hub: 'PD-India', region: 'India' })]),
     );
     renderWithProviders(<ProjectsPage />, { session: { hub_scope_all: false, hub_ids: ['hub-1'] } });
-    await startEdit(user);
+    await startEdit(user, 'Alpha');
     await user.click(screen.getByRole('checkbox', { name: 'Select every editable row shown' }));
     expect(screen.getByTestId('bulk-selected-count')).toHaveTextContent('1 selected');
   });
@@ -505,8 +509,299 @@ describe('Projects register — P35-T08 extras', () => {
       ok([row('a', { project_name: 'Alpha', design_effort_weeks: 4, actual_start_week: 10 }), row('b', { project_name: 'Beta', leader_engineer_id: null })]),
     );
     const { container } = renderWithProviders(<ProjectsPage />);
-    await startEdit(user);
+    await startEdit(user, 'Alpha', 'Beta');
     await user.click(screen.getByRole('checkbox', { name: 'Select Alpha' }));
     expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+});
+
+describe('Projects register — P44-T01 the row Edit edits in place', () => {
+  const UUID = '3f2b8c1e-9a4d-4e6f-8b2a-1c0d9e8f7a65';
+  const STEPS = {
+    project_id: 'a',
+    current_step_code: 'PDD-B',
+    end_week: 44,
+    design_weeks_calculated: 10,
+    lab_weeks_calculated: 6,
+    steps: [
+      { step_code: 'PDD-A', step_name: 'Concept', kind: 'design', status: 'Done', step_excluded: false, applicable: true, excludable: false, is_current: false },
+      { step_code: 'PDD-B', step_name: 'Feasibility', kind: 'design', status: 'In Progress', step_excluded: false, applicable: true, excludable: true, is_current: true },
+      { step_code: 'PDD-C', step_name: 'Design review', kind: 'design', status: 'Skipped', step_excluded: true, applicable: true, excludable: false, is_current: false },
+      { step_code: 'PDD-D', step_name: 'Prototype', kind: 'design', status: 'Skipped', step_excluded: false, applicable: false, excludable: false, is_current: false },
+      { step_code: 'PDD-F', step_name: 'Safety lab', kind: 'lab', status: 'Not Started', step_excluded: false, applicable: true, excludable: true, is_current: false },
+      { step_code: 'PDD-G', step_name: 'Certification', kind: 'lab', status: 'Not Started', step_excluded: false, applicable: true, excludable: true, is_current: false },
+    ],
+  };
+  const DETAIL = { id: 'a', name: 'Alpha', hub_id: 'hub-1', certification_testing_required: true, frozen: false, status: 'In Development' };
+
+  function serveDetail(): void {
+    http.get.mockImplementation((path: string) => {
+      if (path === '/engineers') return Promise.resolve(ENGINEERS);
+      if (path === '/projects/a') return Promise.resolve(DETAIL);
+      if (path === '/projects/a/register-steps') return Promise.resolve(STEPS);
+      if (path === `/projects/${UUID}`) return Promise.resolve({ ...DETAIL, id: UUID, name: 'Linked' });
+      return Promise.reject(new ApiError(404, 'not found'));
+    });
+  }
+
+  it('there is no toolbar Edit; each writable row has an Edit toggle that edits only that row and focuses its first cell', async () => {
+    const user = userEvent.setup();
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha' }), row('b', { project_name: 'Beta' })]));
+    renderWithProviders(<ProjectsPage />);
+    expect(screen.queryByTestId('register-edit-start')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('register-edit-bar')).not.toBeInTheDocument();
+
+    const toggle = screen.getByRole('button', { name: 'Edit Alpha' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await user.click(toggle);
+    const done = screen.getByRole('button', { name: 'Done editing Alpha' });
+    expect(done).toHaveAttribute('aria-pressed', 'true');
+    expect(done).toHaveTextContent('Done');
+    // The first editable cell, in column order, is the hub.
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Hub of Alpha' })).toHaveFocus());
+    expect(screen.getByRole('combobox', { name: 'Status of Alpha' })).toBeInTheDocument();
+    // Only Alpha is in edit; Beta stays read-only with its own Edit.
+    expect(within(rowEl('Beta')).queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit Beta' })).toHaveAttribute('aria-pressed', 'false');
+    // No popup, and the folder carries the rest.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(within(rowEl('Alpha')).getByRole('link', { name: 'More fields in the project folder' })).toHaveAttribute(
+      'href',
+      '/projects/a',
+    );
+  });
+
+  it('Done leaves the row and keeps its draft (shown as unsaved) until Save', async () => {
+    const user = userEvent.setup();
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha' })]));
+    renderWithProviders(<ProjectsPage />);
+    await startEdit(user, 'Alpha');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Alpha' }), 'On Hold');
+    await user.click(screen.getByRole('button', { name: 'Done editing Alpha' }));
+
+    const alpha = rowEl('Alpha');
+    expect(within(alpha).queryByRole('combobox')).not.toBeInTheDocument();
+    expect(within(alpha).getByTestId('row-unsaved-badge')).toHaveTextContent('Unsaved');
+    expect(within(alpha).getByText('On Hold')).toBeInTheDocument();
+    expect(within(alpha).getByText('(unsaved change)')).toHaveClass('sr-only');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit Alpha' })).toHaveFocus());
+    expect(screen.getByTestId('register-edit-count')).toHaveTextContent('1 project changed');
+
+    // Edit again: the draft is still there.
+    await user.click(screen.getByRole('button', { name: 'Edit Alpha' }));
+    expect(screen.getByRole('combobox', { name: 'Status of Alpha' })).toHaveValue('On Hold');
+    await user.click(screen.getByRole('button', { name: 'Done editing Alpha' }));
+    await user.click(screen.getByTestId('register-edit-save'));
+    await waitFor(() => expect(saveBody()).toEqual({ edits: [{ project_id: 'a', status: 'On Hold' }] }));
+  });
+
+  it('several rows in edit at once save in ONE request, Done rows included', async () => {
+    const user = userEvent.setup();
+    useDashboardProjects.mockReturnValue(
+      ok([row('a', { project_name: 'Alpha' }), row('b', { project_name: 'Beta' }), row('c', { project_name: 'Gamma' })]),
+    );
+    renderWithProviders(<ProjectsPage />);
+    await startEdit(user, 'Alpha', 'Beta');
+    expect(screen.getByTestId('register-edit-mode')).toHaveTextContent('Editing 2 rows');
+    await user.type(within(rowEl('Alpha')).getAllByTestId('effort-input')[0]!, '7');
+    await user.click(screen.getByRole('button', { name: 'Done editing Alpha' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Beta' }), 'Cancelled');
+    expect(screen.getByTestId('register-edit-count')).toHaveTextContent('2 projects changed');
+
+    await user.click(screen.getByTestId('register-edit-save'));
+    await waitFor(() => expect(saveBody()).toBeDefined());
+    expect(http.send.mock.calls.filter((c) => c[1] === '/projects/register-edits')).toHaveLength(1);
+    expect(saveBody()).toEqual({
+      edits: [
+        { project_id: 'a', design_effort_weeks: 7 },
+        { project_id: 'b', status: 'Cancelled' },
+      ],
+    });
+    // Saved: every row leaves its edit.
+    await waitFor(() => expect(screen.queryByTestId('register-edit-bar')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Edit Beta' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('Escape inside the row leaves its edit and returns focus to the toggle', async () => {
+    const user = userEvent.setup();
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha' })]));
+    renderWithProviders(<ProjectsPage />);
+    await startEdit(user, 'Alpha');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Hub of Alpha' })).toHaveFocus());
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('combobox', { name: 'Status of Alpha' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit Alpha' })).toHaveFocus());
+  });
+
+  it('edits hub, Needs lab testing and current step in the row; the batch carries only those keys', async () => {
+    const user = userEvent.setup();
+    serveDetail();
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha', current_step_code: 'PDD-B' })]));
+    renderWithProviders(<ProjectsPage />);
+    await startEdit(user, 'Alpha');
+
+    const lab = screen.getByRole('checkbox', { name: 'Needs lab testing for Alpha' });
+    await waitFor(() => expect(lab).toBeEnabled());
+    expect(lab).toBeChecked();
+    const step = screen.getByRole('combobox', { name: 'Current step of Alpha' });
+    await waitFor(() => expect(step).toBeEnabled());
+    expect(step).toHaveValue('PDD-B');
+    // Skipped / excluded steps are not offered.
+    expect(within(step).queryByRole('option', { name: /PDD-C/ })).not.toBeInTheDocument();
+    expect(http.get).toHaveBeenCalledWith('/projects/a', expect.anything());
+    expect(http.get).toHaveBeenCalledWith('/projects/a/register-steps', expect.anything());
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Hub of Alpha' }), 'hub-2');
+    await user.click(lab);
+    await user.selectOptions(step, 'PDD-F');
+    expect(within(rowEl('Alpha')).getByTestId('current-step-note')).toHaveTextContent('Earlier steps will be marked Done.');
+
+    await user.click(screen.getByTestId('register-edit-save'));
+    await waitFor(() => expect(saveBody()).toBeDefined());
+    expect(saveBody()).toEqual({
+      edits: [{ project_id: 'a', hub_id: 'hub-2', certification_testing_required: false, current_step_code: 'PDD-F' }],
+    });
+  });
+
+  it('?edit=<id> opens that row in inline edit; a project not in the list gets a link to its folder', async () => {
+    serveDetail();
+    useDashboardProjects.mockReturnValue(ok([row(UUID, { project_name: 'Linked' }), row('b', { project_name: 'Beta' })]));
+    const { unmount } = renderWithProviders(<ProjectsPage />, { route: `/projects?edit=${UUID}` });
+    const done = await screen.findByRole('button', { name: 'Done editing Linked' });
+    expect(done).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Hub of Linked' })).toHaveFocus());
+    expect(screen.getByRole('button', { name: 'Edit Beta' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    unmount();
+
+    useDashboardProjects.mockReturnValue(ok([row('b', { project_name: 'Beta' })]));
+    renderWithProviders(<ProjectsPage />, { route: `/projects?edit=${UUID}` });
+    const miss = await screen.findByTestId('deep-link-miss');
+    expect(miss).toHaveTextContent('“Linked” is not in the list shown here');
+    expect(within(miss).getByRole('link', { name: 'Open its project folder' })).toHaveAttribute('href', `/projects/${UUID}`);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('has no serious axe violations with a row in edit and another holding a draft', async () => {
+    const user = userEvent.setup();
+    serveDetail();
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha' }), row('b', { project_name: 'Beta' })]));
+    const { container } = renderWithProviders(<ProjectsPage />);
+    await startEdit(user, 'Beta');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Status of Beta' }), 'On Hold');
+    await user.click(screen.getByRole('button', { name: 'Done editing Beta' }));
+    await startEdit(user, 'Alpha');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Current step of Alpha' })).toBeEnabled());
+    expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+
+  const chip = (rowName: string, code: string): HTMLElement =>
+    within(rowEl(rowName)).getByRole('button', { name: new RegExp(`^Exclude ${code} `) });
+
+  it('the Steps column shows the chips read-only outside edit (no buttons, served state)', async () => {
+    serveDetail();
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha', current_step_code: 'PDD-B' })]));
+    renderWithProviders(<ProjectsPage />);
+    expect(screen.getByRole('columnheader', { name: 'Steps (click to exclude)' })).toBeInTheDocument();
+    const list = await within(rowEl('Alpha')).findByRole('list', { name: 'Steps of Alpha' });
+    expect(list).toHaveAttribute('data-readonly', 'true');
+    expect(within(list).queryAllByRole('button')).toHaveLength(0);
+    const chips = within(list).getAllByTestId('step-chip');
+    expect(chips.map((c) => c.getAttribute('data-step'))).toEqual(['PDD-A', 'PDD-B', 'PDD-C', 'PDD-D', 'PDD-F', 'PDD-G']);
+    expect(chips[1]).toHaveAttribute('data-current', 'true');
+    expect(chips[2]).toHaveAttribute('data-state', 'excluded');
+    expect(chips[2]).toHaveTextContent('off');
+    expect(chips[3]).toHaveAttribute('data-state', 'na');
+    expect(chips[3]).toHaveTextContent('N/A');
+    expect(within(list).getByText('PDD-B Feasibility: In Progress, current step')).toHaveClass('sr-only');
+  });
+
+  it('in edit a chip toggles the exclusion into the draft; Save sends step_exclusions in workflow order', async () => {
+    const user = userEvent.setup();
+    serveDetail();
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha', current_step_code: 'PDD-B' })]));
+    renderWithProviders(<ProjectsPage />);
+    await startEdit(user, 'Alpha');
+    const g = await waitFor(() => {
+      const el = chip('Alpha', 'PDD-G');
+      expect(el).toBeEnabled();
+      return el;
+    });
+    expect(g).toHaveAttribute('aria-pressed', 'false');
+    await user.click(g);
+    expect(chip('Alpha', 'PDD-G')).toHaveAttribute('aria-pressed', 'true');
+    expect(chip('Alpha', 'PDD-G')).toHaveAttribute('data-changed', 'true');
+    // A served exclusion can be re-included.
+    await user.click(chip('Alpha', 'PDD-C'));
+    expect(chip('Alpha', 'PDD-C')).toHaveAttribute('aria-pressed', 'false');
+    // Keyboard toggles too (native button).
+    chip('Alpha', 'PDD-F').focus();
+    await user.keyboard(' ');
+    expect(chip('Alpha', 'PDD-F')).toHaveAttribute('aria-pressed', 'true');
+    // An excluded step leaves the current-step pick.
+    expect(within(screen.getByRole('combobox', { name: 'Current step of Alpha' })).queryByRole('option', { name: /PDD-F/ })).not.toBeInTheDocument();
+    expect(screen.getByTestId('register-edit-count')).toHaveTextContent('1 project changed');
+
+    // Done keeps the draft; the read-only chips show it as changed.
+    await user.click(screen.getByRole('button', { name: 'Done editing Alpha' }));
+    const g2 = within(rowEl('Alpha')).getAllByTestId('step-chip').find((c) => c.getAttribute('data-step') === 'PDD-G');
+    expect(g2).toHaveAttribute('data-state', 'excluded');
+    expect(g2).toHaveAttribute('data-changed', 'true');
+
+    await user.click(screen.getByTestId('register-edit-save'));
+    await waitFor(() => expect(saveBody()).toBeDefined());
+    expect(http.send.mock.calls.filter((c) => c[1] === '/projects/register-edits')).toHaveLength(1);
+    expect(saveBody()).toEqual({
+      edits: [
+        {
+          project_id: 'a',
+          step_exclusions: [
+            { step_code: 'PDD-C', step_excluded: false },
+            { step_code: 'PDD-F', step_excluded: true },
+            { step_code: 'PDD-G', step_excluded: true },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('N/A and Done chips are disabled; a lab flag change locks the lab chips and drops their staged exclusions', async () => {
+    const user = userEvent.setup();
+    serveDetail();
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha', current_step_code: 'PDD-B' })]));
+    renderWithProviders(<ProjectsPage />);
+    await startEdit(user, 'Alpha');
+    await waitFor(() => expect(chip('Alpha', 'PDD-G')).toBeEnabled());
+    expect(chip('Alpha', 'PDD-A')).toBeDisabled();
+    expect(chip('Alpha', 'PDD-A')).toHaveAccessibleName(/done$/);
+    expect(chip('Alpha', 'PDD-D')).toBeDisabled();
+    expect(chip('Alpha', 'PDD-D')).toHaveAccessibleName(/not applicable$/);
+    expect(chip('Alpha', 'PDD-B')).toHaveAttribute('data-current', 'true');
+
+    await user.click(chip('Alpha', 'PDD-G'));
+    await user.click(screen.getByRole('checkbox', { name: 'Needs lab testing for Alpha' }));
+    expect(chip('Alpha', 'PDD-G')).toBeDisabled();
+    expect(chip('Alpha', 'PDD-G')).toHaveAccessibleName(/lab testing change not saved yet$/);
+    expect(chip('Alpha', 'PDD-G')).toHaveAttribute('aria-pressed', 'false');
+    expect(chip('Alpha', 'PDD-B')).toBeEnabled();
+
+    await user.click(screen.getByTestId('register-edit-save'));
+    await waitFor(() => expect(saveBody()).toEqual({ edits: [{ project_id: 'a', certification_testing_required: false }] }));
+  });
+
+  it('a frozen project locks every chip in edit', async () => {
+    const user = userEvent.setup();
+    serveDetail();
+    http.get.mockImplementation((path: string) => {
+      if (path === '/engineers') return Promise.resolve(ENGINEERS);
+      if (path === '/projects/a') return Promise.resolve({ ...DETAIL, frozen: true });
+      if (path === '/projects/a/register-steps') return Promise.resolve(STEPS);
+      return Promise.reject(new ApiError(404, 'not found'));
+    });
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha', current_step_code: 'PDD-B' })]));
+    renderWithProviders(<ProjectsPage />);
+    await startEdit(user, 'Alpha');
+    await waitFor(() => expect(chip('Alpha', 'PDD-G')).toHaveAccessibleName(/project frozen$/));
+    for (const code of ['PDD-B', 'PDD-C', 'PDD-F', 'PDD-G']) expect(chip('Alpha', code)).toBeDisabled();
   });
 });

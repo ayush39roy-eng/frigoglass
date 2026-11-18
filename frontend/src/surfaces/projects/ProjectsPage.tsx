@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
-import { FilterX, PencilLine, Plus, Search, SlidersHorizontal, Star } from 'lucide-react';
+import { FilterX, Plus, Search, SlidersHorizontal, Star } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 import { PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +18,7 @@ import { ErrorState } from '@/components/shared/error-state';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { hubsInScope } from '@/components/shared/hub-filter/hub-scope';
+import { PriorityMoveContext } from '@/components/shared/priority-move/priority-move-context';
 import { usePriorityMoveFlow } from '@/components/shared/priority-move/use-priority-move-flow';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { useHubs } from '@/lib/api/reference';
@@ -49,10 +51,17 @@ import { FilterSelect } from '@/surfaces/dashboard/components/project-breakdown'
 import { useDashboardProjects, useProjectFacets } from '@/surfaces/dashboard/hooks/use-dashboard';
 import type { ProjectFilterParams, ProjectFilterRow } from '@/surfaces/dashboard/api/types';
 import { fetchEngineerOptions, type EngineerOption } from '@/surfaces/registration/api/engineers-api';
+import { fetchProject } from '@/surfaces/registration/api/registration-api';
+import type { ProjectRead } from '@/surfaces/registration/api/types';
 import { WriteForbiddenNotice } from '@/surfaces/registration/components/access-notice';
 import { useEditDeepLink } from '@/surfaces/registration/hooks/use-edit-deep-link';
 
-import { REGISTER_EDITS_MAX, type RegisterEditError } from './api/register-edits';
+import {
+  fetchRegisterSteps,
+  REGISTER_EDITS_MAX,
+  type RegisterEditError,
+  type RegisterStepsResponse,
+} from './api/register-edits';
 import { BulkEditBar } from './components/bulk-edit-bar';
 import { ColumnMenu } from './components/column-menu';
 import { ProjectsExportMenu, type ExportSource } from './components/projects-export-menu';
@@ -65,13 +74,19 @@ import { HIDEABLE_COLUMNS } from './lib/columns';
 import {
   buildRegisterEditsBody,
   changedProjectIds,
+  dropDraftExclusions,
+  fieldChanged,
   setDraftBulk,
+  toggleDraftExclusion,
   setDraftField,
+  valuesFor,
   type EditableField,
   type RegisterDraft,
   type RegisterDrafts,
+  type RegisterRow,
   type RegisterValues,
 } from './lib/register-edit';
+import { projectStepLock, servedLockReason } from './lib/register-popup';
 import { orderForDisplay } from './lib/vip-order';
 import type { RegistrationDrawerState, RegistrationSaved } from './components/registration-drawer';
 
@@ -86,9 +101,15 @@ import type { RegistrationDrawerState, RegistrationSaved } from './components/re
  *   filter offers `UI_PROJECT_STATUSES`, no In Buyoff / Draft; the Drafts chip
  *   is gone). The
  *   count is the served `total_count`; nothing is counted in the browser (I9);
- * - "Register project" and each row's "Edit registration" open the
- *   registration form in a side drawer (`registration-drawer.tsx`), shown only
- *   with Registration write; the server still decides every write;
+ * - "Register project" opens the registration form in a side drawer
+ *   (`registration-drawer.tsx`), shown only with Registration write; the
+ *   server still decides every write;
+ * - P44-T01 (owner 2026-11-18): each row's "Edit" edits THAT row in the list
+ *   (the P35 cells plus hub, lab testing, current step and the priority's
+ *   preview); "Done" leaves it with its draft kept; one Save bar saves every
+ *   changed row in ONE `POST /projects/register-edits`. There is no toolbar
+ *   Edit and the row no longer opens the drawer: the project folder's Edit
+ *   keeps the full popup (step exclusions, identity fields, Draft submit);
  * - one Export menu with both old exports.
  *
  * - ADR 0040: a star before each name pins / unpins VIP
@@ -97,7 +118,9 @@ import type { RegistrationDrawerState, RegistrationSaved } from './components/re
  *   toggle narrows the served rows to `is_vip` (a missing `is_vip` is false).
  *
  * `/register` and `/register/:id` redirect here (`app/routes.tsx`);
- * `?edit=<id>` opens the drawer for that project (`use-edit-deep-link.ts`).
+ * `?edit=<id>` (P44-T01) opens that row in inline edit, scrolls to it and
+ * focuses its first editable cell; a project not in the list shown (filters,
+ * hub) or not editable here gets a note with a link to its project folder.
  */
 
 const RegistrationDrawer = React.lazy(() => import('./components/registration-drawer'));
@@ -236,14 +259,6 @@ export default function ProjectsPage(): React.JSX.Element {
     openDrawer({ mode: 'create' }, event.currentTarget);
   };
 
-  const handleEdit = React.useCallback(
-    (row: ProjectFilterRow, trigger: HTMLElement) => openDrawer({ mode: 'edit', projectId: row.project_id }, trigger),
-    [openDrawer],
-  );
-
-  // P13 deep link, now `/projects?edit=<id>` (and `/register?edit=` via the redirect).
-  useEditDeepLink(registration.write, (project) => openDrawer({ mode: 'edit', projectId: project.id }, null));
-
   const refreshList = React.useCallback(() => {
     // The register, its facets and every Dashboard figure read the project set.
     void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
@@ -283,9 +298,10 @@ export default function ProjectsPage(): React.JSX.Element {
 
   const columnPrefs = useColumnPrefs(me?.user_id);
 
-  // ---- P35-T02: register Edit mode (D35-2) ---------------------------------
+  // ---- P44-T01: per-row inline edit (P35-T02 cells, D35-2 save) ------------
 
-  const [editMode, setEditMode] = React.useState(false);
+  /** Rows in inline edit (their "Edit" pressed, not yet "Done"). */
+  const [editingIds, setEditingIds] = React.useState<ReadonlySet<string>>(() => new Set());
   const [drafts, setDrafts] = React.useState<RegisterDrafts>({});
   /** The row each draft was staged against, so a draft hidden by a filter
    *  change is still saved (and still counted). */
@@ -298,6 +314,8 @@ export default function ProjectsPage(): React.JSX.Element {
   const registerSave = useRegisterSave();
 
   const hubIdByName = React.useMemo(() => new Map((hubsQuery.data ?? []).map((h) => [h.name, h.id])), [hubsQuery.data]);
+  const hubById = React.useMemo(() => new Map((hubsQuery.data ?? []).map((h) => [h.id, h])), [hubsQuery.data]);
+  const scopedHubs = React.useMemo(() => hubsInScope(me, hubsQuery.data) ?? [], [me, hubsQuery.data]);
 
   /** The caller's role may write Registration and the row's hub is in their
    *  hub scope (the server still decides per row: a 403 names the rows). */
@@ -311,17 +329,82 @@ export default function ProjectsPage(): React.JSX.Element {
     [canWrite, me, forbiddenIds, hubIdByName],
   );
 
+  // The served reads a row in edit needs beyond the list row: the lab flag and
+  // frozen (`GET /projects/{id}`) and the steps (current-step pick, chips),
+  // also for rows holding a draft so its base stays known. The Steps column
+  // shares the steps' cache entries.
+  const detailIds = React.useMemo(
+    () => [...new Set([...editingIds, ...Object.keys(drafts)])].sort(),
+    [editingIds, drafts],
+  );
+  const stepIds = detailIds;
+  const detailQueries = useQueries({
+    queries: detailIds.map((id) => ({
+      queryKey: queryKeys.project(id),
+      queryFn: ({ signal }: { signal: AbortSignal }) => fetchProject(id, { signal }),
+      retry: false,
+      staleTime: 30_000,
+    })),
+  });
+  const stepQueries = useQueries({
+    queries: stepIds.map((id) => ({
+      queryKey: queryKeys.projectRegisterSteps(id),
+      queryFn: ({ signal }: { signal: AbortSignal }) => fetchRegisterSteps(id, { signal }),
+      retry: false,
+      staleTime: 30_000,
+    })),
+  });
+  const detailById = React.useMemo(() => {
+    const out = new Map<string, ProjectRead>();
+    detailIds.forEach((id, i) => {
+      const data = detailQueries[i]?.data;
+      if (data) out.set(id, data);
+    });
+    return out;
+  }, [detailIds, detailQueries]);
+  const stepsById = React.useMemo(() => {
+    const out = new Map<string, { data: RegisterStepsResponse | undefined; pending: boolean; error: boolean }>();
+    stepIds.forEach((id, i) => {
+      const q = stepQueries[i];
+      out.set(id, { data: q?.data, pending: q?.isPending ?? true, error: q?.isError ?? false });
+    });
+    return out;
+  }, [stepIds, stepQueries]);
+
+  /** The list row plus the served values it does not carry (null = unknown). */
+  const enrich = React.useCallback(
+    (row: ProjectFilterRow): RegisterRow => {
+      const steps = stepsById.get(row.project_id)?.data?.steps;
+      return {
+        ...row,
+        hub_id: hubIdByName.get(row.hub) ?? null,
+        certification_testing_required: detailById.get(row.project_id)?.certification_testing_required ?? null,
+        ...(steps
+          ? {
+              excluded: Object.fromEntries(steps.map((st) => [st.step_code, st.step_excluded])),
+              step_order: steps.map((st) => st.step_code),
+            }
+          : {}),
+      };
+    },
+    [hubIdByName, detailById, stepsById],
+  );
+
   // The design resource list per hub (`GET /engineers?hub_id=`: the server maps an
-  // OEM hub to its capacity hub's engineers, ADR 0042), fetched only while editing.
+  // OEM hub to its capacity hub's engineers, ADR 0042), fetched only for the hubs
+  // of rows in edit, holding a draft or ticked (and a draft's new hub).
   const editHubIds = React.useMemo(() => {
-    if (!editMode || !rows) return [];
     const ids = new Set<string>();
-    for (const r of rows) {
-      const id = hubIdByName.get(r.hub);
-      if (id !== undefined) ids.add(id);
+    for (const r of rows ?? []) {
+      const id = r.project_id;
+      if (!editingIds.has(id) && !(id in drafts) && !selected.has(id)) continue;
+      const served = hubIdByName.get(r.hub);
+      if (served !== undefined) ids.add(served);
+      const drafted = drafts[id]?.hub_id;
+      if (drafted) ids.add(drafted);
     }
     return [...ids].sort();
-  }, [editMode, rows, hubIdByName]);
+  }, [rows, editingIds, drafts, selected, hubIdByName]);
   const engineerQueries = useQueries({
     queries: editHubIds.map((id) => ({
       queryKey: queryKeys.engineers(id),
@@ -339,10 +422,11 @@ export default function ProjectsPage(): React.JSX.Element {
   }, [editHubIds, engineerQueries]);
   const leaderOptions = React.useCallback(
     (row: ProjectFilterRow) => {
-      const id = hubIdByName.get(row.hub);
-      return (id !== undefined ? engineersByHub.get(id) : undefined) ?? { options: undefined, loading: true };
+      // The leader list follows the row's draft hub (as the popup does).
+      const id = drafts[row.project_id]?.hub_id ?? hubIdByName.get(row.hub);
+      return (id !== undefined && id !== null ? engineersByHub.get(id) : undefined) ?? { options: undefined, loading: true };
     },
-    [engineersByHub, hubIdByName],
+    [engineersByHub, hubIdByName, drafts],
   );
 
   const rowById = React.useMemo(() => new Map((query.data?.rows ?? []).map((r) => [r.project_id, r])), [query.data]);
@@ -351,11 +435,15 @@ export default function ProjectsPage(): React.JSX.Element {
     () =>
       Object.keys(drafts)
         .map((id) => rowById.get(id) ?? draftRows[id])
-        .filter((r): r is ProjectFilterRow => r !== undefined),
-    [drafts, rowById, draftRows],
+        .filter((r): r is ProjectFilterRow => r !== undefined)
+        .map(enrich),
+    [drafts, rowById, draftRows, enrich],
   );
   const changedIds = React.useMemo(() => changedProjectIds(drafts, draftBaseRows), [drafts, draftBaseRows]);
-  const unsavedEdits = editMode && changedIds.length > 0;
+  const changedSet = React.useMemo(() => new Set(changedIds), [changedIds]);
+  /** Some row is in edit or holds unsaved changes. */
+  const sessionActive = editingIds.size > 0 || changedIds.length > 0;
+  const unsavedEdits = changedIds.length > 0;
 
   const clearRowError = (id: string): void =>
     setRowErrors((prev) => {
@@ -367,15 +455,48 @@ export default function ProjectsPage(): React.JSX.Element {
 
   const onField = React.useCallback(
     <F extends EditableField>(row: ProjectFilterRow, field: F, value: RegisterValues[F]) => {
-      setDrafts((d) => setDraftField(d, row, field, value));
+      const base = enrich(row);
+      setDrafts((d) => {
+        let next = setDraftField(d, base, field, value);
+        if (field === 'hub_id') {
+          // A hub of the other workflow re-points the steps on Save: a staged
+          // current step and exclusions belong to the served workflow, so they
+          // are dropped (the popup's rule).
+          const served = base.hub_id ? hubById.get(base.hub_id) : undefined;
+          const picked = typeof value === 'string' ? hubById.get(value) : undefined;
+          if (served && picked && served.is_oem !== picked.is_oem) {
+            next = setDraftField(next, base, 'current_step_code', base.current_step_code);
+            next = dropDraftExclusions(next, base, null);
+          }
+        }
+        if (field === 'certification_testing_required') {
+          // The lab steps' N/A marks are re-decided by the server on Save.
+          const labCodes = (stepsById.get(row.project_id)?.data?.steps ?? [])
+            .filter((st) => st.kind === 'lab')
+            .map((st) => st.step_code);
+          next = dropDraftExclusions(next, base, labCodes);
+        }
+        return next;
+      });
       setDraftRows((r) => ({ ...r, [row.project_id]: row }));
       clearRowError(row.project_id);
     },
-    [],
+    [enrich, hubById, stepsById],
+  );
+
+  const onToggleStep = React.useCallback(
+    (row: ProjectFilterRow, stepCode: string) => {
+      const base = enrich(row);
+      if (base.excluded === undefined) return; // the served flags are not loaded yet
+      setDrafts((d) => toggleDraftExclusion(d, base, stepCode));
+      setDraftRows((r) => ({ ...r, [row.project_id]: row }));
+      clearRowError(row.project_id);
+    },
+    [enrich],
   );
 
   const leaveEditMode = React.useCallback(() => {
-    setEditMode(false);
+    setEditingIds(new Set());
     setDrafts({});
     setDraftRows({});
     setRowErrors({});
@@ -384,12 +505,41 @@ export default function ProjectsPage(): React.JSX.Element {
     setConfirmCancel(false);
   }, []);
   // A 403 for the whole batch (or a lost write permission) ends the session.
-  if (editMode && !canWrite) leaveEditMode();
+  if (!canWrite && (editingIds.size > 0 || Object.keys(drafts).length > 0)) leaveEditMode();
 
   const requestCancel = (): void => {
     if (changedIds.length > 0) setConfirmCancel(true);
     else leaveEditMode();
   };
+
+  const onToggleEdit = React.useCallback((row: ProjectFilterRow, on: boolean) => {
+    setEditingIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(row.project_id);
+      else next.delete(row.project_id);
+      return next;
+    });
+  }, []);
+
+  // ---- P44-T01: `?edit=<id>` opens that row in inline edit and scrolls to it --
+
+  const [deepLink, setDeepLink] = React.useState<{ id: string; name: string } | null>(null);
+  const [deepLinkMiss, setDeepLinkMiss] = React.useState<{ id: string; name: string } | null>(null);
+  const [focusRequest, setFocusRequest] = React.useState<{ id: string; nonce: number } | null>(null);
+  useEditDeepLink(registration.write, (project) => setDeepLink({ id: project.id, name: project.name }));
+  // Resolved during render once the list, the hubs and the session are known.
+  if (deepLink !== null && rows !== undefined && hubsQuery.data !== undefined && me) {
+    const target = rows.find((r) => r.project_id === deepLink.id);
+    setDeepLink(null);
+    if (target && isWritable(target)) {
+      setEditingIds((prev) => new Set([...prev, target.project_id]));
+      setFocusRequest((prev) => ({ id: target.project_id, nonce: (prev?.nonce ?? 0) + 1 }));
+      setDeepLinkMiss(null);
+    } else {
+      // Not in the list shown (filters, hub) or not editable here: the folder.
+      setDeepLinkMiss(deepLink);
+    }
+  }
 
   // ---- P35-T08: ticked rows and the bulk bar --------------------------------
 
@@ -430,7 +580,7 @@ export default function ProjectsPage(): React.JSX.Element {
 
   const applyBulk = React.useCallback(
     (patch: RegisterDraft) => {
-      setDrafts((d) => setDraftBulk(d, tickedRows, patch));
+      setDrafts((d) => setDraftBulk(d, tickedRows.map(enrich), patch));
       setDraftRows((r) => ({ ...r, ...Object.fromEntries(tickedRows.map((row) => [row.project_id, row])) }));
       setRowErrors((prev) => {
         const next = { ...prev };
@@ -438,7 +588,7 @@ export default function ProjectsPage(): React.JSX.Element {
         return next;
       });
     },
-    [tickedRows],
+    [tickedRows, enrich],
   );
 
   // ---- P35-T02: Save -------------------------------------------------------
@@ -478,23 +628,86 @@ export default function ProjectsPage(): React.JSX.Element {
     setSaveError(res.message);
   };
 
-  const gridEdit = React.useMemo<RegisterGridEdit | undefined>(
-    () =>
-      editMode && canWrite
-        ? {
-            drafts,
-            isWritable,
-            onField,
-            leaderOptions,
-            rowErrors,
-            selected,
-            onToggleSelect,
-            onToggleAll,
-            allSelected,
-          }
-        : undefined,
-    [editMode, canWrite, drafts, isWritable, onField, leaderOptions, rowErrors, selected, onToggleSelect, onToggleAll, allSelected],
-  );
+  const gridEdit = React.useMemo<RegisterGridEdit | undefined>(() => {
+    if (!canWrite) return undefined;
+    const allHubs = hubsQuery.data ?? [];
+    return {
+      active: sessionActive,
+      isWritable,
+      isEditing: (row) => editingIds.has(row.project_id),
+      hasDraft: (row) => changedSet.has(row.project_id),
+      onToggleEdit,
+      values: (row) => valuesFor(drafts, enrich(row)),
+      changed: (row, field) => fieldChanged(drafts, enrich(row), field),
+      onField,
+      leaderOptions,
+      hubs: scopedHubs,
+      allHubs,
+      extras: (row) => {
+        const base = enrich(row);
+        const detail = detailById.get(row.project_id);
+        const steps = stepsById.get(row.project_id);
+        const draftHub = drafts[row.project_id]?.hub_id;
+        const served = base.hub_id ? hubById.get(base.hub_id) : undefined;
+        const picked = draftHub ? hubById.get(draftHub) : undefined;
+        return {
+          certification: base.certification_testing_required ?? null,
+          frozen: detail?.frozen ?? false,
+          steps: steps?.data?.steps,
+          stepsPending: steps?.pending ?? true,
+          stepsError: steps?.error ?? false,
+          workflowChange: served !== undefined && picked !== undefined && served.is_oem !== picked.is_oem,
+        };
+      },
+      draftExclusions: (row) => drafts[row.project_id]?.excluded ?? {},
+      onToggleStep,
+      // The popup chips' locks (register-popup-section.tsx): served N/A / Done /
+      // frozen / closed / not excludable, then a pending workflow or lab change.
+      stepLock: (row, step) => {
+        const detail = detailById.get(row.project_id);
+        if (!detail) return 'loading';
+        const served = step.step_excluded;
+        let reason = servedLockReason(step, served, projectStepLock(detail));
+        const draftHub = drafts[row.project_id]?.hub_id;
+        const servedHub = hubById.get(detail.hub_id);
+        const pickedHub = draftHub ? hubById.get(draftHub) : undefined;
+        if (reason === null && servedHub && pickedHub && servedHub.is_oem !== pickedHub.is_oem) {
+          reason = 'the new hub uses another workflow';
+        }
+        if (reason === null && step.kind === 'lab' && fieldChanged(drafts, enrich(row), 'certification_testing_required')) {
+          reason = 'lab testing change not saved yet';
+        }
+        return reason;
+      },
+      rowErrors,
+      selected,
+      onToggleSelect,
+      onToggleAll,
+      allSelected,
+    };
+  }, [
+    onToggleStep,
+    canWrite,
+    hubsQuery.data,
+    sessionActive,
+    isWritable,
+    editingIds,
+    changedSet,
+    onToggleEdit,
+    drafts,
+    enrich,
+    onField,
+    leaderOptions,
+    scopedHubs,
+    detailById,
+    stepsById,
+    hubById,
+    rowErrors,
+    selected,
+    onToggleSelect,
+    onToggleAll,
+    allSelected,
+  ]);
 
   // ---- Export ------------------------------------------------------------
 
@@ -547,7 +760,7 @@ export default function ProjectsPage(): React.JSX.Element {
     <>
       <PageHeader
         title="Projects"
-        description="Every project in your hub scope. Register new projects and edit their registration here."
+        description="Every project in your hub scope. Register new projects here; a row's Edit edits it in the list."
         actions={
           <>
             {/* At 390 px the country buttons are wider than the page; scroll them. */}
@@ -571,8 +784,8 @@ export default function ProjectsPage(): React.JSX.Element {
                   value="cards"
                   id={tabId('cards')}
                   aria-controls={view === 'cards' ? panelId : undefined}
-                  disabled={editMode}
-                  title={editMode ? 'Save or cancel your edits to switch view' : undefined}
+                  disabled={sessionActive}
+                  title={sessionActive ? 'Save or cancel your edits to switch view' : undefined}
                 >
                   Cards
                 </TabsTrigger>
@@ -702,20 +915,6 @@ export default function ProjectsPage(): React.JSX.Element {
               onReset={columnPrefs.reset}
             />
           ) : null}
-          {view === 'list' && canWrite && !editMode ? (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="rounded-pill"
-              onClick={() => setEditMode(true)}
-              title="Edit status, leader, actual dates and design / lab time in the list"
-              data-testid="register-edit-start"
-            >
-              <PencilLine aria-hidden="true" />
-              Edit
-            </Button>
-          ) : null}
           {hasLocalFilter ? (
             <Button type="button" variant="ghost" size="sm" onClick={clearLocal}>
               <FilterX aria-hidden="true" />
@@ -743,6 +942,24 @@ export default function ProjectsPage(): React.JSX.Element {
         </div>
 
         <ReadOnlyNotice surface="project_registration" what="Registering or editing projects" />
+        {deepLinkMiss ? (
+          <p
+            role="status"
+            className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-sunken px-3 py-2 text-2xs text-text"
+            data-testid="deep-link-miss"
+          >
+            <span>{`“${deepLinkMiss.name}” is not in the list shown here, so it cannot be edited in the list.`}</span>
+            <Link
+              to={`/projects/${deepLinkMiss.id}`}
+              className="font-semibold text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Open its project folder
+            </Link>
+            <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-2xs" onClick={() => setDeepLinkMiss(null)}>
+              Dismiss
+            </Button>
+          </p>
+        ) : null}
         {writeForbidden ? <WriteForbiddenNotice /> : null}
 
         <div role="status" aria-live="polite" className="empty:hidden" data-testid="projects-saved-status">
@@ -807,13 +1024,16 @@ export default function ProjectsPage(): React.JSX.Element {
           </React.Suspense>
         ) : (
           <>
-            {gridEdit ? (
+            {gridEdit && sessionActive ? (
               <p className="mb-2 text-2xs font-semibold text-warning-subtle-fg" data-testid="register-edit-mode">
-                Editing: change status, leader, actual dates and design / lab time; tick rows to edit several at once.
-                Read-only rows are outside what you may edit.
+                {editingIds.size > 0
+                  ? `Editing ${formatInteger(editingIds.size)} ${editingIds.size === 1 ? 'row' : 'rows'}: status, hub, leader, actual dates, design / lab time, lab testing and current step. `
+                  : ''}
+                Done keeps a row&apos;s changes until Save; tick rows to set a value on several at once. Step exclusions
+                and the other registration fields are in each project&apos;s folder.
               </p>
             ) : null}
-            {gridEdit && tickedRows.length > 0 ? (
+            {gridEdit && sessionActive && tickedRows.length > 0 ? (
               <BulkEditBar
                 selectedCount={tickedRows.length}
                 draftCount={tickedRows.filter((r) => r.status === 'Draft').length}
@@ -823,22 +1043,26 @@ export default function ProjectsPage(): React.JSX.Element {
                 onClearSelection={() => setSelected(new Set())}
               />
             ) : null}
-            <ProjectsTable
-              rows={rows}
-              canPinVip={registration.write}
-              canEdit={canWrite}
-              onEdit={handleEdit}
-              highlightId={highlight?.id ?? null}
-              highlightLabel={highlight?.mode === 'create' ? 'New' : 'Updated'}
-              showCharter={showCharter}
-              edit={gridEdit}
-              hiddenColumns={columnPrefs.prefs.hidden}
-              columnWidths={columnPrefs.prefs.widths}
-              onColumnWidth={columnPrefs.setWidth}
-            />
+            {/* A row in edit moves its priority through the page's preview dialog (ADR 0026). */}
+            <PriorityMoveContext.Provider value={moveFlow.api}>
+              <ProjectsTable
+                rows={rows}
+                canPinVip={registration.write}
+                canEdit={canWrite}
+                highlightId={highlight?.id ?? null}
+                highlightLabel={highlight?.mode === 'create' ? 'New' : 'Updated'}
+                showCharter={showCharter}
+                edit={gridEdit}
+                canReadSteps={registration.read}
+                focusRequest={focusRequest}
+                hiddenColumns={columnPrefs.prefs.hidden}
+                columnWidths={columnPrefs.prefs.widths}
+                onColumnWidth={columnPrefs.setWidth}
+              />
+            </PriorityMoveContext.Provider>
           </>
         )}
-        {gridEdit ? (
+        {gridEdit && sessionActive ? (
           <RegisterEditBar
             changedCount={changedIds.length}
             onSave={() => void saveEdits()}

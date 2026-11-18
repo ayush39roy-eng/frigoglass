@@ -9,7 +9,8 @@ import { RegisterSavePanel } from '@/surfaces/projects/components/register-save-
 import type { RegistrationSaved } from '@/surfaces/projects/components/registration-drawer';
 import { useRegisterSave } from '@/surfaces/projects/hooks/use-register-save';
 
-/** The same popup the Projects list's row "Edit" opens (deferred: it pulls in
+/** The project's one Edit popup (since P44-T01 the Projects row edits in place,
+ *  so this folder Edit is where the popup opens; deferred: it pulls in
  *  the registration form). */
 const RegistrationDrawer = React.lazy(() => import('@/surfaces/projects/components/registration-drawer'));
 

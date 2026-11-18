@@ -92,8 +92,13 @@ function rowEl(name: string): HTMLElement {
   return el;
 }
 
+/** P44-T01: every row's own "Edit" (there is no toolbar Edit any more). */
 async function startEdit(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-  await user.click(screen.getByTestId('register-edit-start'));
+  for (;;) {
+    const next = screen.queryAllByRole('button', { name: /^Edit / })[0];
+    if (!next) break;
+    await user.click(next);
+  }
   expect(screen.getByTestId('register-edit-mode')).toBeInTheDocument();
 }
 
