@@ -2669,3 +2669,18 @@ Decisions (orchestrator, 2026-11-18):
 | P45-T01 | Backend: on `HubCapacityRow` (`GET /capacity/hub-load`): `design_demand_by_priority` / `lab_demand_by_priority` (`{P1,P2,P3,P4,Queue}` weeks, full-year demand basis, summing to `design_load_weeks` / `lab_load_weeks` via `split_to_total`), `design_remaining_by_priority` / `lab_remaining_by_priority` (remaining-demand basis, summing to `*_load_remaining_weeks`), and `design_need_p1_weeks`, `design_need_p1_p2_weeks`, `lab_need_p1_weeks`, `lab_need_p1_p2_weeks` per D45-2 (2 dp); one grouped query, no N+1; DOMAIN_RULES note (orchestrator); RBAC check of Executive read on this endpoint reported | backend-builder | — | Tests: sums reconcile; need is 0 when P1 fits and positive otherwise; P1+P2 ≥ P1; lab repeated per region; hub scoping; statement count; contract test row; MEMORY entry | DONE |
 | P45-T02 | Frontend: shaded P1 / P2 / rest segments in each bar (legend "P1 · P2 · other", accessible text); "To finish" lines per D45-3 with the D45-2 tooltip; the strip also on the Executive dashboard | frontend-builder | P45-T01 (field names fixed here) | Tests: segment widths from served figures, hidden P1 line when 0, both-zero message, Executive placement, axe; tsc, eslint, vitest; MEMORY entry | DONE |
 | P45-T03 | Workflow-auditor check: the demand split reconciles with I25 and the Capacity surface; need figures re-derived independently on the seed | workflow-auditor | P45-T01 | PASS in MEMORY | DONE (MEMORY 2026-11-18 P45-T03: PASS; need_p1 9.5 / need_p1_p2 12.5 on the edge fixture, seed all 0) |
+
+## P46 — Two test logins (password = username); destructive actions Super Admin only (ADR 0058)
+
+Opened 2026-11-18 (owner request, relaying the client). Only two logins, `superadmin` and `admin`,
+each with its password equal to its username. Admin edits everything, but cannot cancel a project,
+remove a category or step, delete a chamber, deactivate an engineer, deactivate a user, revoke
+access, cancel a run, delete others' scenarios, or reset the import format. The target is the hosted
+Render demo (dev mode).
+
+| ID | Task | Owner | Depends on | Acceptance | Status |
+|---|---|---|---|---|---|
+| P46-T01 | ADR 0058, plan, OQ #107 | orchestrator | — | docs | DONE (MEMORY 2026-11-18 P46-T01) |
+| P46-T02 | Backend: dev-mode startup provisioning of the 2 accounts, `/me/dev-users` = those 2, `POST /me/dev-login` (constant-time, generic 401, rate limit), `SUPER_ADMIN_ONLY` guards per ADR 0058 D1 on every write path; tests | backend-builder | T01 | 403 probes as Admin + positive as Super Admin for every D1 item; login tests; pytest/ruff/mypy; MEMORY | TODO |
+| P46-T03 | Frontend: login screen with the 2 accounts via `/me/dev-login` (username or email), retire the shared password; hide/disable D1 controls for non-Super-Admin ("Super Admin only"); tests | frontend-builder | T01 | tsc/eslint/vitest; MEMORY | TODO |
+| P46-T04 | Gate: qa, workflow, security | three gatekeepers | T02, T03 | three PASSes | TODO |

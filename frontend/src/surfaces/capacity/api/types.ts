@@ -131,6 +131,27 @@ export interface HubCapacityRow {
    *  like `lab_load_weeks`, so it repeats on every hub row of the same lab region
    *  and must never be added across hubs of one region. */
   lab_load_by_priority: PriorityLoadSplit;
+  /** P45-T01 (D45-1): full-year design demand by live priority band (weeks,
+   *  2 dp), summing to `design_load_weeks` server-side. Drawn as the bar's
+   *  P1 / P2 / other segments; never re-bucketed or re-summed for a figure. */
+  design_demand_by_priority: PriorityLoadSplit;
+  /** P45-T01 (D45-1): full-year lab demand of the lab region by band, summing
+   *  to `lab_load_weeks`. Region-level: repeats on every hub of the region. */
+  lab_demand_by_priority: PriorityLoadSplit;
+  /** P45-T01 (D45-2): remaining design demand by band, summing to
+   *  `design_load_remaining_weeks`. */
+  design_remaining_by_priority: PriorityLoadSplit;
+  /** P45-T01 (D45-2): remaining lab demand of the region by band, summing to
+   *  `lab_load_remaining_weeks`. */
+  lab_remaining_by_priority: PriorityLoadSplit;
+  /** P45-T01 (D45-2): `max(0, R(P1) − design_capacity_remaining)`, weeks, 2 dp. */
+  design_need_p1_weeks: number;
+  /** P45-T01 (D45-2): `max(0, R(P1) + R(P2) − design_capacity_remaining)`, weeks, 2 dp. */
+  design_need_p1_p2_weeks: number;
+  /** P45-T01 (D45-2): `max(0, R(P1) − lab_capacity_remaining)` of the lab region. */
+  lab_need_p1_weeks: number;
+  /** P45-T01 (D45-2): `max(0, R(P1) + R(P2) − lab_capacity_remaining)` of the lab region. */
+  lab_need_p1_p2_weeks: number;
   // P19-T03 (API_CONTRACT_P19 §1): served day figures (weeks × the served
   // weekdays; never multiplied in the browser).
   weekdays_per_week: number;

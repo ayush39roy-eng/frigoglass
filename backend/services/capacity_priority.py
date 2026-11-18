@@ -1,10 +1,16 @@
 """Priority split of the capacity load (P13-T11/T12, docs/API_CONTRACT_P13.md §6).
 
-Two read-only helpers shared by the Capacity surface and the Priority board.
-Nothing here is a scheduling rule: every figure is read from the active
-`ScheduleRun`'s stored rows (I9), and the step kind comes from that run's
-`workflow_snapshot` (`services.active_run.step_kinds_for_run`), exactly as the
-existing `design_load_weeks` / `lab_load_weeks` are built (I6/I7).
+Read-only helpers shared by the Capacity surface and the Priority board.
+Nothing here is a scheduling rule.
+
+Bases (corrected at P45-T01; the earlier text predated ADR 0041):
+- The hub rows' `*_load_by_priority` / `*_demand_by_priority` split the
+  full-year DEMAND (I25, ADR 0041 R12) and `*_remaining_by_priority` the
+  remaining DEMAND, from live rows (`services.demand_load`). The split is
+  built in `api.routers.capacity` with `priority_bucket` + `split_to_total`.
+- `remaining_run_load_by_project` (Priority board column weeks) is still
+  read from the active `ScheduleRun`'s stored rows (I6/I7 basis), with step
+  kinds from that run's `workflow_snapshot`.
 
 **Priority bucket.** A project's bucket is its `Project.priority` band, which
 is what the scheduler orders by (DOMAIN_RULES "Scheduling order"):
@@ -94,6 +100,25 @@ def split_to_total(parts: Mapping[str, float], total: float) -> dict[PriorityBuc
         largest = max(PRIORITY_BUCKETS, key=lambda b: (rounded[b], -PRIORITY_BUCKETS.index(b)))
         rounded[largest] = round2(rounded[largest] + residual)
     return rounded
+
+
+def need_to_finish(
+    remaining: Mapping[PriorityBucket, float], capacity_remaining: float
+) -> tuple[float, float]:
+    """P45 D45-2: `(need_p1, need_p1_p2)` in weeks, 2 dp.
+
+    `need_p1 = max(0, R(P1) − C_rem)` and `need_p1_p2 = max(0, R(P1) + R(P2)
+    − C_rem)`, where `remaining` is the SERVED remaining-demand split (2 dp,
+    from `split_to_total`) and `capacity_remaining` the SERVED remaining
+    capacity (rounded to 2 dp here), so a reader re-derives both from the
+    response. An aggregate capacity view, not the scheduler's verdict.
+    `need_p1_p2 >= need_p1` always, since R(P2) >= 0.
+    """
+
+    cap = round2(capacity_remaining)
+    p1 = round2(float(remaining.get("P1", 0.0)))
+    p2 = round2(float(remaining.get("P2", 0.0)))
+    return round2(max(0.0, p1 - cap)), round2(max(0.0, p1 + p2 - cap))
 
 
 def count_split(counts: Mapping[str, int]) -> dict[PriorityBucket, int]:

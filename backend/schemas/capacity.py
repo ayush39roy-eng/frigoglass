@@ -189,6 +189,31 @@ class HubCapacityRow(BaseModel):
     #: region-level basis (every project of the row's lab region, repeated on
     #: each hub of the region); sums to it.
     lab_load_by_priority: PriorityLoadSplit
+    # --- P45-T01 (D45-1, D45-2): hub demand cards ------------------------
+    #: Full-year design demand split by live priority bucket; sums to
+    #: `design_load_weeks` (`split_to_total`). The same figures as
+    #: `design_load_by_priority`, under the P45 name.
+    design_demand_by_priority: PriorityLoadSplit
+    #: Full-year lab demand (region-level, repeated on each hub of the
+    #: region) by priority bucket; sums to `lab_load_weeks`.
+    lab_demand_by_priority: PriorityLoadSplit
+    #: Remaining design demand (I25 rem) by priority bucket; sums to
+    #: `design_load_remaining_weeks`. P4 / Queue are 0 unless frozen (R42-6).
+    design_remaining_by_priority: PriorityLoadSplit
+    #: Remaining lab demand (region-level) by priority bucket; sums to
+    #: `lab_load_remaining_weeks`.
+    lab_remaining_by_priority: PriorityLoadSplit
+    #: D45-2, 2 dp: `max(0, R(P1) − design_capacity_remaining)`, R = the served
+    #: `design_remaining_by_priority`. Aggregate capacity view, not the
+    #: scheduler's verdict.
+    design_need_p1_weeks: float
+    #: D45-2, 2 dp: `max(0, R(P1) + R(P2) − design_capacity_remaining)`;
+    #: always ≥ `design_need_p1_weeks`.
+    design_need_p1_p2_weeks: float
+    #: D45-2 for lab, per lab region: `max(0, R(P1) − lab_capacity_remaining)`.
+    lab_need_p1_weeks: float
+    #: `max(0, R(P1) + R(P2) − lab_capacity_remaining)`; ≥ `lab_need_p1_weeks`.
+    lab_need_p1_p2_weeks: float
     # --- P19-T03 (docs/API_CONTRACT_P19.md §1): Weeks / Days toggle -------
     #: The hub's `HubWorkCalendar.weekdays_per_week` (ADR 0008).
     weekdays_per_week: float

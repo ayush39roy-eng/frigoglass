@@ -47,6 +47,16 @@ export function hubRow(overrides: Partial<HubCapacityRow> = {}): HubCapacityRow 
     // P13-T11 (API_CONTRACT_P13 §6): served priority buckets; they sum to the loads above.
     design_load_by_priority: { P1: 400, P2: 100, P3: 50, P4: 0, Queue: 37 },
     lab_load_by_priority: { P1: 300, P2: 96.5, P3: 0, P4: 0, Queue: 100 },
+    // P45-T01 (D45-1/D45-2): served band splits (full-year sums to the loads above,
+    // remaining sums to the *_load_remaining_weeks) and the served need figures.
+    design_demand_by_priority: { P1: 400, P2: 100, P3: 50, P4: 0, Queue: 37 },
+    lab_demand_by_priority: { P1: 300, P2: 96.5, P3: 0, P4: 0, Queue: 100 },
+    design_remaining_by_priority: { P1: 300, P2: 80, P3: 30, P4: 0, Queue: 26 },
+    lab_remaining_by_priority: { P1: 250, P2: 80.25, P3: 0, P4: 0, Queue: 78 },
+    design_need_p1_weeks: 120.25,
+    design_need_p1_p2_weeks: 200.25,
+    lab_need_p1_weeks: 117.5,
+    lab_need_p1_p2_weeks: 197.75,
     // P19-T03 (API_CONTRACT_P19 §1): served days (PD-India and the India region work 6 days).
     weekdays_per_week: 6,
     capacity_days: { year: 1515.72, remaining: 1078.5 },
@@ -90,6 +100,11 @@ export function greeceRow(overrides: Partial<HubCapacityRow> = {}): HubCapacityR
     design_booking_status_year: 'full',
     design_booking_status_remaining: 'full',
     design_load_by_priority: { P1: 60, P2: 40, P3: 20, P4: 0, Queue: 11 },
+    design_demand_by_priority: { P1: 60, P2: 40, P3: 20, P4: 0, Queue: 11 },
+    design_remaining_by_priority: { P1: 20, P2: 30, P3: 15, P4: 0, Queue: 10 },
+    // Served: P1 fits the remaining capacity; P1 + P2 does not.
+    design_need_p1_weeks: 0,
+    design_need_p1_p2_weeks: 26.39,
     weekdays_per_week: 5,
     capacity_days: { year: 624.4, remaining: 118.05 },
     load_days: { year: 655, remaining: 375 },

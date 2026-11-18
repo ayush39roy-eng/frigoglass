@@ -481,6 +481,15 @@ async def build_capacity_sheets(db: AsyncSession, principal: Principal) -> Expor
         for h in headers
         if (m := re.match(r"^(design|lab)_load_by_priority_(\w+)$", h))
     }
+    # P45-T01: the full-year demand and remaining demand splits, and the
+    # D45-2 "to finish" figures, as words.
+    for h in headers:
+        if m := re.match(r"^(design|lab)_(demand|remaining)_by_priority_(\w+)$", h):
+            basis = "full-year demand" if m.group(2) == "demand" else "remaining demand"
+            labels[h] = f"{m.group(1).capitalize()} {basis} {m.group(3)} (weeks)"
+        elif m := re.match(r"^(design|lab)_need_(p1|p1_p2)_weeks$", h):
+            which = "P1" if m.group(2) == "p1" else "P1 + P2"
+            labels[h] = f"{m.group(1).capitalize()} still needed to finish {which} (weeks)"
     # P29 (ADR 0042): one readable cell for the capacity hub's members
     # breakdown. ADR 0041 R12: demand (full year / remaining) and booked, e.g.
     # "R&D-Greece 6 project(s) 77 wk demand, 60 wk remaining, 30 wk booked; ...".

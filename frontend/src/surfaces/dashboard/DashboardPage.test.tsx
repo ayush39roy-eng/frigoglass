@@ -3,6 +3,9 @@ import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
+import { ROLE_MATRIX } from '@/test/roles';
+import { permissionsFrom } from '@/test/session';
+import { greeceRow, hubRow } from '@/surfaces/capacity/test-fixtures';
 import { useHubFilterStore } from '@/stores/hub-filter';
 import { ApiError } from '@/lib/api/client';
 import type {
@@ -61,8 +64,9 @@ vi.mock('@/lib/api/reference', () => ({
 }));
 // P23-T03 as narrowed by ADR 0039 §4 (P28, owner-sanctioned supersession): the
 // DETAILED view never asks for /capacity/hub-load. Owner ask 2026-10-23 removed
-// the Executive view's "Hubs at a glance" (its only consumer), so NEITHER view
-// asks for it now. Mocked so the absence is assertable in both views.
+// the Executive view's "Hubs at a glance"; P45-T02 (D45-4) brought the hub
+// demand strip back to the Executive view only, for a caller who can read
+// Capacity. Mocked so presence / absence is assertable in both views.
 const capacityHook = { useHubLoadVsCapacity: vi.fn() };
 vi.mock('@/surfaces/capacity/hooks/use-capacity', () => ({
   useHubLoadVsCapacity: (...a: unknown[]) => capacityHook.useHubLoadVsCapacity(...a),
@@ -599,7 +603,7 @@ describe('DashboardPage — P28 Executive view (ADR 0039)', () => {
     expect(screen.getByTestId('pipeline-row')).toBeInTheDocument();
   });
 
-  it('clicking Executive switches the view, persists to localStorage, shows Upcoming completions (no hub-load request), and keeps focus', async () => {
+  it('clicking Executive switches the view, persists to localStorage, shows Upcoming completions, and keeps focus', async () => {
     readyAll();
     const user = userEvent.setup();
     renderWithProviders(<DashboardPage />);
@@ -612,11 +616,11 @@ describe('DashboardPage — P28 Executive view (ADR 0039)', () => {
     expect(screen.getByTestId('exec-kpi-strip')).toBeInTheDocument();
     // Per-user persistence (ADR 0039 §2).
     expect(window.localStorage.getItem('rpd-dashboard-view')).toBe('executive');
-    // Owner ask 2026-10-23: "Upcoming completions" replaced "Hubs at a glance",
-    // built from the served within-year rows — no /capacity/hub-load request.
+    // Owner ask 2026-10-23: "Upcoming completions" replaced "Hubs at a glance".
     expect(screen.getByTestId('exec-upcoming-card')).toBeInTheDocument();
     expect(screen.queryByTestId('exec-hubs-card')).not.toBeInTheDocument();
-    expect(capacityHook.useHubLoadVsCapacity).not.toHaveBeenCalled();
+    // P45-T02 (D45-4): the hub demand strip's read starts with the Executive view.
+    expect(capacityHook.useHubLoadVsCapacity).toHaveBeenCalledWith({ enabled: true, hub: { hubIds: [], regions: [] } });
     // Focus is not lost on the switch (the toggle never unmounts).
     expect(screen.getByTestId('dashboard-view-executive')).toHaveFocus();
     // Switching back re-establishes the Detailed page.
@@ -663,6 +667,38 @@ describe('DashboardPage — P28 Executive view (ADR 0039)', () => {
     // with NO extra filters (ADR 0039 §3).
     expect(hooks.useDashboardProjects).toHaveBeenLastCalledWith({ hub_id: undefined, region: ['India'] });
     expect(vipHook.useVipBoard).toHaveBeenCalledWith({ region: ['India'] });
+  });
+
+  it('P45-T02: the hub demand strip sits under the KPI strip, follows the hub / country filter, and shows the served need lines', () => {
+    useHubFilterStore.getState().setSelection([], ['India']);
+    readyAll();
+    capacityHook.useHubLoadVsCapacity.mockReturnValue(
+      ready({ has_active_schedule_run: true, rows: [hubRow(), greeceRow({ lab_need_p1_weeks: 0, lab_need_p1_p2_weeks: 0 })] }),
+    );
+    window.localStorage.setItem('rpd-dashboard-view', 'executive');
+    renderWithProviders(<DashboardPage />, { session: { roles: ['Executive Viewer'], permissions: ROLE_MATRIX['Executive Viewer'] } });
+    expect(capacityHook.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ enabled: true, hub: { hubIds: [], regions: ['India'] } });
+    const strip = screen.getByRole('region', { name: 'Hub demand and capacity' });
+    expect(strip).toHaveAttribute('data-testid', 'exec-hub-load');
+    // Placement: after the KPI strip, before the type / category donuts.
+    const kpi = screen.getByTestId('exec-kpi-strip');
+    const cross = screen.getByTestId('exec-cross-filter');
+    expect(kpi.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(strip.compareDocumentPosition(cross) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(strip).getByTestId('hub-load-PD-India-design')).toHaveTextContent('587 / 253 wks (232 %)');
+    expect(within(strip).getByTestId('hub-load-PD-India-need')).toHaveTextContent('To finish P1: +120 wks design');
+    expect(within(strip).getByTestId('hub-load-R&D-Greece-need')).toHaveTextContent('To finish P1 + P2: +26 wks design');
+    expect(within(strip).queryByText('To finish P1: +0 wks design')).not.toBeInTheDocument();
+  });
+
+  it('P45-T02: a caller who cannot read Capacity gets no hub demand strip and no capacity request', () => {
+    readyAll();
+    capacityHook.useHubLoadVsCapacity.mockReturnValue(ready({ has_active_schedule_run: true, rows: [hubRow()] }));
+    window.localStorage.setItem('rpd-dashboard-view', 'executive');
+    renderWithProviders(<DashboardPage />, { session: { permissions: permissionsFrom({ dashboard: 'r', matrix: 'r', gantt: 'r' }) } });
+    expect(screen.getByTestId('executive-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('exec-hub-load')).not.toBeInTheDocument();
+    expect(capacityHook.useHubLoadVsCapacity).not.toHaveBeenCalled();
   });
 
   it('no active run: the strip falls back to the pipeline total with a notice; run panels are hidden', () => {

@@ -1976,3 +1976,16 @@ apply.
 - **Invariants:** I49 (band exclusion), I50 (year basis), I51 (tier order), I52 (spare-capacity
   neutrality) and I53 (KPI basis), exact text in R42-9. I30 and I37a read "equal on keys 1, 1a, 2,
   3, 3a (, 4)". I9 follows I50.
+
+## Hub demand cards: priority split and "need to finish" *(2026-11-18, P45, display only)*
+
+Served on each `HubCapacityRow` (`GET /capacity/hub-load`); never a scheduler input.
+- `*_demand_by_priority`: the full-year demand (I25) split by the project's live priority band
+  (P1, P2, P3, P4, Queue = Q or none), summing to `*_load_weeks` via `split_to_total`.
+- `*_remaining_by_priority`: the same split of the remaining demand, summing to
+  `*_load_remaining_weeks`.
+- `need_p1 = max(0, R(P1) − C_rem)`, `need_p1_p2 = max(0, R(P1) + R(P2) − C_rem)`, per kind, 2 dp,
+  where `R` is the remaining split and `C_rem` the served `*_capacity_remaining`. Design per capacity
+  hub (own + members, ADR 0042); lab per lab region, repeated on each hub of the region.
+- It is an aggregate capacity figure, not the run's verdict: the run may still leave a P1 project
+  out because of sequencing or eligibility, even when `need_p1 = 0`.

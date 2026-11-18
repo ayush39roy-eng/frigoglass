@@ -397,9 +397,9 @@ export default function DashboardPage(): React.JSX.Element {
             {/* P23-T03 (owner ask 2026-10-22): the Dashboard "Capacity booked"
                 card (Europe / India booked %) is gone; booked % lives per hub on
                 the RPD Capacity page. The DETAILED view never asks for
-                GET /capacity/hub-load — the Executive view's "Hubs at a glance"
-                does, lazily, while it is shown (ADR 0039 §4, owner-sanctioned
-                narrowing of P23-T03). */}
+                GET /capacity/hub-load — the Executive view's hub demand strip
+                (P45-T02) does, while it is shown and only for a caller who can
+                read Capacity (ADR 0039 §4, owner-sanctioned narrowing of P23-T03). */}
 
             {withinYear.data?.has_active_schedule_run && withinYear.data.rows.length > 0 ? (
               <StaggerSection>

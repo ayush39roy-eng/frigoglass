@@ -305,6 +305,11 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # `EngineerCreateRequest`, `EngineerResourceLoad` and `EngineerUtilizationRow`
     # gain `counts_in_capacity`; `ProjectRead` / `WorkspaceProject` gain
     # `leader_is_provisional`. Red until P29-T03 mirrors them.
+    # P45-T01 (D45-1/D45-2) adds `design_demand_by_priority`,
+    # `lab_demand_by_priority`, `design_remaining_by_priority`,
+    # `lab_remaining_by_priority`, `design_need_p1_weeks`,
+    # `design_need_p1_p2_weeks`, `lab_need_p1_weeks`, `lab_need_p1_p2_weeks`:
+    # red until P45-T02 mirrors them in `capacity/api/types.ts`.
     (_CAPACITY_TS, "HubCapacityRow", "HubCapacityRow", "exact"),
     # P29-T03 (ADR 0042): the Greece row's members breakdown. P30-T02 (ADR 0041
     # R12) adds `design_load_remaining_weeks`, `design_load_booked_weeks`,

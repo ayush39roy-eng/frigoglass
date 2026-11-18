@@ -6,6 +6,7 @@ import { PanelSkeleton } from '@/components/ui/panel-skeleton';
 import { useVipBoard } from '@/lib/api/vip';
 import { toHubFilterParams, type HubSelection } from '@/stores/hub-filter';
 import { usePermission } from '@/stores/session';
+import { HubLoadStrip } from '@/surfaces/priority-board/components/hub-load-strip';
 
 import type {
   CompletingWithinYear,
@@ -44,6 +45,12 @@ import { UpcomingCompletionsCard } from './upcoming-completions-card';
  * glance" (and with it the view's `/capacity/hub-load` fetch) was removed and
  * replaced by "Upcoming completions", built from the already-served
  * within-year rows.
+ *
+ * P45-T02 (D45-4, owner 2026-11-18): the Priority board's hub demand strip
+ * (P1 / P2 shaded Design / Lab bars + "To finish" lines) is shown here too,
+ * under the KPI strip, following the view's hub / country selection. It
+ * mounts — and so fetches `/capacity/hub-load` — only for a caller who can
+ * read Capacity (the Priority board's gate); otherwise it is not rendered.
  */
 const PipelineDonut = React.lazy(async () => ({
   default: (await import('./executive-charts')).PipelineDonut,
@@ -91,6 +98,8 @@ export function ExecutiveView({
   const vipBoard = useVipBoard(hubParams);
   // VIP dialog edit mode follows the VIP card's rule (ADR 0027): MATRIX write.
   const canEditVip = usePermission('matrix').write;
+  // P45-T02 (D45-4): the same Capacity read gate as the Priority board.
+  const canReadCapacity = usePermission('capacity').read;
   const projects = useDashboardProjects({
     hub_id: hubParams.hub_id,
     region: hubParams.region,
@@ -177,6 +186,17 @@ export function ExecutiveView({
           )}
         </SectionBoundary>
       </StaggerSection>
+
+      {canReadCapacity ? (
+        <HubLoadStrip
+          hub={hub}
+          enabled
+          heading="Hub demand and capacity"
+          layout="grid"
+          className="mb-0"
+          testId="exec-hub-load"
+        />
+      ) : null}
 
       {/* P31 (owner 2026-10-23): "Projects by type" became a donut, with
           "Projects by category" beside it. Their slices and legend toggles

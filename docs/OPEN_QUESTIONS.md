@@ -1323,3 +1323,22 @@ answer:** owner.
 The exports now use readable column names ("Project", "Planned start week") instead of
 `project_name` / `planned_start_week`.
 **Assuming until answered:** nobody parses them automatically. **Who must answer:** client.
+
+### 86. "Lab hours and design required" — weeks or hours? *(2026-11-18, P45, non-blocking)*
+
+The cards show weeks (design man-weeks, lab chamber-weeks). **Assuming:** weeks. Hours would need
+an hours-per-week figure for engineers and for chambers.
+
+### 87. Executive dashboard: the Executive role and Capacity data *(2026-11-18, P45, non-blocking)*
+
+The hub cards read Capacity. **Assuming:** Executive Viewer may see these hub-level figures (no
+engineer-level data is shown, so GDPR OQ #8 is not touched).
+
+### 107. The hosted demo runs in dev mode with weak test logins *(2026-11-18, P46, ADR 0058, non-blocking for the dev stage, BLOCKING for go-live)*
+
+During development the client signs in with two test accounts whose password equals the username
+(`superadmin` / `admin`). In dev mode the API can also be told to act as any seeded user. The demo
+URL is public, so anyone who finds it can sign in and change the data.
+**Assuming until answered:** acceptable while in development, with no real or confidential data on
+the demo. Before go-live, OIDC SSO (Entra ID) replaces the test logins (OQ #9).
+**Who must answer:** owner and client IT.

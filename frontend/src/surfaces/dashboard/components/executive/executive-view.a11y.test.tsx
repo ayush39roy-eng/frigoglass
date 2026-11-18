@@ -35,7 +35,14 @@ vi.mock('../../hooks/use-dashboard', async () => {
   return { ...actual, useDashboardProjects: (...a: unknown[]) => dashHooks.useDashboardProjects(...a) };
 });
 
+// P45-T02: the hub demand strip's read, served from fixtures so axe covers it.
+const capacityHook = { useHubLoadVsCapacity: vi.fn() };
+vi.mock('@/surfaces/capacity/hooks/use-capacity', () => ({
+  useHubLoadVsCapacity: (...a: unknown[]) => capacityHook.useHubLoadVsCapacity(...a),
+}));
+
 import { ExecutiveView } from './executive-view';
+import { greeceRow, hubRow } from '@/surfaces/capacity/test-fixtures';
 import { servedCompleting } from '@/surfaces/dashboard/test-fixtures';
 
 function ready<T>(data: T): UseQueryResult<T, Error> {
@@ -162,6 +169,9 @@ describe('ExecutiveView a11y (P28)', () => {
   it('renders every section and is axe-clean with nothing tabbable inside aria-hidden figures', async () => {
     vipHook.useVipBoard.mockReturnValue(ready({ run_id: 'r', pillars: [], areas: [] }));
     dashHooks.useDashboardProjects.mockReturnValue(ready({ total_count: 0, rows: [] }));
+    capacityHook.useHubLoadVsCapacity.mockReturnValue(
+      ready({ has_active_schedule_run: true, rows: [hubRow(), greeceRow({ design_need_p1_p2_weeks: 0, lab_need_p1_weeks: 0, lab_need_p1_p2_weeks: 0 })] }),
+    );
 
     const { container } = renderWithProviders(
       <ExecutiveView
@@ -199,6 +209,9 @@ describe('ExecutiveView a11y (P28)', () => {
     // Session fixture current_week 31 → W33 is inside the 8-week window.
     expect(screen.getAllByTestId('exec-upcoming-row')).toHaveLength(1);
     expect(screen.getByTestId('exec-provenance')).toBeInTheDocument();
+    // P45-T02: the hub demand strip (Super Admin session reads Capacity).
+    const strip = screen.getByTestId('exec-hub-load');
+    expect(within(strip).getByTestId('hub-load-R&D-Greece-need')).toHaveTextContent('P1 and P2 fit in the remaining capacity');
 
     // Owner ask 2026-11-16: the per-country delivery rate under the compact
     // gauge, same formula per served country row (axe-checked below too).
@@ -226,6 +239,7 @@ describe('ExecutiveView a11y (P28)', () => {
   it('P31: the register rows behind Risks are requested with the Dashboard selection', async () => {
     vipHook.useVipBoard.mockReturnValue(ready({ run_id: 'r', pillars: [], areas: [] }));
     dashHooks.useDashboardProjects.mockReturnValue(ready({ total_count: 0, rows: [] }));
+    capacityHook.useHubLoadVsCapacity.mockReturnValue(ready({ has_active_schedule_run: false, rows: [] }));
     renderWithProviders(
       <ExecutiveView
         withinYear={ready(withinYear)}

@@ -124,6 +124,7 @@ from services.capacity_priority import (
     PRIORITY_BUCKETS,
     SCHEDULABLE_STATUSES,
     count_split,
+    need_to_finish,
     priority_bucket,
     split_to_total,
 )
@@ -250,6 +251,13 @@ async def hub_load_vs_capacity(
     design_by_priority: dict[uuid.UUID, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     lab_by_priority: dict[LabRegion, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     lab_full_year_by_hub: dict[uuid.UUID, float] = defaultdict(float)
+    # P45-T01 (D45-2): the same split of the REMAINING demand (I25 rem; 0 for
+    # a non-schedulable status and for a non-frozen P4/Q project, R42-6), so
+    # it sums to `*_load_remaining_weeks`. Same snapshot, no extra query.
+    design_rem_by_priority: dict[uuid.UUID, dict[str, float]] = defaultdict(
+        lambda: defaultdict(float)
+    )
+    lab_rem_by_priority: dict[LabRegion, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for d in demand.projects.values():
         if not d.in_full_year:
             continue
@@ -257,6 +265,8 @@ async def hub_load_vs_capacity(
         design_by_priority[d.hub_id][bucket] += d.design_full_year
         lab_by_priority[d.lab_region][bucket] += d.lab_full_year
         lab_full_year_by_hub[d.hub_id] += d.lab_full_year
+        design_rem_by_priority[d.hub_id][bucket] += d.design_remaining
+        lab_rem_by_priority[d.lab_region][bucket] += d.lab_remaining
 
     # --- Estimated load (OQ #12; deprecated by ADR 0041 R13): live project
     # fields, schedulable projects. Kept for one release.
@@ -334,9 +344,22 @@ async def hub_load_vs_capacity(
         for m in group:
             for member_bucket, member_weeks in design_by_priority.get(m, {}).items():
                 d_split[member_bucket] += member_weeks
+        d_rem_split: dict[str, float] = defaultdict(float)
+        for m in group:
+            for member_bucket, member_weeks in design_rem_by_priority.get(m, {}).items():
+                d_rem_split[member_bucket] += member_weeks
         l_load = demand.lab_full_year(h.lab_region)
         l_rem = demand.lab_remaining(h.lab_region)
         l_booked = booked_lab_by_region.get(h.lab_region, 0.0)
+        # P45-T01: full-year split (D45-1, the same figures as
+        # `*_load_by_priority`), remaining split and the D45-2 need figures
+        # on the served (2 dp) remaining split and remaining capacity.
+        d_demand_split = split_to_total(d_split, d_load)
+        l_demand_split = split_to_total(lab_by_priority.get(h.lab_region, {}), l_load)
+        d_rem_served = split_to_total(d_rem_split, d_rem)
+        l_rem_served = split_to_total(lab_rem_by_priority.get(h.lab_region, {}), l_rem)
+        d_need_p1, d_need_p1_p2 = need_to_finish(d_rem_served, design_remaining)
+        l_need_p1, l_need_p1_p2 = need_to_finish(l_rem_served, lab_remaining)
         # I19 rev.: year pairs full-year demand with the yearly capacity,
         # remaining pairs remaining demand with the remaining capacity; gap
         # and completion use the same pairs.
@@ -409,10 +432,16 @@ async def hub_load_vs_capacity(
                 lab_booking_status_year=l_book_y[1],
                 lab_booking_status_remaining=l_book_r[1],
                 area=area_for_region(h.lab_region),
-                design_load_by_priority=PriorityLoadSplit(**split_to_total(d_split, d_load)),
-                lab_load_by_priority=PriorityLoadSplit(
-                    **split_to_total(lab_by_priority.get(h.lab_region, {}), l_load)
-                ),
+                design_load_by_priority=PriorityLoadSplit(**d_demand_split),
+                lab_load_by_priority=PriorityLoadSplit(**l_demand_split),
+                design_demand_by_priority=PriorityLoadSplit(**d_demand_split),
+                lab_demand_by_priority=PriorityLoadSplit(**l_demand_split),
+                design_remaining_by_priority=PriorityLoadSplit(**d_rem_served),
+                lab_remaining_by_priority=PriorityLoadSplit(**l_rem_served),
+                design_need_p1_weeks=d_need_p1,
+                design_need_p1_p2_weeks=d_need_p1_p2,
+                lab_need_p1_weeks=l_need_p1,
+                lab_need_p1_p2_weeks=l_need_p1_p2,
                 weekdays_per_week=wd,
                 capacity_days=_days(round2(design_year), round2(design_remaining), wd),
                 load_days=_days(d_load, d_rem, wd),

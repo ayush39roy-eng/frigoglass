@@ -43192,3 +43192,22 @@ qa-inspector and security-auditor both PASS. Workflow is N/A: there is no schedu
 change. The save path is unchanged.
 
 Also shipped: the Gantt charts are shown by default again (owner, 2026-11-18).
+
+## [2026-11-18] P46-T01 — ADR 0058: two test logins, destructive actions Super Admin only — orchestrator: DONE
+
+The owner relayed the client's request: only two logins, `superadmin` and `admin`, each with
+password = username, on the hosted Render demo (dev mode).
+
+**Decisions** (ADR 0058):
+- **Login accounts.** Dev-mode-only startup provisioning creates the two accounts.
+  - `/me/dev-users` lists only those two.
+  - The new `POST /me/dev-login` checks the password on the server.
+  - The shared `rpd-test-2026` password is retired.
+  - The `X-Dev-User-Email` header stays as it is, so this is not security (OQ #107).
+- **Super Admin only (403 `SUPER_ADMIN_ONLY`):** setting a project to Cancelled on any path;
+  removing or retiring a category or step; deleting a chamber; deactivating an engineer;
+  deactivating a user or removing a role; revoking access through Admin rights; cancelling a run;
+  deleting others' saved scenarios; resetting the import format.
+- **Not restricted:** a per-project step exclusion, leaving Cancelled, and reactivating an engineer.
+
+**Next:** T02 (backend-builder) and T03 (frontend-builder) in parallel, then the T04 gate.
