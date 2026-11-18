@@ -44675,3 +44675,9 @@ All 4 were confirmed to fail with the fix temporarily reverted (restored from a 
 - Owner: Backspace in the Design/Lab time box "doesn't go to zero". Cause: an emptied box means "use the calculated weeks", and the calculated figure showed as placeholder in the same green semibold, so the box looked unchanged.
 - Fix: `register-edit-cells.tsx` `EffortInput` hides the placeholder while focused (`focus:placeholder:text-transparent`); the calculated hint returns on blur. Semantics unchanged: empty = calculated, typed 0 = 0. tsc/eslint clean, vitest `src/surfaces/projects` 122 passed.
 - Shipped with the compact horizontal step chips (P44 follow-up).
+
+## 2026-11-18 — Timeline step Start/End hints never show a week past W52 (owner bug)
+
+- Owner saw 53/55/56 in the expanded step rows' Start/End boxes. Those were placeholders = served `planned_start_week` / `planned_end_week` (absolute plan weeks; 53 = W1 of the next year), breaking ADR 0024 "no surface shows a week past W52".
+- Fix: `gantt/components/step-pin-cell.tsx` shows "›52" as the placeholder for a planned week > `WITHIN_YEAR_WEEK`; the tooltip says "spillover to {next year} (week N of {next year})". Typed pins are still bounded to current week..W52 (R40-1). tsc/eslint clean, vitest `src/surfaces/gantt` 252 passed.
+- Also told the owner the Timeline axis stops at W52 by design (ADR 0024); offered an opt-in "Show 2027" (W53–W78) toggle — not built, awaiting answer.

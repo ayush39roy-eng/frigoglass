@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { X } from 'lucide-react';
 
+import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { usePlanYearLabels } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
 
 import { PIN_BLOCK_REASON_COPY } from '../api/step-pins-api';
@@ -39,6 +41,7 @@ const INPUT_CLASS = cn(
 export function StepPinCell({ project, step }: { project: GanttProjectRow; step: GanttStepRow }): React.JSX.Element | null {
   const edit = useStepPinEdit();
   const baseId = React.useId();
+  const years = usePlanYearLabels();
   if (!edit) return null;
 
   const key = pinKey(project.project_id, step.step_id);
@@ -78,8 +81,19 @@ export function StepPinCell({ project, step }: { project: GanttProjectRow; step:
       'aria-readonly': !editable || undefined,
       'aria-invalid': invalid || undefined,
       'aria-describedby': describedBy,
-      placeholder: placeholderWeek == null ? (which === 'start' ? 'S' : 'E') : String(placeholderWeek),
-      title: reason ?? (which === 'start' ? 'Start week (inclusive)' : 'End week (inclusive)'),
+      // ADR 0024: no surface shows a week past W52. A planned week in the
+      // next year reads "›52"; the tooltip names its week of that year.
+      placeholder:
+        placeholderWeek == null
+          ? which === 'start' ? 'S' : 'E'
+          : placeholderWeek > WITHIN_YEAR_WEEK ? `›${String(WITHIN_YEAR_WEEK)}` : String(placeholderWeek),
+      title:
+        reason ??
+        `${which === 'start' ? 'Start week (inclusive)' : 'End week (inclusive)'}${
+          placeholderWeek != null && placeholderWeek > WITHIN_YEAR_WEEK
+            ? ` — planned past W${String(WITHIN_YEAR_WEEK)}: spillover to ${years.spilloverYear} (week ${String(placeholderWeek - WITHIN_YEAR_WEEK)} of ${years.spilloverYear})`
+            : ''
+        }`,
       className: cn(
         INPUT_CLASS,
         invalid ? 'border-2 border-danger' : 'border-border',
