@@ -2734,4 +2734,4 @@ The ruling is labelled R49 (written before the phase number was assigned; P49 is
 | P50-T02 | Engine: plan-from floor and anchor (I54), plan-until cut-off / horizon / windows (I56) | algorithm-engineer | — | done (MEMORY 2026-11-19) |
 | P50-T03 | What-if import: "Plan from" / "Plan until" pickers, server labels, "band" source, banners, cut-off reads served `plan_until_week` | frontend-builder | T01, T02 | done (MEMORY 2026-11-19) |
 | P50-T04 | Display: no week ≥ 53 on any surface — next-year weeks read W1.. with the year on hover (owner 2026-11-18) | frontend-builder | — | done (MEMORY 2026-11-19) |
-| P50-T05 | Gate: qa-inspector, workflow-auditor, security-auditor | — | T01–T04 | todo |
+| P50-T05 | Gate: qa-inspector, workflow-auditor, security-auditor | — | T01–T04 | done — gate PASS (qa, workflow, security; MEMORY 2026-11-19) |

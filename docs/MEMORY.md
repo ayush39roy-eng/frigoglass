@@ -45200,3 +45200,36 @@ frontend/ only (`src/surfaces/planning/whatif/import/`). No business logic: the 
 - F4 (cosmetic): scoped (hub-limited) workings line still says "Finishing within the plan year (your hubs…)" when a window is set (R49-18 asks for "plan window").
 - R49 O1 (rank order wording) is closed: DOMAIN_RULES now reads "ordered by rank within equal status and category".
 - Not exercisable today: R49-14 / R49-20 closed-year path (cw = 47); covered only by engine unit tests.
+
+## [2026-11-19] P50-T05 — qa gate — qa-inspector: PASS
+
+Scope: P50 (ADR 0061; R49-1..21; I54–I56; commits de1211d, 93b5e56, e4230a6). Read-only for feature code; no tests added (no clear gap found); nothing committed. Coverage written to a scratch path (the shared `backend/.coverage` was not touched).
+
+- **Scheduling suite** (`pytest -c pytest-scheduling.ini`, incl. `tests/scheduling/test_p49_plan_window.py`): 876 passed, coverage **95.67 %** (gate 85 %). `scheduling/plan_import.py` 97 % (22 lines missed), `invariants.py` 93 %, `whatif.py` 95 %.
+- **Plan-import / what-if / scenario backend suites** (test_p50_plan_import_bands_window, p32 xlsx/api/r01/r05/migration, p41 scenarios/migration/qa_gate, p43 exports/qa_gate/r02, p40 step pins, p42 band backend, p46 super-admin, p18 whatif api, scenario_apply_api): **389 passed, 0 failed**. Coverage of the P50 backend files: `schemas/whatif_import.py` 100 %, `schemas/import_scenarios.py` 100 %, `services/import_format.py` 100 %, `services/plan_import_xlsx.py` 98 %, `services/whatif_import.py` 98 %, `services/whatif_import_scenarios.py` 98 % (combined 99 %, gate 70 %).
+- **Contract:** `tests/test_openapi_frontend_contract.py` 271 passed. That suite does not cover the import types (the import uses zod), so the new fields were checked by hand: `file_band`, `priority_source` "band", `plan_from_min_week`, `plan_week_choices` {week,label}, `plan_from_week`, `plan_until_week`, `plan_window_rerun`, `plan_from_label`, `plan_window_label`, and the saved summary `plan_from_week` / `plan_until_week` are all present in `import-types.ts` and `import-schema.ts` (and in `saved-scenarios.ts` where relevant). No mismatch.
+- **Acceptance:**
+  - Band columns to priority: covered by each band, both P1 columns, conflict, invalid value, band over rank / Running / matched, and status first. **I55** no-band identity: `test_i55_no_band_yes_parses_as_before` and the odd "Must Do" text keeping its old reading.
+  - f/u validation 422 `INVALID_IMPORT` for f < cw, f > preset, f > u and u < cw (service), plus f < cw at the API. Out-of-schema f/u (0, 105, "53") are rejected by the schema.
+  - f = cw identity: the API compares `same == base`, and the engine pins the pre-R49 sha256 for 5 scenarios. u unset identity: the engine pins the u unset / u = preset sha256, and the service serves `plan_window_label` None when u is at the preset.
+  - Saved scenarios: store / old-row read / compare "Plan windows differ" / export / re-run (422 without `plan_window_rerun`, 200 with it; f, then u, raised with `PLAN_FROM_RAISED` / `PLAN_UNTIL_RAISED`).
+  - I54 (file steps ≥ f) and I56 are checked by the invariants, including broken-result direction-2 tests.
+  - No week ≥ 53 on any screen: `src/lib/format-week.test.ts` passes (6, including a 1..160 sweep showing nothing above W52). A grep of `src` for raw `W{…}` / `week ${…}` display sites found only always-≤52 weeks (current/run/deactivation week, WITHIN_YEAR_WEEK) and the template-relative category timeline, which was already flagged as ambiguous in the P50-T04 entry. The what-if import uses `week-labels.ts`. Nothing new was found.
+- **Frontend:**
+  - `npx tsc -b`: clean.
+  - `npx eslint .`: 0 errors, 10 warnings. That is one more than the 9 in the P49 baseline. The new one is `react-refresh/only-export-components` at `src/components/shared/project-outcome-chips.tsx:58` (`outcomeLabelForDisplay` was exported from a component file in de1211d). It is a warning and is advisory.
+  - Vitest full run #1: 2443/2453 passed, with 10 failures (timeouts plus "Axe is already running" in `resource-load-section.test.tsx` and `p48-upload-library.test.tsx`). The machine load average was about 27 on 10 cores at the time, from other sessions.
+  - Re-run at lower load: **2452/2453 passed, 288 files**. The only failure was the known flaky `app.test.tsx` "navigates to the Project Execution Timeline" (Zoom slider not found). The run #1 failures did not reproduce, so they were load-induced.
+  - axe: the P50-T03 Review-pickers axe test in `p50-plan-window.test.tsx` passes.
+- **Advisories (non-blocking):**
+  - **A1:** an out-of-schema f/u (e.g. 105 or 0) returns the generic validation 422 (`{"detail": [...]}`), not the coded `INVALID_IMPORT`. The status is right but the code differs from the DOMAIN_RULES wording, and the UI pickers cannot send such values.
+  - **A2:** the new eslint warning noted above.
+  - **A3:** the frontend import types are not in the automated OpenAPI contract test.
+
+Verdict: **PASS** (the QA leg of P50-T05).
+
+## [2026-11-19] P50 — gate closed (orchestrator)
+
+- qa-inspector PASS, workflow-auditor PASS, security-auditor PASS (entries above). P50 closed.
+- Fixed from the domain audit: F1 `PLAN_FROM_LATER` wording (whatif_import.py), F2 DOMAIN_RULES plan-window bullets folded, R49-1 / I54 / I56 wording amended (ce9dc46).
+- Open follow-ups (non-blocking): F3 one week labelled three ways (engine "2027 W8", service "W8 2027 (22 Feb 2027)", UI "W8 '27"); F4 hub-scoped workings say "plan year" under a window; QA A1 out-of-range f/u gives schema 422 not coded INVALID_IMPORT; A2 new eslint warning project-outcome-chips.tsx:58; A3 import types not in the OpenAPI contract test; security I-1 `Object.hasOwn` for issue titles; closed-year path (R49-14/20) only unit-tested; OQ #115/#116.
