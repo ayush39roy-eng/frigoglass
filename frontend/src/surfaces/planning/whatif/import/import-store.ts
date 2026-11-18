@@ -88,6 +88,12 @@ export interface ImportState {
   view: ScenarioView | null;
   /** P41: bumped by "Re-run on today's plan" so an unchanged body still re-simulates. */
   rerunNonce: number;
+  /**
+   * P48-R01: the results were reached from the upload step's saved-scenario panel (Open or
+   * Compare). They then show the stored scenarios whatever workbook is loaded, and the loaded
+   * workbook is not simulated. Cleared by any step change, a new parse, a reset and a re-run.
+   */
+  savedBrowse: boolean;
 
   /** A fresh parse: rows reset to the served ones, edits and result cleared. */
   setParsed: (parsed: ImportParseResponse) => void;
@@ -95,6 +101,8 @@ export interface ImportState {
   setAllIncluded: (include: boolean) => void;
   setOptions: (patch: Partial<ImportOptions>) => void;
   setStep: (step: ImportStep) => void;
+  /** P48-R01: go to the results from the saved-scenario panel (optionally on `tab`). */
+  browseSaved: (tab?: ResultsTab) => void;
   setResultsTab: (tab: ResultsTab) => void;
   setYearFilter: (key: string) => void;
   /** Switch to the Gantt tab on `ref`; `yearFilter` "all" when its year block is not shown. */
@@ -144,6 +152,7 @@ const EMPTY = {
   excludedPlanIds: [] as string[],
   view: null as ScenarioView | null,
   rerunNonce: 0,
+  savedBrowse: false,
 };
 
 function pushUndo(stack: EditMap[], edits: EditMap): EditMap[] {
@@ -166,7 +175,8 @@ export const useImportPlan = create<ImportState>()((set) => ({
       rows: s.rows.map((r) => (r.include === include ? r : { ...r, include })),
     })),
   setOptions: (patch) => set((s) => ({ options: { ...s.options, ...patch } })),
-  setStep: (step) => set({ step }),
+  setStep: (step) => set({ step, savedBrowse: false }),
+  browseSaved: (tab) => set({ step: 'results', savedBrowse: true, ...(tab ? { resultsTab: tab } : {}) }),
   setResultsTab: (resultsTab) => set({ resultsTab }),
   setYearFilter: (yearFilter) => set({ yearFilter }),
   focusOnGantt: (ganttFocus, resetYear) =>
@@ -244,5 +254,6 @@ export const useImportPlan = create<ImportState>()((set) => ({
       source: source ?? s.source,
       view: null,
       rerunNonce: s.rerunNonce + 1,
+      savedBrowse: false,
     })),
 }));

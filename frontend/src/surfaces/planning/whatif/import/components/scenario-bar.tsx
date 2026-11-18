@@ -139,17 +139,34 @@ export function ScenarioBar({ pending }: { pending: boolean }): React.JSX.Elemen
 }
 
 /** The banner over every results tab while a scenario other than the current result is shown. */
-export function ScenarioViewBanner({ current }: { current: ImportSimulateResponse }): React.JSX.Element | null {
+export function ScenarioViewBanner({ current }: { current: ImportSimulateResponse | null }): React.JSX.Element | null {
   const view = useImportPlan((s) => s.view);
   const closeView = useImportPlan((s) => s.closeView);
+  const setStep = useImportPlan((s) => s.setStep);
   const restore = useImportPlan((s) => s.restoreRequest);
   if (view === null) return null;
-  const back = (
-    <Button type="button" size="sm" variant="secondary" onClick={closeView}>
-      <ArrowLeft />
-      Back to current result
-    </Button>
-  );
+  // P48: opened from the upload step with no workbook loaded, there is no current result to
+  // go back to; "Back" returns to the saved-scenario panel on the upload step.
+  const back =
+    current === null ? (
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        onClick={() => {
+          closeView();
+          setStep('upload');
+        }}
+      >
+        <ArrowLeft />
+        Back to saved scenarios
+      </Button>
+    ) : (
+      <Button type="button" size="sm" variant="secondary" onClick={closeView}>
+        <ArrowLeft />
+        Back to current result
+      </Button>
+    );
   if (view.kind === 'session') {
     return (
       <Callout tone="primary" title={`Session scenario “${view.name}” — read-only`} testId="import-view-banner">
@@ -169,7 +186,10 @@ export function ScenarioViewBanner({ current }: { current: ImportSimulateRespons
       <div className="flex flex-wrap items-center gap-s2">
         <span>
           “{view.name}” from {view.source.file_name}, shown as saved. The plan may have moved since
-          {current.current_week !== view.simulated_week ? ` (today is W${String(current.current_week)})` : ''}.
+          {current !== null && current.current_week !== view.simulated_week
+            ? ` (today is W${String(current.current_week)})`
+            : ''}
+          .
         </span>
         <Button type="button" size="sm" variant="secondary" onClick={() => restore(view.request, view.source)}>
           <RefreshCw />

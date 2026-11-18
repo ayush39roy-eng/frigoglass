@@ -363,6 +363,10 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_MATRIX_TS, "ScoringDimensionTable", "PriorityDimensionsResponse", "exact"),
     (_MATRIX_TS, "DimensionPoints", "DimensionPoints", "exact"),
     (_MATRIX_TS, "PriorityScoreUpdateRequest", "PriorityScoreUpdateRequest", "exact"),
+    # P47-R03 (QA-2): the body actually sent to `PUT /priorities/{id}`
+    # (`hard_gates` optional, sent only when the gates change). Same backend
+    # schema; P48-T03 (QA48-1).
+    (_MATRIX_TS, "PriorityScoreChangeBody", "PriorityScoreUpdateRequest", "exact"),
     (_MATRIX_TS, "PriorityScoreRead", "PriorityScoreRead", "exact"),
     # P21-T01 (docs/API_CONTRACT_P21.md §3-§5): rubric scores on rows, band
     # distribution and compare. TS names are P21-T02's; rows stay red until it mirrors
@@ -452,6 +456,8 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # landed first" pattern as `UserRead`'s P10-T02/T03 entry below).
     (_SESSION_TS, "MeResponse", "MeResponse", "exact"),
     (_SESSION_TS, "DevUser", "DevUser", "exact"),
+    # P37 (API_CONTRACT_P37 §1): `GET /me` `plan_week`. P48-T03 (QA48-1).
+    (_SESSION_TS, "PlanWeek", "PlanWeek", "exact"),
     # P46 (ADR 0058 L1): `POST /me/dev-login` body.
     (_SESSION_TS, "DevLoginRequest", "DevLoginRequest", "exact"),
     # --- P9-T03: user / role admin (backend/schemas/user_admin.py) ---

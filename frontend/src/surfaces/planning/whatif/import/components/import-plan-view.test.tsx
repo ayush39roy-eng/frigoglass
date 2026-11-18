@@ -272,7 +272,8 @@ describe('Import plan (Excel)', () => {
     renderWithProviders(<ImportPlanView />);
     await user.upload(screen.getByLabelText('Choose a file'), xlsx());
     await user.click(screen.getByRole('button', { name: 'Parse file' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(text);
+    // P48: the saved-scenario panel on this step reads its own list; the parse error is the card's.
+    expect(await within(screen.getByTestId('import-upload-card')).findByRole('alert')).toHaveTextContent(text);
   });
 
   it('rejects a non-xlsx or oversized file before sending anything', async () => {
@@ -281,8 +282,10 @@ describe('Import plan (Excel)', () => {
     await user.upload(screen.getByLabelText('Choose a file'), new File(['x'], 'plan.csv', { type: 'text/csv' }));
     expect(screen.getByTestId('import-file-error')).toHaveTextContent('.xlsx');
     expect(screen.getByRole('button', { name: 'Parse file' })).toBeDisabled();
-    // Only the format card's read (P41) went out; no parse.
-    expect(calls.filter((c) => !c.url.includes('/whatif/import/format'))).toHaveLength(0);
+    // Only the format card's read (P41) and the saved-scenario list (P48) went out; no parse.
+    expect(
+      calls.filter((c) => !c.url.includes('/whatif/import/format') && !c.url.includes('/whatif/import/scenarios?')),
+    ).toHaveLength(0);
   });
 
   it('a simulate 422 INVALID_IMPORT stays on Review with the message', async () => {
@@ -303,6 +306,6 @@ describe('Import plan (Excel)', () => {
     renderWithProviders(<ImportPlanView />);
     await user.upload(screen.getByLabelText('Choose a file'), xlsx());
     await user.click(screen.getByRole('button', { name: 'Parse file' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('unexpected format');
+    expect(await within(screen.getByTestId('import-upload-card')).findByRole('alert')).toHaveTextContent('unexpected format');
   });
 });

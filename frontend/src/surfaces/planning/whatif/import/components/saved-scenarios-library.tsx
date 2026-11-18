@@ -33,8 +33,26 @@ import { useImportToast } from '../toast-store';
  * from, and three served KPIs.
  */
 
-export function SavedScenariosLibrary(): React.JSX.Element {
+export interface SavedScenariosLibraryProps {
+  /** Copy when nothing is saved yet (the Compare tab and the upload step say it differently). */
+  emptyText?: string;
+  /** Called after a card's Open has loaded the stored result (P48: the upload step goes to the results). */
+  onOpened?: () => void;
+  /** P48: shows "Compare (N)" in the header while scenarios are picked; opens the Compare tab. */
+  onShowCompare?: () => void;
+  testId?: string;
+}
+
+const DEFAULT_EMPTY = 'No saved scenario yet. Use “Save scenario” on the Executive tab.';
+
+export function SavedScenariosLibrary({
+  emptyText = DEFAULT_EMPTY,
+  onOpened,
+  onShowCompare,
+  testId = 'import-library',
+}: SavedScenariosLibraryProps = {}): React.JSX.Element {
   const list = useSavedScenarioLibrary();
+  const compareCount = useImportScenarios((st) => st.compareIds.length);
   // P41-R01: pages of 50, concatenated in served (newest-first) order.
   const items = React.useMemo(() => list.data?.pages.flatMap((p) => p.items) ?? [], [list.data]);
   const groups = React.useMemo(() => groupBySource(items), [items]);
@@ -44,7 +62,15 @@ export function SavedScenariosLibrary(): React.JSX.Element {
       icon={Library}
       title={`Saved scenarios (${int(total)})`}
       hint="From every import you can see, grouped by file and import date"
-      testId="import-library"
+      testId={testId}
+      actions={
+        onShowCompare && compareCount > 0 ? (
+          <Button type="button" size="sm" variant="secondary" onClick={onShowCompare} data-testid="library-show-compare">
+            <GitCompareArrows />
+            {`Compare (${int(compareCount)})`}
+          </Button>
+        ) : undefined
+      }
       info={
         <>
           <p>
@@ -66,7 +92,7 @@ export function SavedScenariosLibrary(): React.JSX.Element {
         </p>
       ) : groups.length === 0 ? (
         <p className="text-xs text-text-muted" data-testid="import-library-empty">
-          No saved scenario yet. Use “Save scenario” on the Executive tab.
+          {emptyText}
         </p>
       ) : (
         <div className="max-h-[32rem] space-y-s4 overflow-y-auto pr-1">
@@ -78,7 +104,7 @@ export function SavedScenariosLibrary(): React.JSX.Element {
               </h5>
               <ul className="grid gap-s2 lg:grid-cols-2">
                 {g.items.map((s) => (
-                  <SavedCard key={s.id} s={s} />
+                  <SavedCard key={s.id} s={s} onOpened={onOpened} />
                 ))}
               </ul>
             </section>
@@ -122,7 +148,7 @@ function Kpi({ label, value }: { label: string; value: number }): React.JSX.Elem
   );
 }
 
-function SavedCard({ s }: { s: SavedScenarioSummary }): React.JSX.Element {
+function SavedCard({ s, onOpened }: { s: SavedScenarioSummary; onOpened?: (() => void) | undefined }): React.JSX.Element {
   const fetchSaved = useFetchSavedScenario();
   const openView = useImportPlan((st) => st.openView);
   const closeView = useImportPlan((st) => st.closeView);
@@ -153,6 +179,7 @@ function SavedCard({ s }: { s: SavedScenarioSummary }): React.JSX.Element {
       if (what === 'open') {
         openView(savedViewOf(full));
         setTab('executive');
+        onOpened?.();
       } else {
         addStored(storedEntryOf(full));
       }

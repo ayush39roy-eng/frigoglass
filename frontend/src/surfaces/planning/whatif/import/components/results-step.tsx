@@ -7,6 +7,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SimulatedWeekNotice } from '@/components/shared/plan-week-notice';
 
+import { Callout } from '../../components/result-parts';
 import { WhatIfErrorNotice } from '../../components/whatif-error';
 import { isMappedStatus } from '../import-rows';
 import { useImportPlan, type ResultsTab } from '../import-store';
@@ -40,24 +41,100 @@ function TabFallback(): React.JSX.Element {
   );
 }
 
-export function ResultsStep({
-  result: servedResult,
-  simulation,
-  onRetry,
-}: {
-  result: ImportSimulateResponse;
+interface ResultsStepProps {
+  /**
+   * The current (served) result. P48: null when no workbook is loaded and the planner opened
+   * saved scenarios from the upload step; only stored results are then shown.
+   */
+  result: ImportSimulateResponse | null;
   simulation: ImportSimulationState;
   onRetry: () => void;
+}
+
+export function ResultsStep({ result: current, simulation, onRetry }: ResultsStepProps): React.JSX.Element {
+  // P41: a scenario opened from the Scenario bar or the library is shown read-only on every
+  // tab, exactly as served / stored; the current result is untouched underneath.
+  const view = useImportPlan((s) => s.view);
+  const result = view?.result ?? current;
+  if (result === null) return <SavedOnlyCompare simulation={simulation} onRetry={onRetry} />;
+  return <ResultsTabs result={result} current={current} simulation={simulation} onRetry={onRetry} />;
+}
+
+/**
+ * P48: back to the upload step (and its saved-scenario panel). Used where there is no
+ * workbook to review.
+ */
+function BackToUpload(): React.JSX.Element {
+  const setStep = useImportPlan((s) => s.setStep);
+  const closeView = useImportPlan((s) => s.closeView);
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      onClick={() => {
+        closeView();
+        setStep('upload');
+      }}
+    >
+      <ArrowLeft />
+      Back to upload
+    </Button>
+  );
+}
+
+/**
+ * P48: saved scenarios only (no workbook, nothing open): the Compare tab on its own, or the
+ * progress of "Re-run on today's plan" until its result is served.
+ */
+function SavedOnlyCompare({ simulation, onRetry }: Omit<ResultsStepProps, 'result'>): React.JSX.Element {
+  const rerunNonce = useImportPlan((s) => s.rerunNonce);
+  const rerunning = simulation.pending || (rerunNonce > 0 && simulation.error === null);
+  return (
+    <div className="space-y-s4" data-testid="import-saved-only">
+      {simulation.error ? (
+        <WhatIfErrorNotice
+          info={classifyImportError(simulation.error, 'simulate')}
+          errorToken={simulation.token}
+          onRetry={onRetry}
+        />
+      ) : null}
+      {rerunning ? (
+        <Callout tone="primary" title="Re-running the saved scenario on today’s plan…" testId="import-rerun-pending" role="status">
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="size-3.5" label="Recomputing" />
+            The stored request is simulated again; the saved record is not changed.
+          </span>
+        </Callout>
+      ) : (
+        <React.Suspense fallback={<TabFallback />}>
+          <ResultsCompare />
+        </React.Suspense>
+      )}
+      <ActionBar label="Results actions" testId="import-results-actions">
+        <BackToUpload />
+        <span className="ml-auto text-2xs text-text-muted">Saved scenarios are read-only · the real plan is never changed</span>
+      </ActionBar>
+    </div>
+  );
+}
+
+function ResultsTabs({
+  result,
+  current,
+  simulation,
+  onRetry,
+}: Omit<ResultsStepProps, 'result'> & {
+  /** What the tabs show: the open scenario's stored result, else the current one. */
+  result: ImportSimulateResponse;
+  current: ImportSimulateResponse | null;
 }): React.JSX.Element {
   const tab = useImportPlan((s) => s.resultsTab);
   const setTab = useImportPlan((s) => s.setResultsTab);
   const setStep = useImportPlan((s) => s.setStep);
+  const hasWorkbook = useImportPlan((s) => s.parsed !== null);
   const scenarioCount = useImportScenarios((s) => s.scenarios.length);
-  // P41: a scenario opened from the Scenario bar or the library is shown read-only on every
-  // tab, exactly as served / stored; the current result is untouched underneath.
   const view = useImportPlan((s) => s.view);
-  const current = servedResult;
-  const result = view?.result ?? current;
   const viewing = view !== null;
   const yearKey = useEffectiveYear(result);
   // "Show on Gantt" from a drill-down remounts the Gantt on the requested project (P32-R07).
@@ -108,7 +185,7 @@ export function ResultsStep({
         </div>
         <TabsContent value="executive">
           <div className="space-y-s5">
-            <ScenarioBar pending={simulation.pending} />
+            {current === null ? null : <ScenarioBar pending={simulation.pending} />}
             <React.Suspense fallback={<TabFallback />}>
               <ResultsExecutive result={result} />
             </React.Suspense>
@@ -130,13 +207,19 @@ export function ResultsStep({
         </TabsContent>
       </Tabs>
       <ActionBar label="Results actions" testId="import-results-actions">
-        <Button type="button" size="sm" variant="ghost" onClick={() => setStep('review')}>
-          <ArrowLeft />
-          Back to review
-        </Button>
-        <ScenarioBuilderButton onSaved={toCompare} />
+        {hasWorkbook ? (
+          <Button type="button" size="sm" variant="ghost" onClick={() => setStep('review')}>
+            <ArrowLeft />
+            Back to review
+          </Button>
+        ) : (
+          <BackToUpload />
+        )}
+        {current === null ? null : <ScenarioBuilderButton onSaved={toCompare} />}
         <span className="ml-auto inline-flex items-center gap-1.5 text-2xs text-text-muted" role="status" aria-live="polite">
-          {simulation.pending ? (
+          {current === null ? (
+            'Saved scenarios are read-only · the real plan is never changed'
+          ) : simulation.pending ? (
             <>
               <Spinner className="size-3.5" label="Recomputing" />
               Recomputing…

@@ -116,11 +116,18 @@ export default function ImportPlanView(): React.JSX.Element {
 
   // On the results, every change of the request (a Gantt drop, undo, reset) re-simulates,
   // debounced; the previous request is aborted by the runner.
+  // P48: with no workbook loaded (saved scenarios opened from the upload step) nothing is
+  // simulated until "Re-run on today's plan" restores a stored request (it bumps the nonce).
+  const hasRequest = parsed !== null || rerunNonce > 0;
+  // P48-R01: Open / Compare from the upload panel never simulates the loaded workbook; a
+  // re-run clears `savedBrowse` (restoreRequest), so it still simulates the stored request.
+  const savedBrowse = useImportPlan((s) => s.savedBrowse);
+  const browsingOnly = savedBrowse && result === null;
   React.useEffect(() => {
-    if (step !== 'results' || lastSent.current === bodyKey) return;
+    if (step !== 'results' || !hasRequest || browsingOnly || lastSent.current === bodyKey) return;
     lastSent.current = bodyKey;
     run(body, RESIMULATE_DEBOUNCE_MS);
-  }, [step, body, bodyKey, run]);
+  }, [step, hasRequest, browsingOnly, body, bodyKey, run]);
 
   // The drill-down sheet belongs to this view: closed when the view goes or the step changes.
   const closeDrill = useDrill((s) => s.close);
@@ -148,13 +155,16 @@ export default function ImportPlanView(): React.JSX.Element {
           </div>
           <p className="text-xs text-text-muted">Try a workbook against the plan. The real plan is never changed.</p>
         </div>
-        <Stepper step={step} canResults={result !== null} onGo={setStep} />
+        {parsed === null && step !== 'upload' ? null : (
+          <Stepper step={step} canResults={result !== null} onGo={setStep} />
+        )}
       </div>
-      {step === 'upload' || parsed === null ? (
+      {step === 'upload' || (parsed === null && step === 'review') ? (
         <UploadStep />
-      ) : step === 'review' || result === null ? (
+      ) : parsed !== null && (step === 'review' || (result === null && !savedBrowse && rerunNonce === 0)) ? (
         <ReviewStep parsed={parsed} simulation={simulation} onCompute={compute} onRetry={compute} />
       ) : (
+        // P48: `result` is null when only saved scenarios are shown (no workbook loaded).
         <ResultsStep result={result} simulation={simulation} onRetry={simulation.retry} />
       )}
       <DrillSheet />

@@ -12,11 +12,17 @@ import { useImportPlan } from '../import-store';
 import { classifyImportError, useImportParse } from '../use-import';
 import { ExcelFormatCard } from './excel-format';
 import { FeatureCard } from './feature-card';
+import { SavedScenariosLibrary } from './saved-scenarios-library';
+
+/** P48 (owner 2026-11-18): the empty copy of the saved-scenario panel on the upload step. */
+export const UPLOAD_LIBRARY_EMPTY = 'No saved scenarios yet — import a file, pick projects and Save scenario.';
 
 /** Step 1: choose the workbook and parse it (`POST /whatif/import/parse`). */
 export function UploadStep(): React.JSX.Element {
   const setParsed = useImportPlan((s) => s.setParsed);
   const setSource = useImportPlan((s) => s.setSource);
+  const browseSaved = useImportPlan((s) => s.browseSaved);
+  const closeView = useImportPlan((s) => s.closeView);
   const parse = useImportParse();
   const [file, setFile] = React.useState<File | null>(null);
   const [clientError, setClientError] = React.useState<string | null>(null);
@@ -51,6 +57,7 @@ export function UploadStep(): React.JSX.Element {
         title="Upload the workbook"
         hint="The capacity-planning .xlsx, read once and never stored"
         bodyClassName="space-y-s4"
+        testId="import-upload-card"
       >
         <div
           className={cn(
@@ -118,6 +125,20 @@ export function UploadStep(): React.JSX.Element {
       </FeatureCard>
 
       <ExcelFormatCard />
+
+      {/* P48: earlier imports' saved scenarios, before any file is chosen. Open shows the
+          stored result read-only and Compare works on saved scenarios alone; no upload needed. */}
+      <div className="min-w-0 xl:col-span-2">
+        <SavedScenariosLibrary
+          testId="import-upload-library"
+          emptyText={UPLOAD_LIBRARY_EMPTY}
+          onOpened={() => browseSaved()}
+          onShowCompare={() => {
+            closeView();
+            browseSaved('compare');
+          }}
+        />
+      </div>
     </div>
   );
 }

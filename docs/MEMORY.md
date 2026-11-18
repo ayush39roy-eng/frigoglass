@@ -44367,3 +44367,305 @@ the changed fields only, and `base` from the values as read. The pin in
   `projects-table.tsx`, and the P44 chip hunk of the register-edit test.
 - **Open, not P47:** the PlanWeek contract entry; the local `rpd` is 5 migrations behind, and
   upgrading it needs owner approval under the data rule.
+
+## [2026-11-18] P48-T02 — Saved scenarios panel on the Import plan (Excel) upload step — frontend-builder: DONE (not committed)
+
+**Owner request (2026-11-18):** older saved import scenarios also show where the Excel is imported, not only after an
+import. No backend change was needed: the panel uses the existing paged `GET /whatif/import/scenarios` (no sha filter,
+pages of 50, "Load more"), `GET /{id}`, `PATCH`, `DELETE`, `GET /{id}/export.xlsx` and `compare.xlsx`.
+
+**Built** (all in `frontend/src/surfaces/planning/whatif/import/components/`):
+- `upload-step.tsx`: a full-width "Saved scenarios (N)" panel under the upload and Excel-format cards
+  (testId `import-upload-library`). It is the P41 `SavedScenariosLibrary`, not a copy: grouped by source file and import
+  date in the served newest-first order, same cards (Open, Add to compare, Export to Excel, Rename / Delete only when
+  `can_edit`; Delete disabled "Super Admin only" when the served `can_delete` is false, ADR 0058; server enforces).
+  Empty copy: "No saved scenarios yet — import a file, pick projects and Save scenario." Loading skeleton and plain
+  error copy are the library's. The upload card got testId `import-upload-card`.
+- `saved-scenarios-library.tsx`: optional props `emptyText`, `onOpened` (after a card's Open loaded the stored result),
+  `onShowCompare` (a "Compare (N)" header button while scenarios are in the compare list) and `testId`. The Compare tab
+  uses the defaults, so it is unchanged.
+- `import-plan-view.tsx`: `step === 'results'` with no workbook (`parsed === null`) is now the saved-only mode. The
+  results effect does not simulate while there is no request (`parsed === null && rerunNonce === 0`), so opening a
+  saved scenario never sends a simulate. The stepper is hidden in that mode.
+- `results-step.tsx`: `result` (the current result) may be null. With an open view, the tabs show the stored response
+  read-only, as before, but without the Scenario bar (pick / save / export current) and the variant builder; the action
+  bar shows "Back to upload" instead of "Back to review" when no workbook is loaded. With nothing open and no current
+  result, it shows the Compare tab on its own (`import-saved-only`), or "Re-running the saved scenario on today's plan…"
+  until a re-run result is served.
+- `scenario-bar.tsx`: `ScenarioViewBanner` takes a nullable current result. With none, the button is "Back to saved
+  scenarios" (closes the view, back to the upload step), and the "(today is W..)" note is omitted. "Re-run on today's
+  plan" is the existing `restoreRequest` (stored request, source and sha restored, nonce bumped); its served result then
+  becomes the current result, so Pick projects / Save scenario work on it.
+
+**Not changed:** the post-import flows (Scenario bar, Compare tab, Open / Re-run with a workbook loaded), no figure is
+derived (KPIs, weeks, plan versions are served fields), no `dangerouslySetInnerHTML`, no backend file.
+
+**Tests:**
+- New `components/p48-upload-library.test.tsx` (6): panel on the upload step with two imports grouped, unfiltered list
+  `limit=50&offset=0`, no parse/simulate sent (axe); Open without a file → read-only stored result with "Saved scenario
+  — simulated W40 against plan v14", no Scenario bar / Back to review / stepper, no simulate, "Back to saved scenarios",
+  then Re-run sends the stored request (`exclude_plan_project_ids`) and the result gets the Scenario bar; Add to compare
+  ×2 from the upload step → "Compare (2)" → KPI table with source chips, clock banner, `compare.xlsx?ids=saved-1,saved-2`,
+  open from the Compare library and Back to upload; `can_edit` / `can_delete` gating and Export by id; delete → empty
+  state copy; loading, empty and error states.
+- Updated `components/import-plan-view.test.tsx`: the upload-step error assertions are scoped to `import-upload-card`
+  (the panel's list GET can fail in those mocks too), and the "nothing sent" check also ignores the list GET.
+- `tsc -b` clean; `eslint src/surfaces/planning/whatif` clean; `vitest run src/surfaces/planning/whatif
+  --maxWorkers=2`: 24 files, 221/221 pass.
+- The other sessions' uncommitted `frontend/src/surfaces/projects/*` edits were not touched.
+
+**Next:** P48-T03 gate (qa, workflow, security). Security note: the panel adds no new endpoint or role check; visibility
+and delete rights stay server-side (ADR 0055 D3, ADR 0058).
+
+## [2026-11-18] P48-T01 — capacity planning health check — qa-inspector
+
+**Verdict: PASS for capacity planning.** I found no capacity, planning or what-if defect, in the test suites or on the live data. One new finding is outside capacity (QA48-1 below).
+
+**Constraints kept.**
+- Against `https://frigoglass-hu6f.onrender.com`: GET only, as `superadmin@example.com`.
+- The `/exports/*` GETs and the what-if `.xlsx` export/compare GETs were not called, because they write audit rows (`scenarios.audit_export` + commit).
+- The local `rpd` database was not touched. The tests used testcontainers Postgres, with `RPD_REDIS_URL=redis://127.0.0.1:6399/0`.
+- Coverage files went to the session scratchpad. No repo file other than this entry was changed. No stash or checkout.
+
+**Backend pytest.** Suites run:
+- capacity_supply, p11 capacity_booked / run_changes, p13 capacity board, p15 engineer util, p18 whatif api/chat, p19 planning capacity;
+- p25 fill / t03 surfaces, p27 fill scope, p29 capacity hubs, p32 import xlsx / r05 breakdowns / whatif import api, p41 import scenarios / migration / qa_gate, p45 hub demand cards;
+- p20 fte followups, p38 deactivation, p42 band backend;
+- schedule persistence / cp_sat api / sweeper, dashboard delivery regions, openapi_frontend_contract;
+- all of `tests/scheduling` (golden, invariants, greedy / cp_sat / monte-carlo selftests, whatif, plan_import).
+
+Results:
+- **1608 passed, 2 failed.**
+  - `test_p20_fte_followups::test_gantt_step_row_contract`: known. `pin_lapsed` / `pin_clearable` are not in the TS Gantt step row.
+  - `test_openapi_frontend_contract::test_every_p4_surface_types_file_is_covered`: known test, but now a **new cause**. See QA48-1.
+- Coverage on this subset: `scheduling/` **95.8 %** (5582/5826; greedy 93, cp_sat 98, demand 99, whatif 95, plan_import 97, invariants 94). `api/routers/capacity.py` 98, `planning.py` 98, `whatif.py` 97. `services/capacity_supply` 100, `demand_load` 100, `capacity_hubs` 97, `whatif_import` 96, `whatif_import_scenarios` 98, `plan_import_xlsx` 98.
+- Not run (unrelated to capacity): the `app.test` Gantt-nav timeout and the `test_migrations` table count.
+
+**Frontend vitest** (capacity, planning incl. whatif/import, dashboard, the matrix capacity-fill tests):
+- **100 files, 775 tests, all passed.**
+- Coverage, capacity + planning: lines **89.4 %**, statements 87.7 %, branches 77.0 %, functions 88.6 %. By area: capacity 97.2, planning/whatif 89.3, other planning 86.6.
+- A later rerun hit 6 failures in `planning/whatif/import/components/import-plan-view.test.tsx` ("multiple elements with role alert", the pre-send file-rejection count). These come from **P48-T02's in-progress edits** (`import-plan-view.tsx`, `upload-step.tsx`, `saved-scenarios-library.tsx`, `scenario-bar.tsx`, `results-step.tsx`, modified 19:17–19:20, not committed). They are not capacity defects. The T02 builder and the P48-T03 gate must make this file green again.
+
+**Live read-only probes** (all 200):
+- `/schedule-runs/active` and `/schedule-runs`;
+- `/capacity/hub-load` and `/capacity/hubs` (identical bodies), `/capacity/class-breakdown`, `/capacity/utilization-matrix`, `/capacity/engineer-utilization`;
+- `/planning/capacity-summary`, `/planning/resource-load`, `/planning/resource-load/options`;
+- `/priorities/capacity-fill`;
+- `/whatif/import/scenarios`, `/whatif/import/scenarios/{id}` (an unknown id returns 404), `/whatif/import/format`;
+- `/gantt` (paged, all 330 rows), `/dashboard/completing-within-year`, `/dashboard/region-summary`, `/workflow-settings`, `/priority-board`, `/me`.
+
+What the probes showed:
+- **Active run:** v34, greedy, `completed`, `is_active`, CW 47 (equal to the calendar week), created 2026-11-18 10:13 (register_edit). Exactly 1 active of 34 runs; 26 completed, 8 failed. The latest failure, v26 (09:10 today, register_edit), was superseded by v27–v34. No GET serves the failure reason. 0 of 330 Gantt rows have `schedule_stale`; `pin_lapsed` 0, `manual_overlap` 0.
+- **No bad numbers:** no non-finite value anywhere, and no negative value except the gap fields.
+- **Hub-load** (4 capacity hubs; R&D-Greece has members OEM-HCK / OEM-Seitek):
+  - For every row and kind, `booked_pct` (year and remaining), status, gap and completion re-derive exactly from the served pairs. Example: PD-India design 890 / 287.08 gives 310.02 %, and 187 / 27.6 gives 677.54 %.
+  - `remaining_fraction` = 5/52 = 0.0962. Design remaining capacity matches `((52−CW) − deduction × rf) × Σfte`. Σ chamber `efficient_lab_weeks` equals `lab_capacity_year`, and each chamber's weeks × efficiency × platforms matches.
+  - The demand, load and remaining priority splits sum to their totals. Remaining P4/Q is 0 (R42). The `need_p1` / `need_p1_p2` values follow the P45 formula. Days equal weeks × weekdays. Greece members sum to the row.
+  - Lab-region rows equal the hub rows. Totals equal Σ rows (design) and Σ regions (lab). Areas equal Σ their hubs and regions.
+- **Capacity-summary:** FTE and capacity per hub equal hub-load. Totals equal hub-load totals. Shares sum to 100.
+- **Booked load (I6/I7):** resource-load engineer load 764 = booked design 764 = Σ Gantt `design_weeks`. Chamber load 659 = booked lab 659 = Σ Gantt `lab_weeks`. Per-row utilisation re-derives.
+- **I9:** Dashboard 118 within / 64 spill / 19 left-out / 71 not-scheduled / 58 excluded equals the Gantt outcome counts. 118/201 = 58.71 %.
+- **P1 fill:** every hub satisfies filled ≤ C, or promotes nothing when L ≥ C (PD-India 133 ≥ 27.6).
+- **Class breakdown:** splits sum. `total_count` = deliverable + left_out by design.
+- **Weeks:** every Gantt step and utilisation-matrix week is in 1..78.
+- **Saved scenario "first"** (merge, W104, simulated W47, plan v24): the stored result reconciles. within_plan_year 161 equals the KPI. 241 listed projects + 107 excluded + 63 hidden plan P4/Q = 411. The hidden ones are counted in `not_scheduled_priority` by design (`whatif_import.py:866`). `/whatif/import/format` is the default (v0, 16 fields).
+
+**Findings.**
+- **QA48-1 (new, not capacity; owner: backend-builder / qa).** P47-R03 (commit 5dc11c9) added `PriorityScoreChangeBody` to `frontend/src/surfaces/matrix/api/types.ts`. It is in neither `CONTRACT_TABLE` nor the frontend-only allowlist of `backend/tests/test_openapi_frontend_contract.py`. The test asserts per file and stops at the first gap, so this failure now hides the known `PlanWeek` gap (`frontend/src/lib/api/session.ts:69`). Fix: add both entries. The P47 gate reported this test as the PlanWeek-only failure.
+- **Observation O1 (not a defect).** `/capacity/utilization-matrix` shows chamber week counts above `max_concurrent`, all in past weeks:
+  - IN-CH3 (2 platforms): 31–43 in W36–W41, 3 in W34–W35;
+  - RO-CH1 (1 platform): 4 in W11–W40.
+  - Nothing exceeds capacity at or after W47. DOMAIN_RULES says capacity is tracked only from CURRENT_WEEK and earlier work is display-only, so I2 holds. These are anchored Done-step histories from the client's actual dates. If the heatmap shows them in red, that may confuse users; this is a display question for the owner, not a fix.
+- **Observation O2 (cosmetic).** Rounding by 0.01: resource-load total engineer capacity 750.82 vs hub-load 750.81 (Σ of rounded rows); Dipak's utilisation 237.74 vs 237.72 re-derived from the rounded figures.
+
+**Still open (unchanged, not P48):** the `PlanWeek` contract entry (now behind QA48-1), the `app.test` Gantt-nav timeout, the `test_migrations` table count, the p20 Gantt pin fields, and the local `rpd` being 5 migrations behind (upgrade needs owner approval). IMPLEMENTATION_PLAN.md is left for the orchestrator to mark: another session has uncommitted edits in it.
+
+## [2026-11-18] P48-T01 addendum — qa-inspector
+
+After P48-T02 landed, I reran `src/surfaces/planning` (whatif and import included): **40 files, 366 tests, all passed**. The 6 `import-plan-view.test.tsx` failures in the entry above were from T02's mid-edit state, and they are gone. The P48-T01 verdict is unchanged: PASS for capacity planning. QA48-1 (the contract table is missing `PriorityScoreChangeBody`) is still open.
+
+## [2026-11-18] P48-T03 — security gate — security-auditor: PASS
+
+**Scope:** P48-T02 (frontend only, uncommitted): `upload-step.tsx`, `saved-scenarios-library.tsx`,
+`import-plan-view.tsx`, `results-step.tsx`, `scenario-bar.tsx`, `import-plan-view.test.tsx`, new
+`p48-upload-library.test.tsx`. Read-only review against ADR 0055 D3/D5 and ADR 0058 D1.4. `git status backend/`
+shows only `.coverage` changed: no endpoint, schema or authorisation change.
+
+**Checks:**
+- **Data exposure:** the panel reuses `useSavedScenarioLibrary` (`GET /whatif/import/scenarios`, paged, no sha
+  filter) and `GET /{id}`; both scoped server-side by `_visible_clause` / `_get_visible` (unchanged). The same list
+  was already served on the Compare tab; no new field is read or rendered. No financial field (TCOGS, margin,
+  selling price, customer name) appears in the import module.
+- **XSS:** no `dangerouslySetInnerHTML` / `innerHTML` in the import module; scenario name, note, creator and file
+  name render as escaped JSX text.
+- **Downloads:** Export / compare use `apiDownload` (`lib/api/client.ts`, fetch with `credentials: 'include'` →
+  blob → save); no URL navigation or `window.open`; ids `encodeURIComponent`-ed.
+- **Rename / Delete (ADR 0058):** Rename only when served `can_edit`; Delete disabled behind `SuperAdminOnly` when
+  served `can_delete` is false. Server authoritative: `delete_scenario` checks `_can_edit` (403) then
+  `_can_delete` (403 `SUPER_ADMIN_ONLY`) — unchanged. Test covers the `can_edit:true, can_delete:false` card.
+- **No client-supplied result persisted:** the saved-only mode never simulates until "Re-run on today's plan"
+  (`restoreRequest` bumps `rerunNonce`) and then the result is the server's simulate output. Save still posts
+  `SaveScenarioBody` (name, note, source, request — no result); the server re-runs and stores its own output
+  (ADR 0055 D3). Scenario bar / builder are hidden while `current === null`, so a stored response cannot be
+  re-saved as a "current" result.
+- **CSRF / authn:** no new mutating call; PATCH / DELETE go through the existing `apiSend`.
+- **Tests run:** `vitest` p48-upload-library + import-plan-view: 2 files, 16/16 pass.
+
+**Findings:** none Critical / High / Medium / Low.
+- I-1 (Info): the upload step now issues the scenario list GET on mount for every What-if user (previously only on
+  the Compare tab). Same scoped data, no new exposure; noted only for request volume.
+- Standing (not P48): dev-mode `X-Dev-User-Email` impersonation on the public demo (OQ #113, ADR 0058 "Not
+  security") remains a pre-go-live item.
+
+**Verdict:** PASS for P48-T02 security.
+
+## [2026-11-18] P48-T03 — workflow gate — workflow-auditor: PASS
+
+**Scope:** P48-T02 (frontend only, uncommitted): the `git diff` of `import-plan-view.tsx`, `results-step.tsx`,
+`saved-scenarios-library.tsx`, `scenario-bar.tsx`, `upload-step.tsx`, `import-plan-view.test.tsx`, and the new
+`p48-upload-library.test.tsx`. Checked against DOMAIN_RULES "Plan import into the What-if" (ADR 0055 amendment) and
+ADR 0055 D3/D4. Read-only. No code edited, no stash or checkout. `git status backend/` shows only `.coverage`, so
+there is no solver, engine or endpoint change and no greedy/CP-SAT diff to make.
+
+**Checks:**
+- **Opened saved scenario = stored response only.** `savedViewOf` maps `result`, `simulated_week` and `plan_version`
+  straight from `GET /whatif/import/scenarios/{id}`. `ResultsStep` renders `view.result` through the unchanged P41 tabs.
+  The diff adds no arithmetic. The saved-only path (`parsed === null`, `rerunNonce === 0`) is gated by `hasRequest`, so
+  opening sends no simulate (the test asserts 0 simulate bodies).
+- **Banner:** `savedBannerTitle(view.simulated_week, view.plan_version)` uses the stored values ("simulated W40 against
+  plan v14" in the test). With no current result, the "(today is W..)" note is omitted, so it does not use a
+  client-side week.
+- **Re-run on today's plan:** `restoreRequest(view.request, view.source)` copies the stored rows, options, edits and
+  `exclude_plan_project_ids`, clears the view and bumps the nonce. One `POST /whatif/import/simulate` goes out with the
+  stored request (the test checks the exclusions and the row count). The served output becomes the session's "Current
+  result". The saved banner then goes, the Scenario bar shows "Showing: Current result" with Save scenario, and the
+  pending callout says "the saved record is not changed". The saved row is never PATCHed.
+- **Compare with saved-only scenarios (D4):** the Compare tab renders on its own (`import-saved-only`). `mixedClock`
+  uses the stored `simulated_week` and `plan_version`, and the test shows the "Different week or plan version" banner
+  for W40/v14 against W42/v12. `compare.xlsx?ids=` uses saved ids only. The delta stays the only arithmetic (P41 code,
+  unchanged).
+- **No live-plan write / no schedule run:** the only calls added are the list GET, GET by id, export GETs,
+  PATCH/DELETE on saved scenarios (existing, server-authorised), and the simulate on explicit re-run. The simulate is
+  the non-persisting What-if import. Nothing calls `/schedule-runs`, the priorities or the projects.
+- **Reachability:** the upload step with `parsed !== null` cannot be reached from the UI. The Stepper never offers
+  Upload, and `BackToUpload` and "Back to saved scenarios" show only when there is no workbook. So opening from the
+  panel cannot trigger a stale-workbook simulate.
+- **Runs:** `vitest run src/surfaces/planning/whatif` gives 24 files, 221/221 passing. `tsc -b` and eslint on
+  `import/components` are clean.
+
+**Advisory (non-blocking):**
+- WA48-1 (UX): after a saved-only re-run, if the planner goes Back to upload and opens another saved scenario, the
+  banner offers "Back to current result". That result is the earlier, unsaved re-run of a different scenario. It is
+  correct but could be labelled more clearly (for example "Back to the re-run result").
+- WA48-2 (UX): nothing marks the re-run result as "unsaved" in so many words. It reads as "Current result" with Save
+  scenario available, which matches the P41 post-import flow.
+
+**Reconciled with qa-inspector P48-T01 (PASS, and its addendum):**
+- T02 touches no capacity, planning or dashboard surface, so none of QA's capacity reconciliations are affected.
+- QA's I6/I7 (764/764 design, 659/659 lab) and I9 (Dashboard 118/64/19/71/58 = Gantt outcome counts) agree with
+  single-source tracing.
+- O1 (past-week chamber counts above `max_concurrent` on IN-CH3 and RO-CH1, none at or after W47) is consistent with
+  DOMAIN_RULES. Anchored rows are fixed history, and chamber room is checked only for weeks at or after
+  `CURRENT_WEEK` (anchored-step rule 1, I2). This is not an invariant breach. Whether the heatmap should show those
+  weeks in red is a display question for the owner.
+- QA48-1 (the contract table is missing `PriorityScoreChangeBody`) is a test-contract gap, not a domain issue. It stays
+  open for backend-builder.
+
+**Verdict: PASS** for P48-T02 (workflow / domain).
+
+## [2026-11-18] P48-T03 — qa gate — qa-inspector
+
+**Verdict: FAIL (QA leg).** One defect in P48-T02, QA48-2 below. Everything else passes. QA48-1 is fixed.
+
+**QA48-1 fixed (test file only).** `backend/tests/test_openapi_frontend_contract.py`, in `CONTRACT_TABLE`. Both types have real backend schemas, so they go in the table, not the frontend-only allowlist:
+- `(_MATRIX_TS, "PriorityScoreChangeBody", "PriorityScoreUpdateRequest", "exact")`: the P47-R03 body of `PUT /priorities/{id}`.
+- `(_SESSION_TS, "PlanWeek", "PlanWeek", "exact")`: `GET /me` `plan_week`.
+
+Result: the contract suite is **271 passed, 0 failed**, so the long-standing `PlanWeek` gap is closed too. `ruff` reports one E501 at line 1177, in older code, not in the added lines.
+
+**P48-T02 checks** (uncommitted, `frontend/src/surfaces/planning/whatif/import/components/`):
+- `tsc -b`: clean.
+- `eslint src/surfaces/planning/whatif`: clean.
+- `vitest run src/surfaces/planning` (whatif and import included): **40 files, 366 tests, all passed.**
+- axe: the new test checks the upload panel. My temporary probe (deleted after the run) also checked the saved-only Open view and the compare-only view: no serious or critical violations.
+
+**Test review: `p48-upload-library.test.tsx` (6 tests) covers every requested area.**
+- Panel on the upload step: grouped by file and date, unfiltered `limit=50&offset=0`, no parse or simulate sent.
+- Open without a file: the stored result is shown read-only with its banner. There is no Scenario bar, no Back to review and no stepper, and no simulate is sent. "Back to saved scenarios" works.
+- Re-run sends the stored request (`exclude_plan_project_ids` kept), and the result then gets the Scenario bar.
+- Compare with saved scenarios only: "Compare (2)", the KPI table with source chips, the clock banner, `compare.xlsx?ids=…`, no simulate.
+- Rights: Rename and Delete only when `can_edit`. Delete is disabled with "Super Admin only" when `can_delete` is false. Export works by id. Delete asks for confirmation, then shows the empty state.
+- Loading, empty and error states. A failing list shows its own alert, and the upload card still works.
+- Existing post-import flows: the `import-plan-view.test.tsx` alert assertions are now scoped to `import-upload-card`, a legitimate change since the panel has its own alert. The P41 and import suites pass unchanged.
+
+**QA48-2 (defect, medium; owner: frontend-builder).** Opening a saved scenario from the upload panel while a workbook is loaded depends on simulating that workbook.
+- Where: `import-plan-view.tsx` routing and the results effect.
+- What happens: the panel's Open sets `step = 'results'`. With `parsed !== null` and `result === null` (the user parsed a file, then clicked "Upload" on the stepper to browse older scenarios):
+  - the view renders `ReviewStep` instead of the opened scenario;
+  - the results effect (`hasRequest` is true because a workbook is parsed) sends an unrequested `POST /whatif/import/simulate` of the workbook.
+- Evidence, from my temporary vitest probe on the T02 code (removed afterwards):
+  - (A) a successful simulate: 1 simulate was sent, and only after it returned did the saved view appear.
+  - (A2) a simulate that fails with 422: the screen stays on **Review with the error**. `view = "Saved base"` is set in the store but never shown, so the user clicks Open and does not get the scenario.
+  - When the workbook was already simulated in the same mount, `lastSent` equals `bodyKey` and nothing extra is sent.
+- Expected: opening or comparing saved scenarios never sends a simulate and never depends on the loaded workbook. This matches the "Open without a file" contract, applied to the with-file case.
+- Suggested fix:
+  - show `ResultsStep` whenever `view !== null`, or when the Compare tab was opened from the panel;
+  - do not run the results effect while `result === null` and a view or compare was opened from the panel;
+  - add a test for "parsed, not simulated → Open from the upload panel" (no simulate, view shown), plus the 422 variant.
+
+**Not a P48 issue, still open:** the `app.test` Gantt-nav timeout, the `test_migrations` table count, the p20 Gantt pin fields, and the local `rpd` being 5 migrations behind.
+
+## [2026-11-18] P48-R01 — QA48-2: saved scenarios from the upload panel never simulate the loaded workbook — frontend-builder: DONE (not committed)
+
+**Defect (QA48-2, medium):** with a workbook parsed but not simulated and the step back on Upload, the panel's Open /
+Compare set `step = 'results'`. `import-plan-view.tsx` still routed to ReviewStep (`parsed !== null && result === null`)
+and the results effect sent an unrequested `POST /whatif/import/simulate` of the workbook; on a 422 the opened scenario
+was never shown.
+
+**Fix** (`frontend/src/surfaces/planning/whatif/import/`):
+- `import-store.ts`: new `savedBrowse` flag and `browseSaved(tab?)` action (step `results`, flag on, optional results
+  tab). Any `setStep`, a new parse / `reset` (EMPTY) and `restoreRequest` ("Re-run on today's plan") clear it.
+- `components/upload-step.tsx`: the panel's Open calls `browseSaved()`, its Compare calls `closeView()` +
+  `browseSaved('compare')`.
+- `components/import-plan-view.tsx`: ReviewStep for `result === null` only when not `savedBrowse` and no re-run has been
+  requested (`rerunNonce === 0`); otherwise ResultsStep (view read-only, or the compare-only screen / re-run progress).
+  The results effect is skipped while `savedBrowse && result === null`. Re-run clears the flag, so it simulates the
+  stored request exactly as before. With a workbook loaded, "Back to review" stays available and leaves browse mode.
+
+**Tests:** `components/p48-upload-library.test.tsx` +4 (now 10): parsed-not-simulated → Open from the panel shows the
+view, no simulate, no alert, "Back to review" present (two cases: workbook simulate OK, and workbook simulate 422);
+Compare from the panel in that state → compare-only screen with the KPI table, no simulate; Re-run in that state sends
+one simulate of the stored request (`exclude_plan_project_ids` kept) and lands on the results with the Scenario bar.
+All 4 were confirmed to fail with the fix temporarily reverted (restored from a scratchpad copy, no git command).
+- `tsc -b` clean; `eslint src/surfaces/planning/whatif` clean; `vitest run src/surfaces/planning/whatif --maxWorkers=2`:
+  24 files, 225/225 pass. `frontend/src/surfaces/projects/*` not touched.
+
+## [2026-11-18] P48-T03 — qa gate re-check — qa-inspector
+
+**Verdict: PASS (QA leg).** QA48-2 is fixed by P48-R01 and verified. QA48-1 was fixed earlier, with the contract suite at 271/271.
+
+**Checks:**
+- `tsc -b`: clean.
+- `eslint src/surfaces/planning`: clean.
+- `vitest run src/surfaces/planning`: **40 files, 370 tests, all passed** (366 before, plus R01's 4).
+- `p48-upload-library.test.tsx`: 10/10.
+
+**Repro re-run.** I re-ran my temporary probe on the R01 code (the file was deleted afterwards and nothing was left in the tree). Starting state: workbook parsed, never simulated, step Upload.
+- **Open, workbook simulate OK:** 0 simulates. The saved view and banner are shown, no alert.
+- **Open, workbook simulate 422:** 0 simulates. The saved view and banner are shown, no alert. Before R01, the screen stayed on Review with the error.
+- **Compare from the panel (Add ×2, then "Compare (2)"):** 0 simulates. The compare-only screen shows 2 source chips.
+- **Re-run on today's plan after Open:** exactly 1 simulate of the stored request, with `exclude_plan_project_ids = ["plan-2"]` kept. It lands on the results with the Scenario bar. `savedBrowse` is cleared.
+- **Normal post-import flow** (Review → Compute plan → results → Compare tab library Open → Back to current result → Back to review): 1 simulate in total. The Scenario bar, stepper and "Back to review" are present. `savedBrowse` stays false. This is unchanged from P41.
+
+**Correction to my P48-T03 FAIL entry.** I described the QA48-2 path as "clicked Upload on the stepper". The stepper's Upload step is never clickable (`reachable = false`), and Review has no way back to Upload either. My repro reached "workbook parsed, step Upload" by setting the store directly. In the current UI, that state is reachable only through the panel's own Open, then "Back to saved scenarios" while browsing. So the defect was latent rather than user-reachable. R01 is a correct defensive fix and is kept.
+- Side observation, not a defect and no action needed: once a workbook is loaded, the upload-step panel can't be reached from Review or Results. The same saved scenarios are listed in the Results → Compare tab library (P41).
+
+**Still open, not P48:** the `app.test` Gantt-nav timeout, the `test_migrations` table count, the p20 Gantt pin fields, and the local `rpd` being 5 migrations behind.
+
+## [2026-11-18] P48-T03 — gate closed: security PASS, workflow PASS, qa PASS on re-check — orchestrator
+
+- **Security:** PASS (one Info item, I-1: the upload step now loads the scenario list for every What-if user; the data is the same and still scoped).
+- **Workflow:** PASS. WA48-1 and WA48-2 are wording notes only, not blocking.
+- **QA:** first FAIL on QA48-2. It was fixed by P48-R01, and the re-check is a PASS (planning vitest 370/370). QA48-1 was fixed by adding the `PriorityScoreChangeBody` and `PlanWeek` contract entries, so the long-standing PlanWeek failure is closed too.
+- **P48-T01:** capacity planning is healthy on the live demo, checked with GETs only. Observation O1 (past-week chamber overbooking in the heatmap history) is for the owner to decide; it is not a defect.
+- **Commit:** P48 files only. Another session's `frontend/src/surfaces/projects/*` WIP is excluded.
