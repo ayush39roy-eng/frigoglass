@@ -43533,3 +43533,28 @@ colour legend).
 
 **Excluded from the commit:** another session's step-chip changes (`step-chips.tsx`, the
 register-edit test, and the row height and column hunks of `projects-table.tsx`).
+
+## [2026-11-18] STANDING DECISION — the hosted demo's data is now the client's; never overwrite it (owner)
+
+From 2026-11-18 the client edits data on the hosted Render demo. This rule binds every agent and
+every task.
+
+**Never do any of these against the hosted database, or as a side effect of a deploy:**
+- re-run the seed or `deploy_render_data.sh`;
+- run any reload, truncate or replace of projects, engineers, chambers, categories, templates,
+  priorities, check-ins, VIP or users;
+- restore a dump;
+- re-run client re-import scripts.
+
+**What is still allowed:**
+- schema migrations, and only additive ones. A data backfill must only fill new columns or rows,
+  never rewrite values the client may have edited.
+- the dev-mode provisioning of the two test accounts, which touches only those two accounts.
+
+**What needs the owner's explicit approval first, naming the rows it touches:**
+- any migration or script that would change existing business data, for example a re-derivation, a
+  recalc that rewrites stored inputs, or a status backfill;
+- local data work goes on local or disposable databases only.
+
+**How to apply:** gatekeepers must flag any migration with an UPDATE or DELETE on existing business
+rows as a release blocker until the owner approves it.
