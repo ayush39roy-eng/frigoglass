@@ -675,7 +675,8 @@ async def create_project(
 
     Order: RBAC (`_write`, 401/403) → unknown hub 422 → hub outside the
     caller's scope 403 → missing hard-gate fields 422
-    `HARD_GATE_FIELDS_MISSING` (per-field, nothing written) → category vs
+    `HARD_GATE_FIELDS_MISSING` (P56: the list is empty, so only `name` and
+    `hub_id`, schema-required, are ever missing) → category vs
     hub workflow 422 `CATEGORY_WORKFLOW_MISMATCH` → unknown leader 422
     `UNKNOWN_LEADER`. The new project is not in the active run, so it is
     marked `schedule_stale` (no solve is triggered, ADR 0006). One
@@ -705,8 +706,13 @@ async def create_project(
     mismatch = _category_mismatch(hub, body.category, catalog)
     if mismatch is not None:
         raise mismatch
-    leader = await db.get(Engineer, body.leader_engineer_id)
-    if leader is None:
+    # P56: the leader is optional; a given one must exist.
+    leader = (
+        await db.get(Engineer, body.leader_engineer_id)
+        if body.leader_engineer_id is not None
+        else None
+    )
+    if body.leader_engineer_id is not None and leader is None:
         raise CodedHTTPException(
             HTTP_422,
             "UNKNOWN_LEADER",
@@ -952,8 +958,10 @@ async def stage_project_update(
     if priority_moves:
         target_status = updates.get("status", project.status)
         if new_priority is None and target_status not in NON_SCHEDULABLE_STATUSES:
-            # The scheduler needs a priority for every schedulable project;
-            # clearing it would queue a run that can only fail.
+            # Clearing a set priority is not offered (P56 made it optional at
+            # registration only; a priority-less project is left out of the
+            # run, `services.schedule_readiness`, so this is a product rule,
+            # no longer a run-safety guard).
             raise CodedHTTPException(
                 HTTP_422,
                 "NULL_NOT_ALLOWED",

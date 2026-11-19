@@ -65,12 +65,11 @@ class ProjectCreateRequest(BaseModel):
     """ADR 0034 (2026-10-21): registration creates the project `In Queue`.
 
     `name` and `hub_id` are schema-required (a missing one is FastAPI's
-    validation 422). The hard-gate fields (`services.project_hard_gates.
-    HARD_GATE_FIELDS`: leader, category, type, actual start week, TCOGS,
-    selling price, gross margin, priority) stay `Optional` in the schema so
-    that a missing one is reported by the router as one 422
-    `HARD_GATE_FIELDS_MISSING` listing every missing field
-    (docs/API_CONTRACT_P23.md §2). `status` is not accepted here.
+    validation 422). P56 (2026-11-19): every other field is optional;
+    `services.project_hard_gates.HARD_GATE_FIELDS` is empty. A project
+    created without a priority or a category is saved `In Queue` and served
+    "Not scheduled — missing …" until the field is set
+    (`services.schedule_readiness`). `status` is not accepted here.
     """
 
     #: `extra="forbid"` per `docs/PROJECT_AND_STACK.md` §3's "Pydantic v2

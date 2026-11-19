@@ -114,6 +114,7 @@ from services.run_changes import (
 from services.run_dispatch import find_in_flight_run
 from services.schedule_apply import persist_solved_run
 from services.schedule_persistence import build_schedule_input_from_db
+from services.schedule_readiness import drop_unschedulable_inputs
 from workers.progress import publish_progress
 
 logger = logging.getLogger(__name__)
@@ -259,8 +260,15 @@ async def _snapshot(db: AsyncSession, project: Project, target: ProjectPriority)
     # P37-T04 (R37-2): one clock reading per preview / confirm request; both
     # sides are solved at it, and the token hashes it (a token issued at week
     # N and confirmed at N+1 is stale, ADR 0052 §9).
-    base_input = await build_schedule_input_from_db(db, current_week=plan_clock.current_week())
-    schedule_input = with_priority(base_input, project.id, target)
+    # P56: the move is applied to the FULL input (the moved project may be
+    # one the run leaves out for a missing priority / category), then both
+    # sides drop the projects the engine cannot take, exactly as the input
+    # rebuilt after the confirm does (I37d).
+    full_input = await build_schedule_input_from_db(
+        db, current_week=plan_clock.current_week(), include_unschedulable=True
+    )
+    base_input = drop_unschedulable_inputs(full_input)
+    schedule_input = drop_unschedulable_inputs(with_priority(full_input, project.id, target))
     token = snapshot_token(
         schedule_input, project_id=project.id, from_priority=project.priority, target=target
     )
@@ -282,8 +290,14 @@ async def _rank_snapshot(
     # P37-T04 (R37-2): one clock reading per preview / confirm request; both
     # sides are solved at it, and the token hashes it (a token issued at week
     # N and confirmed at N+1 is stale, ADR 0052 §9).
-    base_input = await build_schedule_input_from_db(db, current_week=plan_clock.current_week())
-    schedule_input = with_placement(base_input, project.id, before=before, after=after)
+    # P56: as in `_snapshot`, re-rank on the full input, then drop.
+    full_input = await build_schedule_input_from_db(
+        db, current_week=plan_clock.current_week(), include_unschedulable=True
+    )
+    base_input = drop_unschedulable_inputs(full_input)
+    schedule_input = drop_unschedulable_inputs(
+        with_placement(full_input, project.id, before=before, after=after)
+    )
     token = rank_snapshot_token(
         schedule_input,
         project_id=project.id,

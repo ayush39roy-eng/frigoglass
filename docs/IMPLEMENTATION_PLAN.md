@@ -2782,3 +2782,12 @@ Presentation over existing capabilities (ADR 0007 kinds, ADR 0045–0048 templat
 | P55-T02 | Backend: drop `actual_start_week` from `HARD_GATE_FIELDS` (create, hard-gate-status, submit); keep the started-status rule; tests (create without it → 201 In Queue; In Progress without it → 422 as today) | backend-builder | T01 | targeted pytest, ruff/mypy; MEMORY | DONE (MEMORY 2026-11-19 P55-T02) |
 | P55-T03 | Frontend: mirror in `required-fields-hint.ts`; form placeholder "Unset — scheduled by the scheduler", future-week hint, required only for started statuses; tests | frontend-builder | T02 | targeted vitest, tsc/eslint; MEMORY | DONE (MEMORY 2026-11-19 P55-T03) |
 | P55-T04 | Gate (with P54-T04): qa, workflow, security | three gatekeepers | T02, T03 | three PASSes | DONE (MEMORY 2026-11-19 P54/P55-T04 gate closed) |
+
+## P56 — Only name and hub required at registration (ADR 0066; owner 2026-11-19)
+
+| ID | Task | Owner | Deps | Verify | Status |
+|---|---|---|---|---|---|
+| P56-T01 | ADR 0066, DOMAIN_RULES, plan | orchestrator | — | docs | DONE (MEMORY 2026-11-19 P56-T01) |
+| P56-T02 | Backend: empty `HARD_GATE_FIELDS`; leave incomplete projects out of the scheduler input with an `outcome_label` reason; tests | backend-builder | T01 | pytest, ruff/mypy; MEMORY | DONE (MEMORY 2026-11-19 P56 backend) |
+| P56-T03 | Frontend: only Name and Hub marked required; Unset placeholders; tests | frontend-builder | T01 | vitest, tsc/eslint; MEMORY | DONE (MEMORY 2026-11-19 P56 frontend) |
+| P56-T04 | Gate: qa, workflow, security | three gatekeepers | T02, T03 | three PASSes | TODO (owner asked to push first) |

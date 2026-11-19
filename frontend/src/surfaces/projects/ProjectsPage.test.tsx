@@ -82,7 +82,7 @@ import { ApiError } from '@/lib/api/client';
 import ProjectsPage from './ProjectsPage';
 import { FolderEditHarness } from './test-folder-edit';
 
-// P23: create tests fill seven required fields through Radix selects.
+// P23: create tests fill the former gate fields (optional since P56) through Radix selects.
 vi.setConfig({ testTimeout: 30_000 });
 
 const P1 = '3f2b8c1e-9a4d-4e6f-8b2a-1c0d9e8f7a65';
@@ -164,8 +164,8 @@ function serveGets(detail: ProjectRead = project, gate = { can_leave_draft: fals
   });
 }
 
-/** P23: the eight required fields `POST /projects` now demands (no Draft;
- *  docs/API_CONTRACT_P23.md §1, priority added by ADR 0034). */
+/** Fills the former hard-gate fields (P23; optional since P56) so the
+ *  create tests check the whole body. */
 async function fillRequired(user: ReturnType<typeof userEvent.setup>, drawer: HTMLElement): Promise<void> {
   await user.click(within(drawer).getByRole('combobox', { name: /^Leader/ }));
   await user.click(await screen.findByRole('option', { name: 'Nikos Papas' }));

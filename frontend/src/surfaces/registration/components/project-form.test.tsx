@@ -28,10 +28,9 @@ beforeEach(() => {
 
 type User = ReturnType<typeof userEvent.setup>;
 
-/** P23: `POST /projects` requires the eight hard-gate fields (no Draft; ADR 0034
- *  added priority). Fills
- *  them for create-mode tests about something else. Pick a hub first. */
-async function fillRequired(
+/** Fills the former hard-gate fields (optional since P56) for create-mode tests
+ *  that check the whole body. Pick a hub first. */
+async function fillAllFields(
   user: User,
   { category = 'A', priority = 'P2' }: { category?: string | null; priority?: string | null } = {},
 ): Promise<void> {
@@ -55,7 +54,7 @@ async function fillRequired(
 }
 
 describe('ProjectFormDialog', () => {
-  it('create mode (P23): one "Register project" action, no Draft wording, and the hard-gate fields block submit inline', async () => {
+  it('create mode (P23/P56): one "Register project" action, no Draft wording, and Name + Hub alone submit', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     renderWithProviders(
@@ -77,31 +76,10 @@ describe('ProjectFormDialog', () => {
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
     await user.click(screen.getByRole('button', { name: 'Register project' }));
 
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(screen.getByText('Fill in the required fields marked * to register the project.')).toBeInTheDocument();
-    for (const msg of [
-      'Leader is required.',
-      'Category is required.',
-      'Type is required.',
-      'TCOGS is required.',
-      'Selling price is required.',
-      'Gross margin is required.',
-      'Priority is required.',
-    ]) {
-      expect(screen.getByText(msg)).toBeInTheDocument();
-    }
-    // ADR 0065 (P55): the actual start week is optional at registration.
-    expect(screen.queryByText(/Actual start week is required/)).not.toBeInTheDocument();
-    expect(screen.getByLabelText(/^Actual start week/)).not.toHaveAttribute('aria-invalid');
-    expect(screen.getByRole('combobox', { name: /^Leader/ })).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByLabelText(/^TCOGS/)).toHaveAttribute('aria-invalid', 'true');
-    // The first missing field gets focus (after paint).
-    await vi.waitFor(() => expect(screen.getByRole('combobox', { name: /^Leader/ })).toHaveFocus());
-
-    // Filling a field clears its own message only.
-    await user.type(screen.getByLabelText(/^TCOGS/), '1000');
-    expect(screen.queryByText('TCOGS is required.')).not.toBeInTheDocument();
-    expect(screen.getByText('Gross margin is required.')).toBeInTheDocument();
+    // P56: the former hard-gate fields are optional; nothing blocks the submit.
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/is required\./)).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /^Leader/ })).not.toHaveAttribute('aria-invalid');
   });
 
   it('create mode (P23): with every required field set, submits the whole body', async () => {
@@ -113,7 +91,7 @@ describe('ProjectFormDialog', () => {
     await user.type(screen.getByLabelText(/^Name/), 'Cooler A');
     await user.click(screen.getByRole('combobox', { name: /^Hub/ }));
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
-    await fillRequired(user);
+    await fillAllFields(user);
     await user.click(screen.getByRole('button', { name: 'Register project' }));
 
     expect(onSubmit).toHaveBeenCalledWith(
@@ -151,7 +129,7 @@ describe('ProjectFormDialog', () => {
     await user.type(screen.getByLabelText(/^Name/), 'Cooler Z');
     await user.click(screen.getByRole('combobox', { name: /^Hub/ }));
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
-    await fillRequired(user);
+    await fillAllFields(user);
     await user.click(screen.getByRole('button', { name: 'Register project' }));
 
     expect(await screen.findByText('The server needs the required fields marked below.')).toBeInTheDocument();
@@ -284,7 +262,7 @@ describe('ProjectFormDialog', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it('edit mode: pre-fills from the existing project and shows the required-field asterisks', () => {
+  it('edit mode: pre-fills from the existing project', () => {
     renderWithProviders(
       <ProjectFormDialog
         mode="edit"
@@ -359,7 +337,7 @@ describe('ProjectFormDialog', () => {
     await user.type(screen.getByLabelText(/^Name/), 'Cooler G');
     await user.click(screen.getByRole('combobox', { name: /^Hub/ }));
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
-    await fillRequired(user);
+    await fillAllFields(user);
     await user.click(screen.getByRole('button', { name: 'Register project' }));
     expect(
       await screen.findByText('This project has a hard gate (regulatory / certification / safety), so it must stay P1.'),
@@ -376,7 +354,7 @@ describe('ProjectFormDialog', () => {
     await user.type(screen.getByLabelText(/^Name/), 'Cooler G');
     await user.click(screen.getByRole('combobox', { name: /^Hub/ }));
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
-    await fillRequired(user);
+    await fillAllFields(user);
     await user.click(screen.getByRole('button', { name: 'Register project' }));
     expect(
       await screen.findByText('Another priority change is being saved. Please try again in a moment.'),
@@ -475,7 +453,7 @@ describe('ProjectFormDialog', () => {
     await user.type(screen.getByLabelText(/^Name/), 'Cooler C');
     await user.click(screen.getByRole('combobox', { name: /^Hub/ }));
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
-    await fillRequired(user);
+    await fillAllFields(user);
     await user.click(screen.getByRole('button', { name: 'Register project' }));
 
     expect(await screen.findByText('The project could not be saved. Please try again.')).toBeInTheDocument();
@@ -498,7 +476,7 @@ describe('ProjectFormDialog', () => {
     await user.type(screen.getByLabelText(/^Name/), 'Cooler D');
     await user.click(screen.getByRole('combobox', { name: /^Hub/ }));
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
-    await fillRequired(user);
+    await fillAllFields(user);
     await user.click(screen.getByRole('button', { name: 'Register project' }));
 
     expect(await screen.findByText('reg_year is out of range')).toBeInTheDocument();
@@ -522,7 +500,7 @@ describe('ProjectFormDialog', () => {
     await user.type(screen.getByLabelText(/^Name/), 'Cooler A');
     await user.click(screen.getByRole('combobox', { name: /^Hub/ }));
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
-    await fillRequired(user);
+    await fillAllFields(user);
     await user.click(screen.getByRole('button', { name: 'Register project' }));
 
     expect(await screen.findByText(/cannot create or edit projects/i)).toBeInTheDocument();
@@ -552,13 +530,13 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
     await pickHub(user, 'OEM-HCK');
     await user.click(screen.getByRole('combobox', { name: /^Category/ }));
     const oemOptions = (await screen.findAllByRole('option')).map((o) => o.textContent);
-    expect(oemOptions).toEqual(['Unset', 'A-OEM', 'B-OEM', 'C-OEM']);
+    expect(oemOptions).toEqual(['Unset — not scheduled until set', 'A-OEM', 'B-OEM', 'C-OEM']);
     await user.keyboard('{Escape}');
 
     await pickHub(user, 'R&D-Greece');
     await user.click(screen.getByRole('combobox', { name: /^Category/ }));
     const pddOptions = (await screen.findAllByRole('option')).map((o) => o.textContent);
-    expect(pddOptions).toEqual(['Unset', 'A+', 'A', 'B', 'C']);
+    expect(pddOptions).toEqual(['Unset — not scheduled until set', 'A+', 'A', 'B', 'C']);
   });
 
   it('clears a category that is invalid for the newly selected hub', async () => {
@@ -569,13 +547,13 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
     );
     await user.type(screen.getByLabelText(/^Name/), 'Cooler OEM');
     await pickHub(user, 'R&D-Greece');
-    await fillRequired(user, { category: 'A+' });
+    await fillAllFields(user, { category: 'A+' });
     await pickHub(user, 'OEM-HCK');
     await user.click(screen.getByRole('button', { name: 'Register project' }));
-    // The cleared category is now the one missing required field (P23).
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(screen.getByText('Category is required.')).toBeInTheDocument();
-    expect(screen.queryByText('Leader is required.')).not.toBeInTheDocument();
+    // The cleared category is sent as null (P56: category is optional).
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ category: null });
+    expect(screen.queryByText('Category is required.')).not.toBeInTheDocument();
   });
 
   it('submits target_end_week, certification_testing_required (default on) and the client effort figures (P30)', async () => {
@@ -592,7 +570,7 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
     expect(screen.getByRole('checkbox', { name: /Certification testing required/ })).toHaveAttribute('data-state', 'checked');
     expect(screen.getByText('Lab steps are skipped when off.')).toBeInTheDocument();
     await user.click(screen.getByRole('checkbox', { name: /Certification testing required/ }));
-    await fillRequired(user);
+    await fillAllFields(user);
     await user.click(screen.getByRole('button', { name: 'Register project' }));
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({

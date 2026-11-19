@@ -3,8 +3,8 @@ registration.
 
 - `POST /projects` with every hard-gate field creates the project In Queue,
   marked stale, with one redacted `project.create` audit row and its 14 stages.
-- A missing hard-gate field is a 422 `HARD_GATE_FIELDS_MISSING` with
-  per-field errors, and nothing is written (no project, no stage, no audit).
+- P56 (2026-11-19): the hard-gate list is empty; a project with only a name
+  and a hub is created (was a 422 `HARD_GATE_FIELDS_MISSING`).
 - `PATCH` with `status: "Draft"` is a 422 `DRAFT_RETIRED`; `In Buyoff` stays
   settable.
 - A legacy Draft row still leaves Draft through `/submit`, whose 422 has the
@@ -35,6 +35,16 @@ from tests.auth_helpers import (
 from tests.factories import make_engineer, make_hub, make_project, make_user, registration_body
 
 GATE_NAMES = [name for name, _label in HARD_GATE_FIELDS]
+#: P56 (2026-11-19): the fields ADR 0034 required, all optional since.
+FORMER_GATE_NAMES = [
+    "leader_engineer_id",
+    "category",
+    "type",
+    "tcogs_eur",
+    "selling_price_eur",
+    "gross_margin_pct",
+    "priority",
+]
 
 
 @pytest.fixture(autouse=True)
@@ -109,8 +119,14 @@ async def test_create_with_all_gate_fields_is_in_queue_stale_and_audited(db_sess
     )
 
 
-@pytest.mark.parametrize("missing", GATE_NAMES)
-async def test_create_missing_one_gate_field_is_422_and_writes_nothing(db_session, missing):
+def test_gate_list_is_empty_since_p56():
+    assert GATE_NAMES == []
+
+
+@pytest.mark.parametrize("missing", FORMER_GATE_NAMES)
+async def test_create_missing_one_former_gate_field_is_201(db_session, missing):
+    """P56: none of ADR 0034's gate fields is required any more."""
+
     await _act_as(db_session, RoleName.ADMIN)
     hub = await make_hub(db_session)
     leader = await make_engineer(db_session, hub)
@@ -118,17 +134,16 @@ async def test_create_missing_one_gate_field_is_422_and_writes_nothing(db_sessio
     del body[missing]
     async with _client(db_session) as client:
         resp = await client.post("/projects", json=body)
-    assert resp.status_code == 422, resp.text
-    payload = resp.json()
-    assert payload["code"] == "HARD_GATE_FIELDS_MISSING"
-    assert list(payload["detail"]["field_errors"]) == [missing]
-    assert payload["detail"]["missing_fields"] == [dict(HARD_GATE_FIELDS)[missing]]
-    assert await _count(db_session, Project) == 0
-    assert await _count(db_session, ProjectWorkflowStep) == 0
-    assert await _count(db_session, AuditLogEntry, AuditLogEntry.action == "project.create") == 0
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["status"] == "In Queue"
+    assert resp.json()[missing] is None
+    assert await _count(db_session, Project) == 1
+    assert await _count(db_session, AuditLogEntry, AuditLogEntry.action == "project.create") == 1
 
 
-async def test_create_with_only_name_and_hub_lists_every_gate_field(db_session):
+async def test_create_with_only_name_and_hub_is_201(db_session):
+    """P56 (was: a 422 listing every gate field)."""
+
     await _act_as(db_session, RoleName.HUB_PLANNER)
     hub = await make_hub(db_session)
     async with _client(db_session) as client:
@@ -141,16 +156,15 @@ async def test_create_with_only_name_and_hub_lists_every_gate_field(db_session):
                 "customer_name": "Secret Customer",
             },
         )
-    assert resp.status_code == 422
-    detail = resp.json()["detail"]
-    assert list(detail["field_errors"]) == GATE_NAMES
-    assert detail["missing_fields"] == [label for _n, label in HARD_GATE_FIELDS]
-    assert detail["field_errors"]["tcogs_eur"] == "TCOGS is required."
-    # ADR 0065 (P55-T02): the start week is optional, the scheduler decides it.
-    assert "actual_start_week" not in detail["field_errors"]
-    assert detail["message"] == "Project cannot be registered: required fields missing."
-    assert "Secret" not in resp.text  # no submitted value echoed
-    assert await _count(db_session, Project) == 0
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["status"] == "In Queue"
+    audit = (
+        await db_session.execute(
+            select(AuditLogEntry).where(AuditLogEntry.action == "project.create")
+        )
+    ).scalar_one()
+    assert "Secret" not in str(audit.after_state)  # financial fields redacted
+    assert await _count(db_session, Project) == 1
 
 
 async def test_create_status_field_still_rejected(db_session):
@@ -215,8 +229,8 @@ async def test_create_role_matrix_unchanged(db_session, role, expected):
         full = await client.post("/projects", json=registration_body(hub, leader))
         bare = await client.post("/projects", json={"name": "Bare", "hub_id": str(hub.id)})
     assert full.status_code == expected, full.text
-    # A forbidden role gets 403, never the 422 that would reveal the gate.
-    assert bare.status_code == (422 if expected == 201 else 403)
+    # P56: name + hub is enough; a forbidden role still gets 403.
+    assert bare.status_code == expected, bare.text
 
 
 # --- PATCH --------------------------------------------------------------------------------
@@ -285,7 +299,10 @@ async def test_legacy_draft_row_can_still_leave_draft(db_session):
     )
 
 
-async def test_legacy_draft_submit_422_has_the_create_shape(db_session):
+async def test_legacy_draft_submit_with_nothing_set_is_ok(db_session):
+    """P56 (was: a 422 with the create shape): nothing but name and hub is
+    required to leave Draft either."""
+
     await _act_as(db_session, RoleName.ADMIN)
     hub = await make_hub(db_session)
     legacy = await make_project(
@@ -294,21 +311,9 @@ async def test_legacy_draft_submit_422_has_the_create_shape(db_session):
     async with _client(db_session) as client:
         gate = await client.get(f"/projects/{legacy.id}/hard-gate-status")
         resp = await client.post(f"/projects/{legacy.id}/submit", json={})
-    assert resp.status_code == 422
-    payload = resp.json()
-    assert payload["code"] == "HARD_GATE_FIELDS_MISSING"
-    names = list(payload["detail"]["field_errors"])
-    assert names == [
-        "leader_engineer_id",
-        "category",
-        "tcogs_eur",
-        "selling_price_eur",
-        "gross_margin_pct",
-        "priority",
-    ]
-    assert payload["detail"]["missing_fields"] == gate.json()["missing_fields"]
-    await db_session.refresh(legacy)
-    assert legacy.status == ProjectStatus.DRAFT
+    assert gate.json() == {"can_leave_draft": True, "missing_fields": []}
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "In Queue"
 
 
 async def test_no_registration_path_defaults_to_draft(db_session):

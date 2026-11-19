@@ -131,7 +131,7 @@ from services.hub_scope import (
     needs_own_assignments,
     project_row_scope,
 )
-from services.outcome_buckets import outcome_bucket, outcome_label, priority_label
+from services.outcome_buckets import outcome_bucket, priority_label
 from services.plan_clock import PlanClock, get_plan_clock
 from services.project_cards import build_project_cards
 from services.project_effort import (
@@ -146,6 +146,7 @@ from services.project_filters import (
     search_predicate,
 )
 from services.rate_limit import TokenBucketLimiter
+from services.schedule_readiness import served_outcome_label
 from services.schedule_stale import mark_projects_stale
 from services.step_pins import (
     can_write_pins,
@@ -736,7 +737,8 @@ async def get_gantt(
                 counts_toward_year=outcome.counts_toward_year if outcome else True,
                 not_scheduled_priority=outcome.not_scheduled_priority if outcome else False,
                 outcome=outcome_bucket(outcome),
-                outcome_label=outcome_label(outcome, projected),
+                # P56: "Not scheduled — missing …" with no outcome row.
+                outcome_label=served_outcome_label(outcome, projected, project),
                 steps=step_rows,
                 far_finish=stored_far_finish(outcome, run_week) if outcome else False,
             )

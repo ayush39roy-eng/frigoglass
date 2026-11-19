@@ -9,7 +9,8 @@ A stale flag never triggers a solve. It only tells the UI that the active
   (`mark_all_schedulable_stale`). Its return value is the count sent back in
   the `X-Schedule-Stale-Count` header.
 - Activating a run clears the flag for every project that has an outcome
-  row in that run (`clear_stale_for_run`). `services.schedule_persistence.
+  row in that run, and (P56) for every project the run leaves out for a
+  missing priority / category (`clear_stale_for_run`). `services.schedule_persistence.
   persist_schedule_output(activate=True)` is the only place a run becomes
   active, so every activation path clears it.
 
@@ -21,12 +22,13 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.enums import NON_SCHEDULABLE_STATUSES
 from models.project import Project
 from models.schedule import ScheduleRunProjectOutcome
+from services.schedule_readiness import sql_missing_schedule_fields
 
 
 async def mark_projects_stale(db: AsyncSession, project_ids: Sequence[uuid.UUID]) -> None:
@@ -65,7 +67,10 @@ async def clear_stale_for_run(db: AsyncSession, schedule_run_id: uuid.UUID) -> N
     )
     await db.execute(
         update(Project)
-        .where(Project.id.in_(in_run))
+        # P56: a project left out of every run for a missing priority /
+        # category is as current as the run can make it; its flag clears too
+        # (filling the field marks it stale again).
+        .where(or_(Project.id.in_(in_run), sql_missing_schedule_fields()))
         .values(schedule_stale=False)
         .execution_options(synchronize_session=False)
     )

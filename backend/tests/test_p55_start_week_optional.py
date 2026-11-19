@@ -71,15 +71,8 @@ async def _act_as(db_session, *roles: RoleName) -> None:
 def test_actual_start_week_is_not_a_gate_field():
     names = [name for name, _label in HARD_GATE_FIELDS]
     assert "actual_start_week" not in names
-    assert names == [
-        "leader_engineer_id",
-        "category",
-        "type",
-        "tcogs_eur",
-        "selling_price_eur",
-        "gross_margin_pct",
-        "priority",
-    ]
+    # P56 (2026-11-19): the list is empty; only name and hub are required.
+    assert names == []
 
 
 @pytest.mark.parametrize("omit", ["absent", "null"])

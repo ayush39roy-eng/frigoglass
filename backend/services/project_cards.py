@@ -30,8 +30,8 @@ from models.priority import PriorityScore
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
-from services.outcome_buckets import outcome_label
 from services.progress import project_progress_pct
+from services.schedule_readiness import served_outcome_label
 from services.tracking import TrackingStatus, due_stages_for, status_from_due_stages
 from services.workspace import (
     engineer_ftes_for_rows,
@@ -232,8 +232,11 @@ async def build_project_cards(
             not_scheduled_priority=(
                 outcome.not_scheduled_priority if outcome is not None else None
             ),
-            outcome_label=outcome_label(
-                outcome, outcome.projected_end_week if outcome is not None else None
+            # P56: "Not scheduled — missing …" with no outcome row.
+            outcome_label=served_outcome_label(
+                outcome,
+                outcome.projected_end_week if outcome is not None else None,
+                project,
             ),
         )
     return cards

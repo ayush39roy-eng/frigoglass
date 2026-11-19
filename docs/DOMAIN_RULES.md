@@ -481,10 +481,10 @@ Statuses: the four schedulable ones (`In Buyoff`, `Under Industrialization`, `In
 `In Queue`, ordered as in "Scheduling order") and the excluded ones (`Commercialized`, `On Hold`,
 `Cancelled`, `Draft`).
 
-- **Registration creates `In Queue`.** A project is registered only when every required field is
-  set: leader, category, type, actual start week, TCOGS, selling price, gross margin and priority.
-  `name` and `hub` are always required. A missing field rejects the registration, and nothing is
-  stored. A new project is marked `schedule_stale`; registering never runs the scheduler.
+- **Registration creates `In Queue`.** Only `name` and `hub` are required (ADR 0066, 2026-11-19).
+  Every other field is optional. A schedulable project with no priority or no category is left out
+  of the scheduler until that field is filled in, and is served as "Not scheduled — missing …".
+  A new project is marked `schedule_stale`; registering never runs the scheduler.
 - **`Draft` is retired.** It is kept only for historic rows. Nothing creates it, and no edit may set
   a project to `Draft`. A legacy Draft row may still leave Draft. The same required-field check
   applies, and the default target is `In Queue`.

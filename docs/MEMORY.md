@@ -46094,3 +46094,65 @@ Judged P53 files only (shared tree has P54/P55 WIP). Nothing committed, no featu
 - Rulings folded: I59 (P1+P2+P3+Other = Total), I60 (pre-model walk, greedy tail partial rows), pre-P53 runs serve left_out_reason null; ADR 0044 §7 amended; OQ #121.
 - Deploy: Render runs `alembic upgrade head` (p53a additive, checksum-tested). `scripts/p53_rules_run.py` is NOT run on hosted without owner OK. Activating a P53 run (by script, recalc, or the Monday weekly rollover) re-copies planned weeks and sends schedule-change notifications (~970 on the dev copy) — owner told.
 - Commit coordination: P54/P55 (frigoglass-75) already pushed as ee6241b; P53 committed then rebased onto it.
+
+## [2026-11-19] P56 frontend — only Name and Hub required at registration — frontend-builder: DONE (not committed)
+- **Owner request (2026-11-19).** "Remove all the mandatory fields except project title." The owner kept Hub required. This mirrors the backend emptying `HARD_GATE_FIELDS`, done the same way as ADR 0065 / P55.
+- **`required-fields-hint.ts`.**
+  - New `CLIENT_REQUIRED_FIELD_KEYS = []`, so `missingRequiredFields` always returns `{}`.
+  - `REQUIRED_FIELD_LABELS`, `REQUIRED_FIELD_KEYS` and `REQUIRED_FIELD_MESSAGES` are kept only so a server 422 (`HARD_GATE_FIELDS_MISSING`, `missing_fields`, `field_errors`, FastAPI `loc`) still lands on its field through `requiredFieldErrorsFromApi`.
+  - The start-week helpers (ADR 0065) are unchanged.
+- **`project-form.tsx`.**
+  - `requiredMark` is removed. Leader, Category, Type, Priority, TCOGS, Selling price and Gross margin have no `*` and no client "X is required." message. Name (zod) and Hub (submit check) keep `*` and their messages.
+  - New help text. Create: "Only the fields marked * (Name and Hub) are required … planned on the next schedule run once it has a priority and a category." Edit: "Fields marked * are required. A project with no priority or category is not scheduled until they are set."
+  - The empty Priority and Category options read `UNSET_NOT_SCHEDULED` = "Unset — not scheduled until set" (exported). Type stays "Unset" and Leader stays "Unassigned". Every select could already be left empty.
+  - The started-status start-week mark (ADR 0065 §3) is untouched.
+  - The register popup, drawer and bulk edit had no client required marks, so they needed no change.
+- **Null tolerance spot-check.** The served row types on the dashboard register, Projects table and card grid, Gantt, Matrix, VIP and registration already type priority, category, type and leader as `| null`, and every render guards them (DASH / "Set priority" / no pill). No non-null assertions exist on them.
+  - The priority board's columns are served per band, so a project with no priority simply appears in no column. The board needs no change and does not crash.
+  - `tsc -b` is clean.
+- **Tests.**
+  - New `src/surfaces/registration/components/p56-only-name-hub-required.test.tsx` (7 tests):
+    - the mirror is empty;
+    - a 422 still maps onto its fields;
+    - only Name and Hub carry `*`;
+    - the Unset placeholders show;
+    - Name + Hub alone submit with the other fields null;
+    - Name is still required, and Hub is still required.
+  - `project-form.test.tsx`: the old "hard-gate fields block submit" test now asserts that Name + Hub submit, and the cleared-category test now expects `category: null` to submit. Option lists use the new Unset text, and the helper is renamed `fillAllFields`.
+  - `ProjectsPage.test.tsx`: comments only.
+- **Checks.**
+  - The registration, projects and workspace vitest suites pass: 31 files, 315 tests.
+  - Full vitest: 2532/2533. The one failure, `src/app/app.test.tsx` "navigates to the Project Execution Timeline…" (no `slider` "Zoom"), fails identically at HEAD with my changes stashed, so it predates this task and is not P56.
+  - `tsc -b` exits 0.
+  - `eslint src`: 0 errors and 10 warnings, all existing `react-hooks/incompatible-library` warnings.
+- IMPLEMENTATION_PLAN is not marked. That is the orchestrator's job.
+
+## [2026-11-19] P56 — only name and hub required at registration; incomplete projects left out of the run — backend-builder: DONE (not committed)
+- **Owner ask (2026-11-19):** "remove all the mandatory fields except project title". The owner kept Hub required. `services/project_hard_gates.HARD_GATE_FIELDS` is now `()`. This affects `POST /projects`, `GET /projects/{id}/hard-gate-status` (always `can_leave_draft: true, missing_fields: []`) and the legacy `POST /projects/{id}/submit`. `name` and `hub_id` stay schema-required (422 when missing, null or an empty name). A given `leader_engineer_id` must still exist (422 `UNKNOWN_LEADER`); the create route no longer looks it up when it is null. No other create or edit path forced these fields. The PATCH guard "priority may not be null while schedulable" is kept: it stops clearing a set priority, it does not force one, and no clearing was added. No migration and no data change. The columns were already nullable (model plus `p33a` trigger: NULL category passes).
+- **Scheduling (new `services/schedule_readiness.py`, nothing under `scheduling/` edited):** `missing_schedule_fields(status, priority, category, frozen)` gives:
+  - `()` for a status-excluded project;
+  - `"priority"` when the priority is unset;
+  - `()` for a non-frozen P4/Q (the engine excludes it before validation, R42-3);
+  - otherwise `"category"` when the category is unset.
+  `build_schedule_input_from_db` drops these projects. This is the one builder behind the worker (greedy and CP-SAT), greedy-recalc, What-if/plan import baseline, priority/band-rank preview and seed. So `validate_schedulable_project` never sees them, and the run never fails.
+  - An input with every field set is returned unchanged. All hosted data today is like this, so hashes are unchanged (I8/I14).
+  - The previews build with `include_unschedulable=True`, apply the move or re-rank on the full input, then `drop_unschedulable_inputs` on both sides. This keeps I37d, and a project with no priority can be previewed into a band.
+  - Leader, type and financials are never scheduler requirements. A leaderless project is still the engine's LEFT_OUT `no_leader`.
+- **Served reason:** there is no outcome row for such a project. The existing `outcome_label` field carries "Not scheduled — missing priority", "Not scheduled — missing category" or "Not scheduled — missing priority and category". It appears on the Gantt row, the Workspace `schedule`, the Priority-board card and VIP cards (via `project_cards`), and only when the project has no outcome row in the active run. A stored row always wins (I50). `outcome` stays null. No schema field was added, so the frontend contract test is unaffected. ProjectRead (the register) carries no outcome. The frontend can derive the same text from the served `status`/`priority`/`category`/`frozen`.
+- **Stale:** `clear_stale_for_run` (activation) also clears `schedule_stale` on projects the run leaves out for missing fields, so the stale banner does not stick. Filling the field marks the project stale again (existing scheduler-input rule).
+- **Known edges (not changed):**
+  - A plan-import file row cannot match a live project that is left out (matching is against the baseline).
+  - A What-if scenario cannot name one either.
+  - A frozen project missing a category would lose its locked booking. Freezing does not check this.
+- **Docs for the orchestrator:** DOMAIN_RULES "Project statuses and registration" (still lists the required fields) and ADR 0034/0065 need an amendment or a new ADR. Frontend `required-fields-hint.ts` and the form need to mirror the change, and the Gantt badge shows `outcome_label` only when `outcome` is set.
+- **Tests:**
+  - New file `tests/test_p56_only_name_hub_required.py` (25 tests). It covers: the predicate; create with name+hub gives 201 In Queue, unranked, all former gate fields null; missing, null or empty name or hub gives 422 and nothing written; unknown leader 422; legacy Draft submit with nothing set; on the seeded portfolio, the full input raises ValueError while the served input runs, every pre-existing outcome is unchanged, and greedy-recalc gives 201 with the labels on Workspace and Gantt, no outcome rows, stale cleared, and a P4 with no category served "Not scheduled (P4)"; filling the category re-enters the input; a leaderless project is LEFT_OUT `no_leader`; priority preview, band-rank preview and empty What-if all give 200; and a smoke test: every GET route with no path parameter or only `{project_id}` (60+, exports included) is never 500 with these projects present.
+  - Updated `test_p23_registration.py` and `test_p55_start_week_optional.py`.
+  - Results: targeted 53/53. Full backend `--no-cov`: 4010 passed, 2 failed. Both failures are the known pre-existing ones (`test_migrations` table count, `test_p20_fte_followups::test_gantt_step_row_contract`).
+  - ruff is clean on touched files. `priority_preview.py` and `project_cards.py` have format diffs that were already there at HEAD. mypy shows no errors in touched files.
+- Files: `services/project_hard_gates.py`, `services/schedule_readiness.py` (new), `services/schedule_persistence.py`, `services/priority_preview.py`, `services/schedule_stale.py`, `services/workspace.py`, `services/project_cards.py`, `api/routers/projects.py`, `api/routers/gantt.py`, `schemas/project.py` (docstring), tests above. IMPLEMENTATION_PLAN not marked (no P56 rows yet).
+
+### 2026-11-19 — P56-T01 (orchestrator): only name and hub required (ADR 0066)
+Owner: "remove all the mandatory fields except project title"; the owner chose to keep Hub. ADR 0066
+written and the DOMAIN_RULES registration rule updated. Backend and frontend done (entries above).
+The owner asked to push fast, so this was pushed before the P56-T04 gate; the gate is still owed.

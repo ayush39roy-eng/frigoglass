@@ -52,7 +52,6 @@ import type { ProjectCreateRequest, ProjectRead } from '../api/types';
 import { BandRankField } from './band-rank-field';
 import { FormSubmitError } from './form-submit-error';
 import {
-  REQUIRED_FIELD_LABELS,
   missingRequiredFields,
   requiredFieldErrorsFromApi,
   startWeekErrorFromApi,
@@ -80,15 +79,13 @@ import {
  * selects and the `carry_over` checkbox are local component state merged in
  * at submit — same pattern as the Matrix's `score-edit-dialog.tsx`.
  *
- * Asterisks mark the eight Project Registration "hard gate" fields (priority
- * added by ADR 0034)
- * (`docs/PROJECT_AND_STACK.md` §2 / `required-fields-hint.ts`). P23 (owner
- * ruling 2026-10-21): Draft is dropped from registration — `POST /projects`
- * requires them and creates the project In Queue. In create mode the form
- * checks them before submit and maps the server's 422 per-field errors onto
- * the same fields; the server stays the authority. Edit mode does not block
- * on them (existing projects may predate the rule; a legacy Draft still
- * leaves Draft through `hard-gate-panel.tsx`).
+ * P56 (owner 2026-11-19): only Name and Hub are required (asterisks). The
+ * former hard-gate fields (leader, category, type, TCOGS, selling price, gross
+ * margin, priority) can be left empty; Priority and Category read "Unset — not
+ * scheduled until set". `POST /projects` creates the project In Queue. A server
+ * 422 naming any of those fields still lands on it (`required-fields-hint.ts`);
+ * the server stays the authority. A legacy Draft still leaves Draft through
+ * `hard-gate-panel.tsx`.
  */
 
 const NONE = '__none__';
@@ -156,14 +153,8 @@ function normaliseText(value: unknown): string {
 /** ADR 0065 §3: the empty start week reads like Priority's "Unset". */
 export const START_WEEK_PLACEHOLDER = 'Unset — scheduled by the scheduler';
 
-function requiredMark(field: keyof typeof REQUIRED_FIELD_LABELS): React.ReactNode {
-  return (
-    <span className="text-danger" title={`Required to register a project (${REQUIRED_FIELD_LABELS[field]})`}>
-      {' '}
-      *
-    </span>
-  );
-}
+/** P56: an empty Priority or Category saves, but the project is not scheduled until set. */
+export const UNSET_NOT_SCHEDULED = 'Unset — not scheduled until set';
 
 /**
  * The form body. `variant="dialog"` (default) renders inside `<ProjectFormDialog>`;
@@ -436,7 +427,8 @@ export function ProjectForm({
       scoring_tags: [...scoringTags],
     };
     if (mode === 'create') {
-      // P23: `POST /projects` requires the hard-gate fields (no Draft any more).
+      // P23 / P56: the client mirror of the gate fields — empty since P56, so
+      // only Name (schema) and Hub (above) block a submit.
       const missing = missingRequiredFields(body);
       if (Object.keys(missing).length > 0) {
         showRequiredErrors(missing);
@@ -492,14 +484,14 @@ export function ProjectForm({
         <Description>
           {mode === 'create' ? (
             <>
-              Fields marked <span className="text-danger">*</span> are required to register a
-              project. A registered project joins the queue (status In Queue) and is planned on the
-              next schedule run.
+              Only the fields marked <span className="text-danger">*</span> (Name and Hub) are
+              required. A registered project joins the queue (status In Queue) and is planned on the
+              next schedule run once it has a priority and a category.
             </>
           ) : (
             <>
-              Fields marked <span className="text-danger">*</span> are required for new projects
-              (Project Registration&apos;s hard gate).
+              Fields marked <span className="text-danger">*</span> are required. A project with
+              no priority or category is not scheduled until they are set.
             </>
           )}
         </Description>
@@ -545,7 +537,7 @@ export function ProjectForm({
             )}
             {withRegister ? null : (
             <Field
-              label={<>Leader{requiredMark('leader_engineer_id')}</>}
+              label="Leader"
               htmlFor="reg-leader"
               error={requiredError('leader_engineer_id')}
               // P29 (ADR 0042 §7): the served flag, while the saved leader is still selected.
@@ -578,7 +570,7 @@ export function ProjectForm({
             </Field>
             )}
             <Field
-              label={<>Category{requiredMark('category')}</>}
+              label="Category"
               htmlFor="reg-category"
               error={requiredError('category')}
               hint={
@@ -598,7 +590,7 @@ export function ProjectForm({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={NONE}>Unset</SelectItem>
+                  <SelectItem value={NONE}>{UNSET_NOT_SCHEDULED}</SelectItem>
                   {categoryOptions.map((c) => (
                     <SelectItem key={c} value={c}>
                       {categoryCatalog.labelOf(c)}
@@ -607,7 +599,7 @@ export function ProjectForm({
                 </SelectContent>
               </Select>
             </Field>
-            <Field label={<>Type{requiredMark('type')}</>} htmlFor="reg-type" error={requiredError('type')}>
+            <Field label="Type" htmlFor="reg-type" error={requiredError('type')}>
               <Select value={type} onValueChange={setType}>
                 <SelectTrigger id="reg-type" className="h-8" aria-invalid={requiredError('type') ? true : undefined}>
                   <SelectValue />
@@ -623,7 +615,7 @@ export function ProjectForm({
               </Select>
             </Field>
             <Field
-              label={<>Priority{requiredMark('priority')}</>}
+              label="Priority"
               htmlFor="reg-priority"
               error={requiredError('priority')}
               // P11 (ADR 0015): on an existing project a priority change
@@ -640,7 +632,7 @@ export function ProjectForm({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={NONE}>Unset</SelectItem>
+                  <SelectItem value={NONE}>{UNSET_NOT_SCHEDULED}</SelectItem>
                   {PROJECT_PRIORITIES.map((p) => (
                     <SelectItem key={p} value={p} title={PRIORITY_BAND_TITLE[p]}>
                       {priorityBandName(p)}
@@ -826,7 +818,7 @@ export function ProjectForm({
               <Input id="reg-customer" {...register('customer_name')} />
             </Field>
             <Field
-              label={<>TCOGS (EUR){requiredMark('tcogs_eur')}</>}
+              label="TCOGS (EUR)"
               htmlFor="reg-tcogs"
               error={errors.tcogs_eur?.message ?? requiredError('tcogs_eur')}
             >
@@ -842,7 +834,7 @@ export function ProjectForm({
               />
             </Field>
             <Field
-              label={<>Selling price (EUR){requiredMark('selling_price_eur')}</>}
+              label="Selling price (EUR)"
               htmlFor="reg-selling-price"
               error={errors.selling_price_eur?.message ?? requiredError('selling_price_eur')}
             >
@@ -858,7 +850,7 @@ export function ProjectForm({
               />
             </Field>
             <Field
-              label={<>Gross margin (%){requiredMark('gross_margin_pct')}</>}
+              label="Gross margin (%)"
               htmlFor="reg-gross-margin"
               error={errors.gross_margin_pct?.message ?? requiredError('gross_margin_pct')}
             >

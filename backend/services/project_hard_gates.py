@@ -12,11 +12,12 @@ financial fields (TCOGS, gross margin, selling price ...)."
 
 `actual_start_week` left the list in ADR 0065 (optional at registration).
 
-`priority` is part of the list since ADR 0034: a project is schedulable the
-moment it is created, and the scheduler rejects a schedulable project with
-no priority as a configuration error for the whole run
-(`scheduling.workflow.validate_schedulable_project`). `hub` and `name` are
-required by the request schema itself. `customer_name` is deliberately NOT
+P56 (2026-11-19): the list is empty; only `name` and `hub` (required by the
+request schema itself) are required. ADR 0034 had added `priority` because
+the scheduler rejects a schedulable project with no priority (or category)
+for the whole run (`scheduling.workflow.validate_schedulable_project`); since
+P56 such a project is left out of the scheduler input instead
+(`services.schedule_readiness`). `customer_name` is deliberately NOT
 gated (PROJECT_AND_STACK §2 does not name it; P3-T01 decision).
 """
 
@@ -35,15 +36,18 @@ from models.project import Project
 #: `max(CURRENT_WEEK, actual_start_week or CURRENT_WEEK)`. A started stage
 #: (In Progress / Blocked / Done) still needs its own `actual_start_week`
 #: (DOMAIN_RULES per-stage progress fields, `STAGE_INCONSISTENT`).
-HARD_GATE_FIELDS: tuple[tuple[str, str], ...] = (
-    ("leader_engineer_id", "leader"),
-    ("category", "category"),
-    ("type", "type"),
-    ("tcogs_eur", "TCOGS"),
-    ("selling_price_eur", "selling price"),
-    ("gross_margin_pct", "gross margin"),
-    ("priority", "priority"),
-)
+HARD_GATE_FIELDS: tuple[tuple[str, str], ...] = ()
+#: P56 (owner 2026-11-19, "remove all the mandatory fields except project
+#: title"; Hub kept): the list is empty. Leader, category, type, TCOGS,
+#: selling price, gross margin and priority are all optional at create and on
+#: the legacy leave-Draft submit. `name` and `hub_id` stay schema-required.
+#: The machinery (and the 422 shape) is kept so the endpoints and the
+#: `hard-gate-status` response are unchanged in shape. A project without a
+#: priority or a category is saved `In Queue` but left out of the scheduler
+#: input (`services.schedule_readiness`), never failing a run.
+#: Former list: leader_engineer_id, category, type, tcogs_eur,
+#: selling_price_eur, gross_margin_pct, priority (and, before ADR 0065,
+#: actual_start_week).
 
 #: Error code of the 422 (create and legacy leave-Draft).
 HARD_GATE_ERROR_CODE = "HARD_GATE_FIELDS_MISSING"

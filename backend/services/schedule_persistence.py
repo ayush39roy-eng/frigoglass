@@ -102,6 +102,7 @@ from scheduling.workflow import canonical_categories, is_valid_fte
 from services import plan_clock
 from services.categories import load_catalog
 from services.notifications import generate_schedule_change_notifications
+from services.schedule_readiness import missing_input_fields
 from services.schedule_stale import clear_stale_for_run
 from services.scheduling_settings import horizon_weeks_for
 from services.workflow_durations import EFFORT_KINDS, run_input_lead_and_override
@@ -287,9 +288,19 @@ async def build_schedule_input_from_db(
     current_week: int,
     horizon_weeks: int | None = None,
     within_year_week: int | None = None,
+    include_unschedulable: bool = False,
 ) -> ScheduleInput:
     """Load every `Project`/`Engineer`/`Chamber`/`WorkflowStepTemplate` row and
     map it into `scheduling.types.ScheduleInput`.
+
+    P56: a project in a schedulable status that lacks a priority or a
+    category (`services.schedule_readiness.missing_schedule_fields`) is left
+    out of the returned input, so it never fails the run; it is served as
+    "Not scheduled — missing …" until the field is filled in. With every
+    field set the input is unchanged. `include_unschedulable=True` returns
+    them too, for a caller that must transform the full input by project id
+    (the priority / band-rank preview) and then applies
+    `schedule_readiness.drop_unschedulable_inputs` itself.
 
     P37-T04 (ADR 0052 R37-2, I38): `current_week` is required. The worker
     passes the run row's stored week; a synchronous solve passes the request's
@@ -524,6 +535,10 @@ async def build_schedule_input_from_db(
         )
         for lt in sorted(lead_time_rows, key=_lead_time_sort_key)
     )
+
+    if not include_unschedulable:
+        # P56: never hand the engine a project it would reject for the whole run.
+        projects = tuple(p for p in projects if not missing_input_fields(p))
 
     return ScheduleInput(
         projects=projects,

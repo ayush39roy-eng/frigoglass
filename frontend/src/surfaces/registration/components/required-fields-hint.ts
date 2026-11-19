@@ -4,17 +4,24 @@
  * (`frontend-builder` SKILL, same idiom as the Matrix's `score-edit-schema.ts`).
  *
  * P23-T01 / P23-T02 (owner ruling 2026-10-21, ADR 0034, `docs/API_CONTRACT_P23.md`):
- * Draft is dropped from
- * registration. `POST /projects` validates these fields up front and creates
- * the project In Queue, so the create form checks them before submit
- * (`missingRequiredFields`) and maps the server's 422 onto the same fields
- * (`requiredFieldErrorsFromApi`). A legacy Draft project still leaves Draft
- * through `GET /projects/{id}/hard-gate-status` + `POST …/submit`
- * (`hard-gate-panel.tsx`); that answer is always the server's.
+ * Draft is dropped from registration and `POST /projects` creates the project
+ * In Queue. A legacy Draft project still leaves Draft through
+ * `GET /projects/{id}/hard-gate-status` + `POST …/submit` (`hard-gate-panel.tsx`);
+ * that answer is always the server's.
+ *
+ * P56 (owner 2026-11-19, "remove all the mandatory fields except project
+ * title"; Hub kept): `HARD_GATE_FIELDS` is empty, so only Name (form schema)
+ * and Hub (form submit) are required. `CLIENT_REQUIRED_FIELD_KEYS` is empty and
+ * `missingRequiredFields` never blocks a submit. The labels below are kept
+ * ONLY so a server 422 naming one of these fields (`HARD_GATE_FIELDS_MISSING`,
+ * should the server ever send it) still lands on that field
+ * (`requiredFieldErrorsFromApi`). A project saved without priority or
+ * category is not scheduled until they are set.
  */
 
 import { ApiError } from '@/lib/api/client';
 
+/** Fields a server 422 may name (former gate fields) → the server's label. */
 export const REQUIRED_FIELD_LABELS = {
   leader_engineer_id: 'leader',
   category: 'category',
@@ -24,7 +31,6 @@ export const REQUIRED_FIELD_LABELS = {
   tcogs_eur: 'TCOGS',
   selling_price_eur: 'selling price',
   gross_margin_pct: 'gross margin',
-  // ADR 0034 / docs/API_CONTRACT_P23.md §1: the scheduler needs a priority.
   priority: 'priority',
 } as const;
 
@@ -32,7 +38,7 @@ export type RequiredFieldKey = keyof typeof REQUIRED_FIELD_LABELS;
 
 export const REQUIRED_FIELD_KEYS = Object.keys(REQUIRED_FIELD_LABELS) as RequiredFieldKey[];
 
-/** The inline message shown under a missing required field. */
+/** The fallback inline message when a server 422 names the field without one. */
 export const REQUIRED_FIELD_MESSAGES: Record<RequiredFieldKey, string> = {
   leader_engineer_id: 'Leader is required.',
   category: 'Category is required.',
@@ -45,11 +51,16 @@ export const REQUIRED_FIELD_MESSAGES: Record<RequiredFieldKey, string> = {
 
 export type RequiredFieldErrors = Partial<Record<RequiredFieldKey, string>>;
 
-/** Which required fields are unset in the values about to be sent. `null`,
- *  `undefined` and blank strings count as unset (the server checks `is None`). */
+/** P56: the fields the client checks before submit — none (Name and Hub are
+ *  checked by the form itself). Mirrors the empty `HARD_GATE_FIELDS`. */
+export const CLIENT_REQUIRED_FIELD_KEYS: readonly RequiredFieldKey[] = [];
+
+/** Which client-required fields are unset in the values about to be sent.
+ *  `null`, `undefined` and blank strings count as unset (the server checks
+ *  `is None`). P56: always empty, since no gate field is required. */
 export function missingRequiredFields(values: Readonly<Partial<Record<RequiredFieldKey, unknown>>>): RequiredFieldErrors {
   const errors: RequiredFieldErrors = {};
-  for (const key of REQUIRED_FIELD_KEYS) {
+  for (const key of CLIENT_REQUIRED_FIELD_KEYS) {
     const v = values[key];
     if (v === null || v === undefined || (typeof v === 'string' && v.trim() === '')) {
       errors[key] = REQUIRED_FIELD_MESSAGES[key];
