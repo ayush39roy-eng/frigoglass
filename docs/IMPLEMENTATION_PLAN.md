@@ -2744,3 +2744,12 @@ The ruling is labelled R49 (written before the phase number was assigned; P49 is
 | P51-T02 | Search: `*` / `?` wildcards, every other character literal, one helper server + browser | backend-builder | — | done (MEMORY 2026-11-19) |
 | P51-T03 | Lab chamber stages: old app also lets chambers run PDD-J (Pr. Pr) and PDD-L (Pilot); the client's 2027 Process-steps sheet counts lab = F + H only | owner decision | — | on hold (owner: decide later) |
 | P51-T04 | Gate: qa-inspector, workflow-auditor, security-auditor | — | T01, T02 | done — gate PASS (MEMORY 2026-11-19) |
+
+## P52 — "Effort & Timeline Planning": one Excel-style matrix on the Workflow page, like the client's old app (owner 2026-11-19)
+
+Presentation over existing capabilities (ADR 0007 kinds, ADR 0045–0048 templates/apply, P33). No new domain rule.
+
+| ID | Task | Owner | Depends on | Status |
+|---|---|---|---|---|
+| P52-T01 | Matrix tab: PDD + OEM grids (categories × steps, editable weeks), Resource row (Design/Lab/Other = kind), Total W + D/L, per-category timeline previews with gap ±, B-equivalent, Apply to App; Chambers tab lists every lab-kind step | frontend-builder | — | done (MEMORY 2026-11-19 P52-T01) |
+| P52-T02 | Gate | — | T01 | todo |

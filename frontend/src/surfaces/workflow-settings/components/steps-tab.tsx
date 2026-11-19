@@ -22,6 +22,7 @@ import { parallelPeers, validateDag } from '../lib/dag';
 import { DagDiagram } from './dag-diagram';
 import { PredecessorPicker } from './predecessor-picker';
 import { saveErrorMessage } from './save-error';
+import { kindChangeExplanation } from '../lib/kind-copy';
 
 /**
  * Steps & precedence (ADR 0009). Per workflow: the 14 steps with their kind
@@ -272,14 +273,4 @@ function WorkflowStepsEditor({
       />
     </Card>
   );
-}
-
-const KIND_BOOKS: Record<WorkflowStepKind, string> = {
-  design: "the project leader's weeks (engineer load)",
-  lab: 'chamber platform-weeks (lab load)',
-  elapsed: 'no resource at all (calendar time only)',
-};
-
-function kindChangeExplanation(from: WorkflowStepKind, to: WorkflowStepKind): string {
-  return `This step will book ${KIND_BOOKS[to]} instead of ${KIND_BOOKS[from]} for every project on this workflow. Engineer and chamber load on RPD Capacity shifts accordingly, and chambers must allow this step before a lab kind can book. Nothing moves until the schedule is recalculated — saving marks every schedulable project stale.`;
 }

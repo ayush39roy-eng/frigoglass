@@ -245,7 +245,8 @@ describe('P33-T16 — category timeline editor', () => {
       });
       const canEdit = role === 'Admin' || role === 'Super Admin';
       if (canEdit) {
-        // Steps & precedence (the default tab): Super Admin edits, Admin reads.
+        // Steps & precedence (P52-T01: no longer the default tab): Super Admin edits, Admin reads.
+        await user.click(await screen.findByRole('tab', { name: 'Steps & precedence' }));
         await screen.findByTestId('step-row-PDD-A');
         const notice = screen.queryByTestId('read-only-notice');
         if (role === 'Admin') expect(notice).toHaveTextContent('Super Admin only');

@@ -64,8 +64,51 @@ export function useTemplateEditor({
   const overrides = React.useMemo(() => draftOverrides(drafts), [drafts]);
   // P49-R01 (ADR 0060 R1, Q49-1a): unsaved timeline drafts hold an auto reload.
   useEditSession(overrides.length > 0);
-  const debounced = useDebouncedValue(overrides, PREVIEW_DEBOUNCE_MS);
+  const { shown, pending, error } = useTimelinePreview({ workflowId, category, overrides, savedTimeline, enabled });
 
+  const nudge = React.useCallback(
+    (stepId: string, field: DraftField, direction: -1 | 1) => {
+      setDrafts((prev) => nudgeDraft(prev, saved, stepId, field, direction));
+    },
+    [saved],
+  );
+  const resetStep = React.useCallback((stepId: string) => setDrafts((prev) => resetDraftStep(prev, stepId)), []);
+  const discard = React.useCallback(() => setDrafts({}), []);
+
+  return {
+    drafts,
+    overrides,
+    shown,
+    /** A click is not yet reflected by a served timeline. */
+    pending,
+    /** The newest preview request failed (the last good timeline stays drawn). */
+    error,
+    nudge,
+    resetStep,
+    discard,
+  };
+}
+
+/**
+ * P52-T01: the live redraw of one category timeline for drafts held by the
+ * caller (the "Effort & Timeline Planning" matrix keeps one draft set per
+ * workflow, shared by its grid cells and its timeline ± buttons). Same
+ * contract D call, debounce and fallbacks as `useTemplateEditor`.
+ */
+export function useTimelinePreview({
+  workflowId,
+  category,
+  overrides,
+  savedTimeline,
+  enabled,
+}: {
+  workflowId: WorkflowId;
+  category: ProjectCategory;
+  overrides: readonly TemplateStepOverride[];
+  savedTimeline: CategoryTimeline;
+  enabled: boolean;
+}): { shown: ShownTimeline; pending: boolean; error: Error | null } {
+  const debounced = useDebouncedValue(overrides, PREVIEW_DEBOUNCE_MS);
   const preview = useQuery({
     queryKey: ['workflow-settings', 'timeline-preview', workflowId, category, debounced] as const,
     queryFn: async ({ signal }): Promise<ShownTimeline> => {
@@ -84,26 +127,9 @@ export function useTemplateEditor({
   // may still be for an older click while the next one is pending).
   const shown: ShownTimeline = overrides.length === 0 ? savedShown : (preview.data ?? savedShown);
   const settled = overrides.length === 0 || (sameOverrides(shown.basis, overrides) && !preview.isFetching);
-
-  const nudge = React.useCallback(
-    (stepId: string, field: DraftField, direction: -1 | 1) => {
-      setDrafts((prev) => nudgeDraft(prev, saved, stepId, field, direction));
-    },
-    [saved],
-  );
-  const resetStep = React.useCallback((stepId: string) => setDrafts((prev) => resetDraftStep(prev, stepId)), []);
-  const discard = React.useCallback(() => setDrafts({}), []);
-
   return {
-    drafts,
-    overrides,
     shown,
-    /** A click is not yet reflected by a served timeline. */
     pending: !settled,
-    /** The newest preview request failed (the last good timeline stays drawn). */
     error: overrides.length > 0 && sameOverrides(debounced, overrides) && preview.isError ? preview.error : null,
-    nudge,
-    resetStep,
-    discard,
   };
 }

@@ -29,11 +29,14 @@ import type {
 import { AccessNotice } from './access-notice';
 import { CalendarsTab } from './calendars-tab';
 import { ChambersTab } from './chambers-tab';
+import { EffortMatrixTab } from './effort-matrix/effort-matrix-tab';
+import { UnsavedLeaveGuard } from './unsaved-leave-guard';
 import type { TemplateEditing } from './category-timeline';
 import { LeadTimesTab } from './lead-times-tab';
 import { StaleBanner } from './stale-banner';
 import { StepsTab } from './steps-tab';
 import { TimelinesTab } from './timelines-tab';
+import { useEffortMatrix } from '../hooks/use-effort-matrix';
 import { useTemplateApply } from '../hooks/use-template-apply';
 import {
   useSaveChamber,
@@ -240,6 +243,9 @@ function TemplateTabs({
     [data.categories],
   );
   const { start, busy } = apply;
+  // P52-T01: the matrix drafts live here, above the tabs, so a tab switch keeps them.
+  const matrix = useEffortMatrix({ leadTimes: data.lead_times, workflows: data.workflows });
+  const [tab, setTab] = React.useState('matrix');
   const editing = React.useMemo<TemplateEditing>(
     () => ({
       canWrite: canWriteTemplates,
@@ -252,14 +258,38 @@ function TemplateTabs({
   );
 
   return (
-    <Tabs defaultValue="steps">
-      <TabsList>
+    <Tabs value={tab} onValueChange={setTab}>
+      <UnsavedLeaveGuard when={matrix.dirty} />
+      <TabsList className="h-auto flex-wrap">
+        <TabsTrigger value="matrix">
+          Effort &amp; Timeline Planning
+          {matrix.dirty ? (
+            <span className="ml-1.5 inline-block size-2 rounded-full bg-warning" aria-label="unsaved changes" role="img" />
+          ) : null}
+        </TabsTrigger>
         <TabsTrigger value="steps">Steps &amp; precedence</TabsTrigger>
         <TabsTrigger value="lead-times">Lead times</TabsTrigger>
         <TabsTrigger value="timelines">Timeline previews</TabsTrigger>
         <TabsTrigger value="calendars">Hub calendars</TabsTrigger>
         <TabsTrigger value="chambers">Chambers</TabsTrigger>
       </TabsList>
+      <TabsContent value="matrix" className="space-y-3">
+        {/* P52-T01: the client's old "Effort & Timeline Planning" page. */}
+        {templatesNotice}
+        <ReadOnlyNotice surface="workflow_settings" what="Changing a step's Resource (Super Admin only)" />
+        <EffortMatrixTab
+          workflows={data.workflows}
+          categories={data.categories}
+          versions={versions}
+          state={matrix}
+          canWriteTemplates={canWriteTemplates}
+          canWriteSettings={canWriteSettings}
+          applying={busy}
+          onSaveSteps={onSaveSteps}
+          onStartApply={(changeSet, summary, onApplied) => start(changeSet, { summary, onApplied })}
+          onEditWorkflow={() => setTab('steps')}
+        />
+      </TabsContent>
       <TabsContent value="steps" className="space-y-3">
         {settingsNotice}
         <StepsTab workflows={data.workflows} canWrite={canWriteSettings} saving={saving.steps} onSave={onSaveSteps} />
@@ -286,7 +316,7 @@ function TemplateTabs({
       </TabsContent>
       <TabsContent value="chambers" className="space-y-3">
         {settingsNotice}
-        <ChambersTab chambers={data.chambers} canWrite={canWriteSettings} saving={saving.chamber} onSave={onSaveChamber} />
+        <ChambersTab workflows={data.workflows} chambers={data.chambers} canWrite={canWriteSettings} saving={saving.chamber} onSave={onSaveChamber} />
       </TabsContent>
     </Tabs>
   );

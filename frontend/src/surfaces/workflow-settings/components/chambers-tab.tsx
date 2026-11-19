@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDecimal } from '@/lib/format';
 
-import type { ChamberSetting, ChamberSettingUpdateRequest, WorkflowSettingsSaveResult } from '../api/types';
+import type { ChamberSetting, ChamberSettingUpdateRequest, WorkflowSetting, WorkflowSettingsSaveResult } from '../api/types';
+import { labKindSteps } from '../lib/effort-matrix';
 import { impliedHolidayWeeks, previewEfficientLabWeeks, previewWorkingWeeksPerChamber } from '../lib/preview';
 import { saveErrorMessage } from './save-error';
 
@@ -25,19 +26,49 @@ const FIELDS: { key: keyof Editable; label: string; step: string }[] = [
 ];
 
 export interface ChambersTabProps {
+  /** P52-T01: the lab-kind steps chambers can book are derived from these kinds. */
+  workflows?: readonly WorkflowSetting[];
   chambers: ChamberSetting[];
   canWrite: boolean;
   onSave: (chamberId: string, body: ChamberSettingUpdateRequest) => Promise<WorkflowSettingsSaveResult>;
   saving: boolean;
 }
 
-export function ChambersTab({ chambers, canWrite, onSave, saving }: ChambersTabProps): React.JSX.Element {
+export function ChambersTab({ workflows = [], chambers, canWrite, onSave, saving }: ChambersTabProps): React.JSX.Element {
+  // P52-T01: every lab-kind step of each workflow, from the served kinds — a
+  // step changed to Lab (Resource row / Steps & precedence) appears here.
+  const labSteps = labKindSteps(workflows);
   return (
     <Card>
       <CardHeader>
         <CardTitle>Chambers</CardTitle>
       </CardHeader>
       <CardContent>
+        {workflows.length > 0 ? (
+          <div className="mb-3 space-y-1" data-testid="chamber-lab-stages">
+            <p className="text-2xs font-bold uppercase tracking-wider text-text-subtle">Lab stages chambers can book</p>
+            {labSteps.length === 0 ? (
+              <p className="text-2xs text-text-muted">No step is set to Lab in either workflow.</p>
+            ) : (
+              <ul className="flex flex-wrap gap-1.5" aria-label="Lab-kind workflow steps">
+                {labSteps.map((s) => (
+                  <li
+                    key={s.stepId}
+                    className="rounded-pill border border-success/40 bg-success/10 px-2 py-0.5 text-2xs font-semibold text-success-subtle-fg"
+                    title={s.name}
+                    data-testid={`lab-stage-${s.stepId}`}
+                  >
+                    {s.stepId} · {s.name}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-2xs text-text-subtle">
+              Derived from each step&apos;s Resource (Lab). Which chamber may book which of these is set per chamber on
+              Capacity Planning.
+            </p>
+          </div>
+        ) : null}
         <div className="overflow-x-auto rounded-dash border-[1.5px] border-border bg-surface">
           <table className="w-full border-collapse text-sm" aria-label="Chamber supply inputs">
             <thead className="bg-surface-sunken text-2xs font-bold uppercase tracking-wider text-text-subtle">

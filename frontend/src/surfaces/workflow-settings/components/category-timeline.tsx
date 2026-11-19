@@ -17,12 +17,13 @@ import type {
   TemplateStepOverride,
   TimelineStep,
 } from '../api/types';
-import { useTemplateEditor } from '../hooks/use-template-editor';
+import { useTemplateEditor, useTimelinePreview } from '../hooks/use-template-editor';
 import { applyErrorMessage, TEMPLATE_COPY } from '../lib/template-copy';
 import {
   canNudge,
   changeEntry,
   currentValue,
+  draftOverrides,
   gapBadge,
   overrideValue,
   savedCells,
@@ -303,6 +304,81 @@ function EditableCategoryTimeline({
           </Button>
         </div>
       ) : null}
+    </TimelineCard>
+  );
+}
+
+/**
+ * P52-T01: one category timeline whose drafts the caller holds (the "Effort &
+ * Timeline Planning" matrix: its grid cells and these ± buttons edit the same
+ * drafts). No Save / Discard here — the matrix's "Apply to App" saves every
+ * drafted category through the one apply dialog.
+ */
+export function ControlledCategoryTimeline({
+  timeline,
+  drafts,
+  saved,
+  canWrite,
+  disabled,
+  defaultOpen = false,
+  onNudge,
+  onResetStep,
+}: {
+  /** The saved (served C2) timeline of this category. */
+  timeline: CategoryTimeline;
+  drafts: CategoryDrafts;
+  saved: Readonly<Record<string, SavedCell>>;
+  /** `workflow_templates.write`: ± controls and the live preview. */
+  canWrite: boolean;
+  disabled: boolean;
+  defaultOpen?: boolean;
+  onNudge: (stepId: string, field: DraftField, direction: -1 | 1) => void;
+  onResetStep: (stepId: string) => void;
+}): React.JSX.Element {
+  const [open, setOpen] = React.useState(defaultOpen);
+  const panelId = React.useId();
+  const overrides = React.useMemo(() => draftOverrides(drafts), [drafts]);
+  const preview = useTimelinePreview({
+    workflowId: timeline.workflow_id,
+    category: timeline.category,
+    overrides,
+    savedTimeline: timeline,
+    enabled: canWrite,
+  });
+  const draftCount = Object.keys(drafts).length;
+  const shown = preview.shown.timeline;
+  const controls: RowControls | undefined = canWrite
+    ? { drafts, saved, basis: preview.shown.basis, pending: preview.pending, disabled, nudge: onNudge, resetStep: onResetStep }
+    : undefined;
+
+  return (
+    <TimelineCard
+      timeline={shown}
+      open={open}
+      onToggle={() => setOpen((v) => !v)}
+      panelId={panelId}
+      badge={
+        draftCount > 0 ? (
+          <Badge tone="warning" data-testid={`unsaved-${timeline.category}`}>
+            {draftCount} unsaved {draftCount === 1 ? 'step' : 'steps'}
+          </Badge>
+        ) : null
+      }
+    >
+      <MiniGantt timeline={shown} controls={controls} />
+      {preview.error ? (
+        <p role="alert" className="flex items-center gap-1.5 text-2xs text-danger" data-testid="timeline-preview-error">
+          <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" />
+          {previewErrorText(preview.error)}
+        </p>
+      ) : null}
+      {canWrite && preview.pending ? (
+        <p role="status" aria-live="polite" className="flex items-center gap-1.5 text-2xs text-text-muted">
+          <Loader2 className="size-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          {TEMPLATE_COPY.pending}
+        </p>
+      ) : null}
+      <TemplateNote note={shown.note} />
     </TimelineCard>
   );
 }
