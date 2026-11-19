@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Check, FolderKanban, FolderOpen, Lock, Pencil, TriangleAlert } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, FolderKanban, FolderOpen, Lock, Pencil, TriangleAlert } from 'lucide-react';
 
 import { WeekText } from '@/components/shared/week-text';
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +12,7 @@ import { EntityCell } from '@/components/ui/table-cells';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
+import { usePriorityMoveHost } from '@/components/shared/priority-move/priority-move-context';
 import { CharterCell } from '@/components/shared/charter-fields';
 import { CHARTER_FIELDS } from '@/components/shared/charter-fields-meta';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
@@ -25,6 +26,7 @@ import { PROJECT_TYPE_LABELS } from '@/types/enums';
 
 import type { ProjectFilterRow } from '@/surfaces/dashboard/api/types';
 import type { EngineerOption } from '@/surfaces/registration/api/engineers-api';
+import { EditableBandRank } from '@/surfaces/registration/components/band-rank-field';
 
 import {
   fetchRegisterSteps,
@@ -32,6 +34,7 @@ import {
   type RegisterEditError,
   type RegisterStep,
 } from '../api/register-edits';
+import { nextRankSort, sortByBandRank, type RankSort } from '../lib/band-rank';
 import { clampWidth } from '../lib/column-prefs';
 import { HIDEABLE_COLUMNS } from '../lib/columns';
 import { endBeforeStart, type EditableField, type RegisterValues } from '../lib/register-edit';
@@ -163,6 +166,8 @@ interface Column {
   resizable?: boolean;
   /** A row in edit edits this column: its header carries a pencil cue. */
   editable?: boolean;
+  /** P54: the header is a sort toggle (display order of served fields only). */
+  sort?: { state: RankSort; onToggle: () => void };
   cell: (row: ProjectFilterRow, index: number) => React.ReactNode;
 }
 
@@ -342,7 +347,7 @@ function ResizeHandle({
 
 
 export function ProjectsTable({
-  rows,
+  rows: servedRows,
   canEdit,
   highlightId,
   highlightLabel = 'Saved',
@@ -357,6 +362,11 @@ export function ProjectsTable({
   onColumnWidth,
 }: ProjectsTableProps): React.JSX.Element {
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  // P54 (ADR 0064 R2): the Rank header sorts the served rows by priority then
+  // served band rank (the scheduling order); off = the server's own sort.
+  const [rankSort, setRankSort] = React.useState<RankSort>('none');
+  const rows = React.useMemo(() => sortByBandRank(servedRows, rankSort), [servedRows, rankSort]);
+  const moveHost = usePriorityMoveHost();
   const [liveWidth, setLiveWidth] = React.useState<{ id: string; px: number } | null>(null);
   const active = edit?.active ?? false;
   /** Where focus goes once the row has re-rendered: its first editable cell
@@ -875,6 +885,43 @@ export function ProjectsTable({
         },
       },
       {
+        // P54 (ADR 0064 R2): served band + rank, "P1 · 3"; editable like the board.
+        id: 'rank',
+        header: 'Rank',
+        min: 5.5,
+        align: 'center',
+        resizable: true,
+        sort: { state: rankSort, onToggle: () => setRankSort(nextRankSort) },
+        cell: (row) => {
+          const rank = row.band_rank ?? null;
+          if (row.priority === null || rank === null) return DASH;
+          const canMove = canEdit && moveHost !== null && (edit === undefined || edit.isWritable(row));
+          return (
+            <span className="inline-flex items-center gap-1 text-xs font-semibold tabular-nums text-text" data-testid="rank-cell" data-numeric="">
+              {canMove ? (
+                <>
+                  <span>{row.priority} ·</span>
+                  <EditableBandRank
+                    host={moveHost}
+                    canMove
+                    projectId={row.project_id}
+                    projectName={row.project_name}
+                    status={row.status}
+                    band={row.priority}
+                    rank={rank}
+                    dense
+                  />
+                </>
+              ) : (
+                <span title={row.band_size ? `Position ${String(rank)} of ${String(row.band_size)} in ${row.priority}` : undefined}>
+                  {row.priority} · {rank}
+                </span>
+              )}
+            </span>
+          );
+        },
+      },
+      {
         id: 'actions',
         header: 'Actions',
         min: canEdit ? 8.5 : 4.75,
@@ -923,7 +970,7 @@ export function ProjectsTable({
       },
     ];
     return all.filter((c) => !(HIDEABLE_IDS.has(c.id) && hiddenColumns.includes(c.id)));
-  }, [canEdit, highlightId, highlightLabel, showCharter, canPinVip, edit, active, hiddenColumns, toggleEdit, canReadSteps]);
+  }, [canEdit, highlightId, highlightLabel, showCharter, canPinVip, edit, active, hiddenColumns, toggleEdit, canReadSteps, rankSort, moveHost]);
 
   const widthOf = (col: Column): number | undefined =>
     liveWidth?.id === col.id ? liveWidth.px : col.resizable ? columnWidths[col.id] : undefined;
@@ -1025,6 +1072,7 @@ export function ProjectsTable({
                 role="columnheader"
                 // The resize handle inside has its own name; the header keeps just its title.
                 aria-label={col.header}
+                aria-sort={col.sort ? (col.sort.state === 'asc' ? 'ascending' : col.sort.state === 'desc' ? 'descending' : 'none') : undefined}
                 className={cn('relative flex min-w-0 items-center', ALIGN[col.align ?? 'left'])}
                 data-column={col.id}
               >
@@ -1036,6 +1084,23 @@ export function ProjectsTable({
                     className="border-ink-fg/70"
                     data-testid="select-all"
                   />
+                ) : col.sort ? (
+                  <button
+                    type="button"
+                    onClick={col.sort.onToggle}
+                    className="flex min-w-0 items-center gap-1 rounded-sm uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    title="Sort by priority, then rank inside the band (the scheduling order)"
+                    data-testid={`sort-${col.id}`}
+                  >
+                    <span className="truncate">{col.header}</span>
+                    {col.sort.state === 'asc' ? (
+                      <ArrowUp className="size-3 shrink-0" aria-hidden="true" />
+                    ) : col.sort.state === 'desc' ? (
+                      <ArrowDown className="size-3 shrink-0" aria-hidden="true" />
+                    ) : (
+                      <ArrowUpDown className="size-3 shrink-0 opacity-70" aria-hidden="true" />
+                    )}
+                  </button>
                 ) : (
                   <span className="flex min-w-0 items-center gap-1">
                     <span className="truncate">{col.header}</span>

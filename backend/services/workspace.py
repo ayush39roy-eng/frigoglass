@@ -67,6 +67,7 @@ from schemas.workspace import (
     WorkspaceStage,
 )
 from services.active_run import get_active_run, slip_weeks
+from services.band_rank import band_sizes, with_band_size
 from services.display_labels import stage_status_label
 from services.hub_scope import hub_scope_filter, is_engineer_self_scoped, is_hub_in_scope
 from services.outcome_buckets import outcome_bucket, outcome_label, priority_label
@@ -987,7 +988,8 @@ async def build_workspace(
             **{
                 name: getattr(project, name)
                 for name in WorkspaceProject.model_fields
-                if name not in ("hub", "leader_engineer_name") and name not in _FINANCIAL_FIELDS
+                if name not in ("hub", "leader_engineer_name", "band_size")
+                and name not in _FINANCIAL_FIELDS
             },
             **_financials(project, principal),
             "hub": (
@@ -996,6 +998,9 @@ async def build_workspace(
             "leader_engineer_name": _engineer_name(project.leader_engineer_id, engineers),
         }
     )
+    # P54 (ADR 0064 R1): `WorkspaceProject extends ProjectRead`, so it serves
+    # the same read-only `band_rank` / `band_size`.
+    project_payload = with_band_size(project_payload, await band_sizes(db))
 
     file_names = await user_names(db, [f.uploaded_by_user_id for f in files])
     return WorkspaceRead(

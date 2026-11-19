@@ -91,6 +91,8 @@ function registerRow(p: P): ProjectFilterRow {
     lab_weeks_calculated: 0,
     expected_status: null,
     status_mismatch: false,
+    band_rank: null,
+    band_size: null,
     actual_start_week: null,
     actual_end_week: null,
     priority_label: null,

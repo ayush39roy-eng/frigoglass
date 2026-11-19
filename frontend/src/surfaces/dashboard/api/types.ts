@@ -220,6 +220,12 @@ export interface ProjectFilterRow {
   product_type: string | null;
   /** Rank by score within the filtered set, 1-based; null when unscored. */
   priority_rank: number | null;
+  /** P54 (ADR 0064 R1): read-only position in the FULL priority band (all
+   *  hubs), the Priority board's `band_rank`; null when not a band member
+   *  (shown "—"). Always served on `/dashboard/projects`. */
+  band_rank: number | null;
+  /** P54: the number of ranked projects in that band; null with no rank. */
+  band_size: number | null;
   // P35-T01: the register's editable fields (Projects page Edit mode, P35-T02).
   actual_start_week: WeekNumber | null;
   actual_end_week: WeekNumber | null;

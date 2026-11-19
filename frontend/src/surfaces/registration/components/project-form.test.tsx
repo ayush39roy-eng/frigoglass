@@ -83,7 +83,6 @@ describe('ProjectFormDialog', () => {
       'Leader is required.',
       'Category is required.',
       'Type is required.',
-      'Actual start week is required.',
       'TCOGS is required.',
       'Selling price is required.',
       'Gross margin is required.',
@@ -91,6 +90,9 @@ describe('ProjectFormDialog', () => {
     ]) {
       expect(screen.getByText(msg)).toBeInTheDocument();
     }
+    // ADR 0065 (P55): the actual start week is optional at registration.
+    expect(screen.queryByText(/Actual start week is required/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/^Actual start week/)).not.toHaveAttribute('aria-invalid');
     expect(screen.getByRole('combobox', { name: /^Leader/ })).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByLabelText(/^TCOGS/)).toHaveAttribute('aria-invalid', 'true');
     // The first missing field gets focus (after paint).
@@ -139,8 +141,8 @@ describe('ProjectFormDialog', () => {
     // docs/API_CONTRACT_P23.md §2: labels in missing_fields, request field names in field_errors.
     const detail = JSON.stringify({
       message: 'Project cannot be registered: required fields missing.',
-      missing_fields: ['actual start date', 'TCOGS'],
-      field_errors: { actual_start_week: 'Actual start week is required.', tcogs_eur: 'TCOGS is required.' },
+      missing_fields: ['category', 'TCOGS'],
+      field_errors: { category: 'Category is required.', tcogs_eur: 'TCOGS is required.' },
     });
     const onSubmit = vi.fn().mockRejectedValue(new ApiError(422, 'invalid', detail, 'HARD_GATE_FIELDS_MISSING'));
     renderWithProviders(
@@ -154,7 +156,7 @@ describe('ProjectFormDialog', () => {
 
     expect(await screen.findByText('The server needs the required fields marked below.')).toBeInTheDocument();
     expect(screen.getByText('TCOGS is required.')).toBeInTheDocument();
-    expect(screen.getByText('Actual start week is required.')).toBeInTheDocument();
+    expect(screen.getByText('Category is required.')).toBeInTheDocument();
     expect(screen.queryByText('Leader is required.')).not.toBeInTheDocument();
     expect(screen.getByLabelText(/^TCOGS/)).toHaveAttribute('aria-invalid', 'true');
     // Never echoes a submitted financial value.
@@ -174,7 +176,7 @@ describe('ProjectFormDialog', () => {
           selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
           target_end_week: null, certification_testing_required: true, estimated_design_weeks: null,
           estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD',
-          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null,
         }}
         open
         onOpenChange={vi.fn()}
@@ -204,7 +206,7 @@ describe('ProjectFormDialog', () => {
           estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null,
           scoring_tags: ['new_options', 'improvement'], tag_dimension_keys: ['new_options', 'quality_improvements'],
           schedule_stale: false, workflow_id: 'PDD',
-          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null,
         }}
         onOpenChange={vi.fn()}
         hubs={hubs}
@@ -250,7 +252,7 @@ describe('ProjectFormDialog', () => {
           estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null,
           scoring_tags: ['new_models'], tag_dimension_keys: ['new_models'],
           schedule_stale: false, workflow_id: 'PDD',
-          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null,
         }}
         onOpenChange={vi.fn()}
         hubs={hubs}
@@ -325,7 +327,7 @@ describe('ProjectFormDialog', () => {
           schedule_stale: false,
           workflow_id: 'PDD',
           created_at: '2026-01-01T00:00:00Z',
-          updated_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null,
         }}
         open
         onOpenChange={vi.fn()}
@@ -615,9 +617,10 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
     );
     await user.type(screen.getByLabelText(/^Name/), 'Cooler Q');
     await pickHub(user, 'R&D-Greece');
-    await user.type(screen.getByLabelText(/^Expected completion \(week\)/), '53');
+    await user.type(screen.getByLabelText(/^Expected completion \(week\)/), '0');
     await user.click(screen.getByRole('button', { name: 'Register project' }));
-    expect(await screen.findByText('Must be 52 or less')).toBeInTheDocument();
+    expect(await screen.findByText('Must be 1 or more')).toBeInTheDocument();
+    expect(screen.queryByText('Must be 52 or less')).not.toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });
@@ -630,7 +633,7 @@ describe('ProjectForm — unsaved-changes reporting (P22-T01)', () => {
     customer_name: null, tcogs_eur: 100.5, selling_price_eur: null, gross_margin_pct: null, capex_keur: null,
     rm_savings_keur: null, target_end_week: null, certification_testing_required: true,
     estimated_design_weeks: null, estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD' as const,
-    created_at: '', updated_at: '',
+    created_at: '', updated_at: '', band_rank: null, band_size: null,
   };
 
   it('a freshly opened edit form is clean; an edit makes it dirty; undoing the edit makes it clean again', async () => {

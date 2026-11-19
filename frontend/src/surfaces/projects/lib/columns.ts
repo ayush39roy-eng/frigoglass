@@ -15,4 +15,6 @@ export const HIDEABLE_COLUMNS: readonly { id: string; label: string }[] = [
   { id: 'current-step', label: 'Current step' },
   { id: 'steps', label: 'Steps (click to exclude)' },
   { id: 'priority', label: 'Priority' },
+  // P54 (ADR 0064 R2): served band + rank, sortable, editable like the board.
+  { id: 'rank', label: 'Rank' },
 ];

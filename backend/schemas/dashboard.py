@@ -328,6 +328,14 @@ class ProjectFilterRow(BaseModel):
     expected_status: ProjectStatus | None
     #: True iff `expected_status` is set and differs from `status`.
     status_mismatch: bool
+    # --- P54 (ADR 0064 R1): read-only, the same values as `ProjectRead` -----
+    #: Position in the FULL priority band (dense 1..n, all hubs), equal to the
+    #: Priority board card's `band_rank`; null when not a band member. Not the
+    #: score-order `priority_rank`. Changed only via the ADR 0050 endpoints.
+    band_rank: int | None
+    #: Ranked projects in that band (the full band's `n`, all hubs); null
+    #: exactly when `band_rank` is null. One grouped count per request.
+    band_size: int | None
 
 
 class ProjectFilterResult(BaseModel):

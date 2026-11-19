@@ -119,6 +119,7 @@ from schemas.project import ProjectRead
 from schemas.step_pin import StepPinsRefusal, StepPinsRequest, StepPinsResponse
 from services.active_run import slip_weeks, step_kinds_for_run
 from services.audit_helpers import project_audit_state
+from services.band_rank import band_sizes
 from services.category_type_filter import any_of, category_type_filter
 from services.edit_conflict import check_base, field_refs
 from services.hub_scope import (
@@ -862,7 +863,7 @@ async def toggle_freeze(
     await db.commit()
     await db.refresh(project)
     # P47-R01 (M-2): financial fields only for Project Registration READ.
-    return project_read_for(project, current_user)
+    return project_read_for(project, current_user, await band_sizes(db))
 
 
 @router.put(

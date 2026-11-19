@@ -154,6 +154,14 @@ export interface ProjectRead {
   workflow_id: WorkflowId;
   created_at: string;
   updated_at: string;
+  /** P54 (ADR 0064 R1): read-only. Position in the FULL priority band (dense
+   *  1..n, all hubs), the same as the Priority board card's `band_rank`; null
+   *  when not a band member. Changed only via `POST /projects/{id}/band-rank`
+   *  (never sent in create / PATCH / register edits: 422). */
+  band_rank: number | null;
+  /** P54: the number of ranked projects in that band (the full band's `n`);
+   *  null exactly when `band_rank` is null. "Rank in P1: band_rank of band_size". */
+  band_size: number | null;
 }
 
 export type ProjectListItem = ProjectRead;

@@ -497,6 +497,8 @@ function EditBody({
       variant="sheet"
       onDirtyChange={handleFormDirty}
       hubIdOverride={regDraft.hub_id ?? project.hub_id}
+      // P54 (ADR 0064 R3): the rank input uses the page's move host (preview + recalc).
+      rankMoveHost={moveApi}
       registerSection={
         <RegisterPopupSection
           base={popupBaseValues}

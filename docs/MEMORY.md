@@ -45562,3 +45562,157 @@ No feature code written.
   - `scheduling/whatif.py:2033` `dc.HORIZON_WEEKS` → the input's `horizon_weeks`, and every other `dc.WITHIN_YEAR_WEEK` in `whatif.py` (405, 985, 1037, 1303, 1467, 1985–2034, 2521) → the input's `within_year_week` / `PLAN_YEAR_WEEKS`, as appropriate. Year capacity uses `PLAN_YEAR_WEEKS`; cut-offs use `within_year_week`.
 - **Invariant I63 — tail flags.** `far_finish` and `leader_overloaded` are computed only from the run's stored rows. Neither changes any placement, and the input and output of a run are identical with or without them. Engineer-level tail data is never served to a role or hub that cannot already see that engineer's utilisation.
 - **Task split:** T02 adds the `far_finish` / `leader_tail_week` pure helpers and I63. T03 adds the served fields and their role gating. T04 adds the warnings in the drill-in, on the Timeline and on Capacity.
+
+## [2026-11-19] P54-T01 — ADR 0064: band rank editable from Project Registration — orchestrator
+
+- The owner asked for the rank inside a priority band to be changeable in Project Registration, like on the Priority board, so that the order inside P1/P2 follows the rank.
+- Decisions:
+  - Serve read-only `band_rank` and `band_size`. The rank still changes only through the ADR 0050 endpoints.
+  - The register gets a Rank column with the board's input, preview and recalc. The edit form gets "Rank in P1: n of m".
+- No scheduler, migration or data change. The owner said "project registration"; I read that as both the Projects register and the registration form.
+
+## [2026-11-19] P55-T01 — ADR 0065: actual start week optional at registration — orchestrator
+
+- The client flagged that "Actual start week" was mandatory on Register a project. The cause was the old leave-Draft hard-gate list, which ADR 0034 applied at create. The scheduler starts at max(current week, actual start), so the field means nothing for a new project.
+- The owner approved making it optional. It stays required for In Progress, Blocked and Done. No data change.
+
+## [2026-11-19] P54-T02 — read-only `band_rank` / `band_size` on the project read, register rows and write responses — backend-builder: DONE
+
+- **Shape (ADR 0064 R1):** `ProjectRead` (so `ProjectListItem` and `WorkspaceProject`) gains `band_rank: int | None` and `band_size: int | None`, both read-only, defaulting to null.
+  - `band_rank` is the stored full-band position (dense 1..n, all hubs), the same value as the Priority board card's.
+  - `band_size` is the number of ranked projects in that priority band over the FULL band (all hubs), so it is the `n` that `band_rank` and the `to_rank` body (API_CONTRACT_P36 §6) use. It is null exactly when `band_rank` is null.
+  - Served on `GET /projects`, `GET /projects/{id}`, `POST /projects`, `PATCH /projects/{id}`, `POST /projects/{id}/submit`, `POST /projects/{id}/freeze`, the Workspace `project`, and the Project register export, which gains two columns.
+- **Decision (flag for security-auditor):** `band_size` is NOT hub-scoped. A scoped count would contradict the full-band rank (the W36-1 failure mode: "3 of 2"). It discloses only the size of the band across all hubs, never a project. The served `band_rank` already gave a lower bound, and `to_rank` probing already bounded it (MEMORY 2026-11-17). The rows themselves stay hub-scoped.
+- **Implementation:** `services.band_rank.band_sizes(db)` runs one grouped `count(*) … WHERE band_rank IS NOT NULL GROUP BY priority` per request (a test asserts exactly one such statement for `GET /projects`). `with_band_size(read, sizes)` fills the field. `project_read_for(project, principal, sizes)` now takes `sizes`, and both callers (PATCH, gantt freeze) pass `await band_sizes(db)`. `list_projects` returns `ProjectListItem`s, and `services.export_builder._fetch_all_projects` consumes them as they are.
+- **Writes:** create, PATCH and register edits already reject `band_rank` and `band_size` with 422 (`extra="forbid"`). Tests confirm this and that nothing is written. The P47 `base` dict is inert for them, because it is only checked for fields that are also in the request.
+- **Contract:** `frontend/src/surfaces/registration/api/types.ts` `ProjectRead` gains the two `number | null` fields, which the contract test required (`WorkspaceProject` extends it). There is no other frontend change.
+- **Tests:** `backend/tests/test_p54_band_rank_served.py` has 12 tests: board parity (rank and size against the column count), nulls for On Hold / no priority, Workspace, hub scope (scoped rows, full-band size), the one grouped count, write responses, and 422 on create, PATCH and register edits.
+- **Shared tree:** I edited only my own lines in files that carry other sessions' uncommitted P53 work: `api/routers/projects.py`, `schemas/project.py`, `services/workspace.py`, `api/routers/gantt.py`. The working tree cannot `alembic upgrade head` right now (P53's untracked `p53a_week_line.py` fails on a constraint drop), so I ran pytest in a scratch export of HEAD plus only my hunks, on throwaway testcontainers DBs. The local `rpd` DB was not touched. There is no migration and no data change.
+
+## [2026-11-19] P55-T02 — `actual_start_week` leaves the hard-gate fields (ADR 0065) — backend-builder: DONE
+
+- `services/project_hard_gates.HARD_GATE_FIELDS` no longer contains `("actual_start_week", "actual start date")`. `POST /projects`, `GET /projects/{id}/hard-gate-status` and `POST /projects/{id}/submit` follow automatically (the router derives `_HARD_GATE_NAMES` from the tuple). The remaining fields, in order: leader, category, type, TCOGS, selling price, gross margin, priority.
+- The started rule is unchanged: a stage set to In Progress, Blocked or Done without its `actual_start_week` is still 422 `STAGE_INCONSISTENT` (Workspace stage PATCH, DOMAIN_RULES per-stage progress fields). Project-level `actual_start_week` stays optional in the schema, as before.
+- Tests:
+  - `backend/tests/test_p55_start_week_optional.py`: the gate list; create without the field (absent or null) gives 201 In Queue, ranked, in the schedule input, with greedy starting it at the current week; hard-gate-status and legacy submit no longer require it; In Progress without it is still 422.
+  - `test_p23_registration.py`: two assertions of the old behaviour updated.
+- The frontend mirror `required-fields-hint.ts` is P55-T03's job. No migration, no data change.
+
+## [2026-11-19] P55-T03 — Actual start week optional on the registration form (ADR 0065) — frontend-builder
+
+- `frontend/src/surfaces/registration/components/required-fields-hint.ts`: `actual_start_week` is removed from `REQUIRED_FIELD_LABELS` / `REQUIRED_FIELD_MESSAGES`, mirroring backend `HARD_GATE_FIELDS`. There are two new helpers:
+  - `startWeekRequiredFor(status)`: true only for In Progress, Blocked or Done.
+  - `startWeekErrorFromApi(err)`: returns the server's 422 message for `actual_start_week`, whether it comes as a FastAPI list, a `field_errors` map or list, or `errors[{field,message}]`.
+- `project-form.tsx`:
+  - The start week has no required mark. The placeholder is "Unset — scheduled by the scheduler" (`START_WEEK_PLACEHOLDER`).
+  - A typed week later than the served `current_week` (`useCurrentWeek`) shows the hint "Won't start before W{n}" (`formatPlanWeek`). A week at or before it shows nothing.
+  - The required mark shows only when the new optional prop `progressStatus` is In Progress, Blocked or Done.
+  - The server's start-week 422 lands on the field and stays while the field holds the rejected value. Clearing the field sends `null`, which the existing `parseOptionalNumber ?? null` already did.
+- **Note:** In Progress, Blocked and Done are stage statuses (DOMAIN_RULES per-stage fields). The project form has no stage status and no current caller passes `progressStatus`, so in practice the mark never shows on this form. The started-status rule is enforced per stage (Workspace `stage-validation.ts`, backend `STAGE_INCONSISTENT`).
+- Tests:
+  - `project-form.test.tsx`: the create-mode list no longer expects "Actual start week is required.", and the gate-422 test now uses category and TCOGS.
+  - New `project-form.p55.test.tsx` (8 tests): the mirror, the started-status set, the placeholder, the future-week hint, the mark per status, clear → null, the server message on the field, and the API parser.
+- **Pre-existing, not P55:** `project-form.test.tsx` "rejects an expected-completion week outside the 52-week plan year (ADR 0024)" fails. The P53-T04 WIP in `project-form-schema.ts` removed the `max` (R53-8), so "Must be 52 or less" no longer fires. That test belongs to P53-T04 and should be updated or removed there.
+
+## [2026-11-19] P54-T03 — Band rank editable from Project Registration (ADR 0064) — frontend-builder
+
+- **Request.** The rank is sent the same way the Priority board sends it today: `host.requestRankMove(target, { to_rank }, { position, fromPosition, onSettled })` through the page's shared priority-move host. The preview side panel, Confirm, recalc, P47 conflicts and the P49 reload hold all live in that shared flow. No client-side anchor is computed and no `GET /priority-board` is fetched, because the board stopped converting the typed position to an anchor on 2026-11-17 (the server resolves `to_rank`; past the end it returns 422 `BAD_RANK`). ADR 0064 R2's "typed position → relative anchor" wording describes the older board behaviour; the board's current helper is `to_rank`. Nothing is forked: `BandRankInput` is imported from `surfaces/priority-board/components/band-rank-controls.tsx`.
+- **New modules:**
+  - `registration/components/band-rank-request.ts`: `useRequestBandRank`, with the board's `rankTo` guards, and `RANK_WHEN_SAVED`.
+  - `registration/components/band-rank-field.tsx`:
+    - `EditableBandRank`: `BandRankInput`, pending until the flow settles, and read-only text without the right or a host.
+    - `BandRankField`: the form's line.
+  - `projects/lib/band-rank.ts`: `formatBandRank` ("P1 · 3"), `compareBandRank`, `sortByBandRank` and `nextRankSort`. These are display ordering of served fields only. Unranked rows always go last.
+- **Register** (`projects-table.tsx`):
+  - A new hideable `rank` column ("Rank", listed in `lib/columns.ts`). The header is a sort button that cycles asc → desc → off, with `aria-sort`, sorting by priority then served `band_rank`. Off keeps the server's sort.
+  - A cell shows "—" when unranked. It is editable when `canEdit`, a move host exists, and `edit.isWritable(row)`; otherwise it is read-only text `P1 · 3`. The host comes from the `PriorityMoveContext.Provider` that ProjectsPage already wraps around the table.
+- **Form** (`project-form.tsx`):
+  - Below the Priority select, `BandRankField` shows "Rank in P1: [#3] of 42" in edit mode with the saved band unchanged.
+  - A new project, or one whose band was changed in the unsaved form, shows "Ranked last in its band when saved" with a disabled input. Nothing shows without a band, and an unranked project shows "—".
+  - The right is `usePermission('project_registration').write`, the same as the board. The host is the new optional prop `rankMoveHost`, passed by the Projects drawer as `moveApi`, falling back to `usePriorityMoveHost()` (the Workspace).
+- **Types:**
+  - `ProjectRead.band_rank` / `band_size` were already present as required fields in the working tree. I added `band_rank: null, band_size: null` to the existing fixtures so `tsc -b` passes: `project-workspace/test-fixtures.ts`, `ProjectsPage.test.tsx`, `ProjectsPage.register-popup.test.tsx`, `hard-gate-panel.test.tsx`, and `project-form{,.p29,.p30}.test.tsx`.
+  - `ProjectFilterRow` (the `/dashboard/projects` rows the register lists) gains **optional** `band_rank?` / `band_size?`.
+- **Backend dependency:** at the time of writing, P54-T02 serves the fields on `GET /projects` and `GET /projects/{id}` (`ProjectRead` / `ProjectListItem`), but not on `/dashboard/projects` (`schemas/dashboard.py::ProjectFilterRow`), which is what the register lists. Until it does, the Rank column shows "—" for every row. The gate should confirm that.
+- **Tests:**
+  - `projects/components/projects-table.p54-rank.test.tsx` (5): helpers, render and "—", sorting, typed rank → `requestRankMove(target, {to_rank:1}, {position:1, fromPosition:3})`, and read-only without the right or the host.
+  - `registration/components/project-form.p54.test.tsx` (5): edit display plus request, create disabled, priority changed → disabled, read-only role, and unranked "—".
+- **Verification:**
+  - `tsc -b`: clean.
+  - eslint on the changed files: 0 errors. The only warning is the existing `useVirtualizer` compiler warning.
+  - `vitest --maxWorkers=2` over projects, priority-board, registration and shared priority-move: 371/372. The 1 failure is the P53-T04 schema test noted in the P55-T03 entry.
+
+## [2026-11-19] P54-T02 addendum — `band_rank` / `band_size` on the Projects register rows (`GET /dashboard/projects`) — backend-builder: DONE
+
+- The register reads `GET /dashboard/projects`, not `GET /projects`. `schemas.dashboard.ProjectFilterRow` gains `band_rank: int | None` and `band_size: int | None`, required in the schema and nullable. The values match `ProjectRead`: the full-band rank, and the full-band size (all hubs), null exactly when `band_rank` is null. They are filled in `api/routers/dashboard.analytics_projects` from one `services.band_rank.band_sizes(db)` call per request.
+  - `band_rank` is not `priority_rank`, which is the score-order rank inside the filtered set and is unchanged.
+  - The register export (`ProjectFilterRow` rows) gains both columns.
+- Tests (in `backend/tests/test_p54_band_rank_served.py`, now 15): the register rows match the board's rank and size and its order when sorted by priority then rank; unranked rows are null; a hub-scoped caller sees only in-scope rows but gets the full-band size; a test asserts exactly one grouped count for `GET /dashboard/projects`.
+- Contract:
+  - The P54-T03 frontend session declared `band_rank?` / `band_size?` (optional) on the TS `ProjectFilterRow` at the same time I added mine. I removed my duplicate declaration and did not edit their lines.
+  - The contract test fails until the `?` is dropped, because the backend requires the fields. With the `?` dropped (checked in a scratch copy), it passes 271/271.
+  - I added `band_rank: null, band_size: null` to the TS row fixtures (`dashboard/test-fixtures.ts` `P13_ROW_DEFAULTS`, `hub-type-section.test.tsx`, `project-breakdown.test.tsx`), so the required form type-checks. `tsc -p tsconfig.app.json` is clean today.
+- Shared files where I edited only my lines (other sessions' P53 WIP): `api/routers/dashboard.py`, `schemas/dashboard.py`, `frontend/src/surfaces/dashboard/api/types.ts` (net: no change from me).
+
+## [2026-11-19] P54/P55-T04 — workflow gate — workflow-auditor
+
+**PASS** (judged only the P54/P55 hunks; the P53 WIP in the shared tree is out of scope).
+
+- **ADR 0064 R1, served rank = board.** `band_rank` is the stored full-band `projects.band_rank` (the board's value) on `GET /projects`, `GET /projects/{id}`, the write responses and `GET /dashboard/projects` (`api/routers/dashboard.py` fills it from `p.band_rank`). `band_size` comes from one `services.band_rank.band_sizes` grouped count over the full band, and is null exactly when the rank is null. The TS `ProjectFilterRow` now declares both fields as required `number | null`, so the P54-T03 "Rank shows — everywhere" dependency is closed. `test_p54_band_rank_served.py` (15) covers board parity, order and hub scope.
+- **Scheduling order.** `projects/lib/band-rank.ts::compareBandRank` sorts by band in `PROJECT_PRIORITIES` order, then by served `band_rank`, with unranked rows last. This matches greedy `_band_rank_key` (ADR 0050 keys 3–4, None last). It is display only and derives no number (I9).
+- **Same re-rank path.** The register and the form both call the shared `host.requestRankMove(target, {to_rank}, …)` with the board's own `BandRankInput`. Preview, Confirm, recalc, P47 and P49 all go through the shared host, so a re-rank gives the same run as one from the board. ADR 0064 R2 still says "relative anchor", but the board itself moved to `to_rank` on 2026-11-17. This is a wording lag in the ADR, not a divergence.
+- **ADR 0065.** Only `("actual_start_week", …)` left `HARD_GATE_FIELDS`. Nothing in `scheduling/` changed for P55. `workflow.first_step_frontier` = `max(current_week, actual_start_week)` when the value is non-null, else `current_week`, which equals DOMAIN_RULES `max(CURRENT_WEEK, actual_start_week or CURRENT_WEEK)`. A null start was already a valid scheduler input, so nothing else in the run changes. The test shows a create with no start week gives 201 In Queue, is ranked (ADR 0050 §5 last-in-band, existing code), is in the schedule input, and greedy starts it at CURRENT_WEEK. The stage rule still holds: `STAGE_INCONSISTENT` 422 test, and `workflow.py` ANCHORED_STATUSES validation.
+- **Hint.** "Won't start before W{n}" shows only when the typed week is greater than the served `current_week`. That is exactly the case where `max(CURRENT_WEEK, n) = n` acts as a floor. A value at or before the current week has no effect, so no hint is correct.
+- **Ruling on the required mark (ADR 0065 §2/§3): acceptable.** DOMAIN_RULES puts the started-requires-start rule under *Per-stage progress fields*. In Progress, Blocked and Done are stage statuses, not project statuses, so on the project form §3's third bullet has nothing to act on. The rule is enforced where the status lives: Workspace `stage-validation.ts` and backend `STAGE_INCONSISTENT`. Advisory, not blocking: the orchestrator should add a note to ADR 0065 §3 that the mark applies on the stage editor, and should either remove the unused `progressStatus` prop or leave it documented as inert.
+
+## [2026-11-19] P54/P55-T04 — security gate — security-auditor
+
+**Verdict: PASS** (0 Critical, 0 High, 0 Medium, 1 Low, 2 Info). Read-only review of the P54/P55 hunks only; the P53 WIP in the same files was not reviewed.
+
+| # | Sev | Finding |
+|---|---|---|
+| S54-1 | Info (accepted) | `band_size` is a whole-band count (all hubs), from one grouped `count(*) … GROUP BY priority` (`services/band_rank.band_sizes`). It returns counts only, never ids or names. The served full-band `band_rank` already discloses a lower bound, and `to_rank` 422 `BAD_RANK` probing already bounds it. The rows stay hub-scoped (`hub_scope_filter` on `GET /projects`, the dashboard rows, and `_get_project_or_404`). I accept the hub-scope decision. |
+| S54-2 | Info | Read-only: `band_rank` and `band_size` exist only on `ProjectRead`/`ProjectFilterRow`. `ProjectCreateRequest`, `ProjectUpdateRequest`, `RegisterEditPatch` and `RegisterEditsRequest` are all `extra="forbid"` and don't declare them, so they give 422 (covered by tests in `test_p54_band_rank_served.py`). `project_read_for` keeps financial redaction and drops `band_size` from the dumped dict before refilling it. No new write path. The rank still changes only through the unchanged `POST /projects/{id}/band-rank[/preview]` (`authorize_project_action`, hub scope re-checked, P36-R01). The frontend sends `host.requestRankMove(target, {to_rank})` only, with no direct fetch, and the input is gated by `usePermission('project_registration').write`, the same right as the board (`PriorityBoardPage` `canWrite`). Without the right, or without a host, it renders as read-only text. No `dangerouslySetInnerHTML`. |
+| S55-1 | Low | `actual_start_week` removed from `HARD_GATE_FIELDS`. No validation hole: create still takes `Field(ge=1)` and no `status`. The stage-level started rule (`STAGE_INCONSISTENT`) is unchanged. Freeze still requires a start week (`gantt.py` ~L816). Greedy's `assert sp.actual_start_week is not None` is on the started-stage path only. Residual (Low, pre-existing in kind): projects with a null project-level start week now arise routinely rather than only from imports. Any future consumer must keep handling None. |
+| Export | — | The new export columns are just `band_rank` and `band_size`. Financial exposure in the Project register export is unchanged: `_fetch_all_projects` now takes `list_projects`' own `ProjectListItem`s, the same fields as the previous `model_validate(ORM)`. The dashboard export uses `ProjectFilterRow`, which has no financial fields. |
+
+- Verified: frontend vitest `projects-table.p54-rank`, `project-form.p54` and `project-form.p55` pass (3 files, 18/18). I did not rerun backend pytest: the working tree can't migrate to head because of P53 WIP, and backend-builder ran it in a scratch export.
+- Not security (for QA): TS `ProjectFilterRow.band_rank?` / `band_size?` is still optional while the backend requires it (P54-T02 addendum: the contract test fails until the `?` is dropped).
+
+## [2026-11-19] P54/P55-T04 — qa gate — qa-inspector: PASS
+
+- **Backend.** I ran the tests on a scratch export of HEAD plus only the P54/P55 hunks, using throwaway testcontainers DBs. The local `rpd` DB and the shared tree were not touched.
+  - Before running, I checked that every added line in the builder's scratch copy is present in the working tree, and that the working tree has no further band/start-week changes in those files.
+  - The TS types in the scratch copy match the working tree, with `band_rank`/`band_size` required on `ProjectFilterRow`.
+  - Suites: `test_p54_band_rank_served`, `test_p55_start_week_optional`, `test_p23_registration`, `test_p36_band_rank_api`, `test_p36a_band_rank_migration`, `test_p42_band_backend`, `test_p11_priority_move`, `test_p13_capacity_priority_board`, `test_p14_priority_preview`, `test_p17_priority_delivery` and `test_openapi_frontend_contract`. Result: **445 passed, 0 failed**.
+  - The global `fail_under` message (60% total) is an artifact of running a subset and is not a gate figure.
+  - Coverage on the touched modules in this run:
+    - `services/band_rank.py` 96%
+    - `services/project_hard_gates.py` 100%
+    - `schemas/project.py` 97%
+    - `schemas/dashboard.py` 100%
+    - `api/routers/projects.py` 74%
+    - `api/routers/dashboard.py` 74%
+    - `services/workspace.py` 63% and `services/export_builder.py` 39%. These two are low only because of the subset; the P54 lines in them are exercised by the Workspace and export tests in `test_p54_band_rank_served`.
+  - No `backend/scheduling/` change, so the 85% bar does not apply.
+- **Frontend** (working tree, including frontend-builder's required `band_rank`/`band_size` on dashboard `ProjectFilterRow`):
+  - `npx tsc -b`: clean.
+  - eslint on the 12 P54/P55 files: 0 errors and 1 warning. The warning is the existing `useVirtualizer` react-compiler warning in `projects-table.tsx`.
+  - `vitest --maxWorkers=2` on `src/surfaces/registration`, `projects` and `priority-board`: **305/305, 26 files**. The expected "52 or less" failure did not occur: `project-form.test.tsx:623` now asserts that the message is absent, so P53-T04 has updated it.
+- **ADR coverage review:**
+  - ADR 0064 R2:
+    - Rank column renders "P1 · 3" and "—": `projects-table.p54-rank.test.tsx`.
+    - Sorting asc/desc/off by priority then rank: same file.
+    - Typed rank → `requestRankMove({to_rank})`, which opens the shared preview: same file.
+    - Read-only without the right or without a host: same file.
+  - ADR 0064 R3 form states, in `project-form.p54.test.tsx`: edit "Rank in P1: 3 of 42" plus the request; create shows "ranked last when saved" with the input disabled; a changed band is disabled; a read-only role; unranked shows "—".
+  - ADR 0064 R1/R4, in `test_p54_band_rank_served` (15 tests): board parity, nulls, hub scope with the full-band size, one grouped count, write responses, and 422 on create, PATCH and register edits.
+  - ADR 0065, in `project-form.p55.test.tsx` (8 tests): the mirror; the placeholder; the future-week hint, including the at/before case; the mark only for started statuses; clear sends null; the server 422 lands on the field; the parser.
+  - ADR 0065 backend, in `test_p55_start_week_optional`: create without the field gives 201 In Queue, ranked and scheduled from the current week; hard-gate-status and submit no longer require it; In Progress without it is still 422.
+  - Every item in the brief is covered. Gaps: none.
+- **Axe:** not run separately. No new surface was added; the Rank column and form line sit on existing surfaces, and those suites passed.
+
+## [2026-11-19] P54/P55-T04 — gate closed: security PASS, workflow PASS, qa PASS — orchestrator
+
+- All three PASSed on the first run. Security: one Low (null project start weeks become common, so future readers must handle null) and Info (band_size is a whole-band count, accepted). Workflow: the ADR 0064 R2 and 0065 §3 wording was amended in a gate amendment. QA: backend 445/445 on a scratch copy of HEAD plus the P54/P55 hunks; frontend 305/305.
+- Commit: built in a clean worktree from `origin/main` plus the builders' P54/P55-only patches (tsc clean, 371/371 targeted). The shared tree's uncommitted P53 work is excluded.

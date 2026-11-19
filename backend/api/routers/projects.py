@@ -119,9 +119,11 @@ from schemas.project import (
 from services.active_run import get_active_run
 from services.audit_helpers import project_audit_state
 from services.band_rank import (
+    band_sizes,
     lock_band_ranks,
     plan_batch_band_ranks,
     reconcile_band_rank,
+    with_band_size,
 )
 from services.categories import CategoryCatalog, check_category_code, load_catalog
 from services.category_type_filter import any_of, category_type_filter
@@ -336,20 +338,25 @@ async def _authorize_registration_write(
     )
 
 
-def project_read_for(project: Project, principal: Principal) -> ProjectRead:
+def project_read_for(
+    project: Project, principal: Principal, sizes: Mapping[ProjectPriority, int]
+) -> ProjectRead:
     """`ProjectRead` of a written project. P47-R01 (security M-2): the four
     financial fields are decrypted only for a caller with Project
     Registration READ, as on the Workspace; anyone else (e.g. an Engineer
-    with an Admin project grant) gets `null` and the values are never read."""
+    with an Admin project grant) gets `null` and the values are never read.
+    P54 (ADR 0064 R1): `band_size` from `sizes` (`services.band_rank.band_sizes`)."""
 
     if principal_can(principal, Surface.PROJECT_REGISTRATION, Action.READ):
-        return ProjectRead.model_validate(project)
+        return with_band_size(ProjectRead.model_validate(project), sizes)
     data: dict[str, Any] = {
         name: getattr(project, name)
         for name in ProjectRead.model_fields
-        if name not in FINANCIAL_FIELD_NAMES
+        if name not in FINANCIAL_FIELD_NAMES and name != "band_size"
     }
-    return ProjectRead.model_validate({**data, **dict.fromkeys(FINANCIAL_FIELD_NAMES)})
+    return with_band_size(
+        ProjectRead.model_validate({**data, **dict.fromkeys(FINANCIAL_FIELD_NAMES)}), sizes
+    )
 
 
 def refuse_hidden_financials(
@@ -553,7 +560,7 @@ async def list_projects(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
-) -> list[Project]:
+) -> list[ProjectListItem]:
     """List/filter projects. Requires READ on the Project Registration
     surface (401/403 enforced by `_read`, P3-T02) and is hub-scoped
     (P3-T03): a Hub Planner only ever sees their own hub(s)' projects here,
@@ -599,7 +606,13 @@ async def list_projects(
     stmt = stmt.order_by(Project.name).limit(limit).offset(offset)
 
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    # P54 (ADR 0064 R1): read-only `band_rank` / `band_size`; one grouped
+    # count for the whole page (full band, all hubs), never per row.
+    sizes = await band_sizes(db)
+    return [
+        with_band_size(ProjectListItem.model_validate(p), sizes)
+        for p in result.scalars().all()
+    ]
 
 
 @router.get("/{project_id}", response_model=ProjectRead)
@@ -607,8 +620,10 @@ async def get_project(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
-) -> Project:
-    return await _get_project_or_404(db, project_id, current_user)
+) -> ProjectRead:
+    project = await _get_project_or_404(db, project_id, current_user)
+    # P54 (ADR 0064 R1): the registration form's "Rank in P1: n of m".
+    return with_band_size(ProjectRead.model_validate(project), await band_sizes(db))
 
 
 @router.get("/{project_id}/hard-gate-status", response_model=HardGateStatus)
@@ -741,7 +756,8 @@ async def create_project(
     )
     await db.commit()
     await db.refresh(project)
-    return project
+    # P54 (ADR 0064 R1): read-only `band_rank` / `band_size`.
+    return with_band_size(ProjectRead.model_validate(project), await band_sizes(db))
 
 
 @router.patch("/{project_id}", response_model=ProjectRead)
@@ -809,7 +825,7 @@ async def update_project(
     else:
         await db.commit()
     await db.refresh(project)
-    return project_read_for(project, current_user)
+    return project_read_for(project, current_user, await band_sizes(db))
 
 
 def ensure_may_cancel(
@@ -1723,7 +1739,7 @@ async def submit_project(
     body: ProjectSubmitRequest = ProjectSubmitRequest(),
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
-) -> Project:
+) -> ProjectRead:
     """Legacy only (ADR 0034): nothing creates Draft any more, but a historic
     Draft row still leaves it here, per `docs/PROJECT_AND_STACK.md` §2's
     hard gate. 422 `HARD_GATE_FIELDS_MISSING` (the same shape as
@@ -1793,4 +1809,5 @@ async def submit_project(
     )
     await db.commit()
     await db.refresh(project)
-    return project
+    # P54 (ADR 0064 R1): read-only `band_rank` / `band_size`.
+    return with_band_size(ProjectRead.model_validate(project), await band_sizes(db))

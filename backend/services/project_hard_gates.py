@@ -10,6 +10,8 @@ financial fields (TCOGS, gross margin, selling price ...)."
 (`hard_gate_error`). The same check and the same error shape still guard
 `POST /projects/{id}/submit`, which only legacy `Draft` rows can use.
 
+`actual_start_week` left the list in ADR 0065 (optional at registration).
+
 `priority` is part of the list since ADR 0034: a project is schedulable the
 moment it is created, and the scheduler rejects a schedulable project with
 no priority as a configuration error for the whole run
@@ -28,11 +30,15 @@ from models.project import Project
 
 #: (field_name, human-readable label) pairs. Order matches the
 #: PROJECT_AND_STACK.md §2 sentence; `priority` (ADR 0034) last.
+#: ADR 0065 (P55): `actual_start_week` is no longer a gate field (create,
+#: hard-gate-status, submit); the scheduler starts an unstarted project at
+#: `max(CURRENT_WEEK, actual_start_week or CURRENT_WEEK)`. A started stage
+#: (In Progress / Blocked / Done) still needs its own `actual_start_week`
+#: (DOMAIN_RULES per-stage progress fields, `STAGE_INCONSISTENT`).
 HARD_GATE_FIELDS: tuple[tuple[str, str], ...] = (
     ("leader_engineer_id", "leader"),
     ("category", "category"),
     ("type", "type"),
-    ("actual_start_week", "actual start date"),
     ("tcogs_eur", "TCOGS"),
     ("selling_price_eur", "selling price"),
     ("gross_margin_pct", "gross margin"),

@@ -19,7 +19,8 @@ export const REQUIRED_FIELD_LABELS = {
   leader_engineer_id: 'leader',
   category: 'category',
   type: 'type',
-  actual_start_week: 'actual start date',
+  // ADR 0065 (P55): `actual_start_week` is no longer a gate field — the
+  // scheduler starts an unstarted project at max(current week, start week).
   tcogs_eur: 'TCOGS',
   selling_price_eur: 'selling price',
   gross_margin_pct: 'gross margin',
@@ -36,7 +37,6 @@ export const REQUIRED_FIELD_MESSAGES: Record<RequiredFieldKey, string> = {
   leader_engineer_id: 'Leader is required.',
   category: 'Category is required.',
   type: 'Type is required.',
-  actual_start_week: 'Actual start week is required.',
   tcogs_eur: 'TCOGS is required.',
   selling_price_eur: 'Selling price is required.',
   gross_margin_pct: 'Gross margin is required.',
@@ -58,7 +58,7 @@ export function missingRequiredFields(values: Readonly<Partial<Record<RequiredFi
   return errors;
 }
 
-/** A field name or the server's human label ("TCOGS", "actual start date") → key. */
+/** A field name or the server's human label ("TCOGS", "gross margin") → key. */
 function toRequiredKey(name: string): RequiredFieldKey | null {
   const n = name.trim();
   if ((REQUIRED_FIELD_KEYS as string[]).includes(n)) return n as RequiredFieldKey;
@@ -128,4 +128,57 @@ export function requiredFieldErrorsFromApi(err: unknown): RequiredFieldErrors | 
     }
   }
   return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * ADR 0065 §2–3: the actual start week stays required only for a started
+ * status (the DOMAIN_RULES per-stage rule: In Progress, Blocked — shown "On
+ * Hold" — or Done). The server is the authority; this only drives the mark.
+ */
+export const START_WEEK_REQUIRED_STATUSES: readonly string[] = ['In Progress', 'Blocked', 'Done'];
+
+export function startWeekRequiredFor(status: string | null | undefined): boolean {
+  return status !== null && status !== undefined && START_WEEK_REQUIRED_STATUSES.includes(status);
+}
+
+/**
+ * ADR 0065 §3: the server's own message for `actual_start_week` from a 422
+ * (FastAPI `[{loc, msg}]`, `detail.field_errors` map or list, or
+ * `detail.errors: [{field, message}]`), or null. Never echoes a value.
+ */
+export function startWeekErrorFromApi(err: unknown): string | null {
+  if (!(err instanceof ApiError) || err.status !== 422 || !err.detail) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(err.detail);
+  } catch {
+    return null;
+  }
+  const FIELD = 'actual_start_week';
+  const pick = (items: unknown[], nameOf: (o: Record<string, unknown>) => unknown, msgOf: (o: Record<string, unknown>) => unknown): string | null => {
+    for (const item of items) {
+      if (item && typeof item === 'object') {
+        const o = item as Record<string, unknown>;
+        if (nameOf(o) === FIELD) {
+          const msg = msgOf(o);
+          return typeof msg === 'string' && msg.trim() !== '' ? msg : 'Actual start week is required for a started status.';
+        }
+      }
+    }
+    return null;
+  };
+  if (Array.isArray(parsed)) {
+    return pick(parsed, (o) => (Array.isArray(o.loc) ? o.loc[o.loc.length - 1] : undefined), (o) => o.msg);
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const body = parsed as { field_errors?: unknown; errors?: unknown };
+  if (Array.isArray(body.field_errors)) {
+    const hit = pick(body.field_errors, (o) => o.field, (o) => o.message);
+    if (hit) return hit;
+  } else if (body.field_errors && typeof body.field_errors === 'object') {
+    const msg = (body.field_errors as Record<string, unknown>)[FIELD];
+    if (typeof msg === 'string' && msg.trim() !== '') return msg;
+  }
+  if (Array.isArray(body.errors)) return pick(body.errors, (o) => o.field, (o) => o.message);
+  return null;
 }

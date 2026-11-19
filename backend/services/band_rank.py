@@ -52,6 +52,7 @@ from models.category import Category
 from models.enums import ProjectPriority, ProjectStatus
 from models.project import Project
 from scheduling import band_rank as br
+from schemas.project import ProjectRead
 
 #: Fixed advisory-lock key for "write band ranks" ("RPDBR" in ASCII hex, the
 #: `run_dispatch.DISPATCH_LOCK_KEY` convention; distinct from every other key).
@@ -126,6 +127,37 @@ def band_of_project(status: ProjectStatus | None, priority: ProjectPriority | No
     if status is None:
         return None
     return br.band_of(status.value, _value(priority))
+
+
+async def band_sizes(db: AsyncSession) -> dict[ProjectPriority, int]:
+    """ADR 0064 R1: the number of ranked projects per priority band, over the
+    FULL band (every hub), so it is the `n` of the full-band `band_rank`
+    numbering (dense 1..n, the same `n` the `to_rank` body is checked
+    against). One grouped count per request, never per row. Deliberately not
+    hub-scoped: a scoped size would contradict the full-band rank (W36-1)."""
+
+    with db.no_autoflush:
+        rows = (
+            await db.execute(
+                select(Project.priority, func.count())
+                .where(Project.band_rank.is_not(None))
+                .group_by(Project.priority)
+            )
+        ).all()
+    return {priority: int(count) for priority, count in rows if priority is not None}
+
+
+def with_band_size[R: ProjectRead](read: R, sizes: Mapping[ProjectPriority, int]) -> R:
+    """`read` with its read-only `band_size` filled from `band_sizes` (ADR
+    0064 R1): the size of the project's band, or null when `band_rank` is
+    null (not a band member)."""
+
+    size = (
+        sizes.get(read.priority, 0)
+        if read.band_rank is not None and read.priority is not None
+        else None
+    )
+    return read.model_copy(update={"band_size": size})
 
 
 async def band_order(db: AsyncSession, band: str) -> list[str]:

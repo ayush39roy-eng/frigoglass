@@ -87,8 +87,8 @@ from services.xlsx_writer import (
 from services.xlsx_writer import neutralise_formula as neutralise_formula
 
 if TYPE_CHECKING:
-    from models.project import Project
     from schemas.gantt import GanttProjectRow
+    from schemas.project import ProjectListItem
 
 #: `Sheet name -> (column headers, row dicts)`. A CSV export always picks one
 #: sheet (`api/routers/exports.py` chooses which); an XLSX export writes
@@ -965,17 +965,18 @@ async def _fetch_all_projects(
     priority: list[ProjectPriority],
     type_: list[ProjectType],
     q: str | None = None,
-) -> list[Project]:
+) -> list[ProjectListItem]:
     """Same "never silently truncate at one page" pagination loop as
     `_fetch_all_gantt_rows`, for `GET /projects`'s own `limit`/`offset` (max
-    500).
+    500). P54: the rows are the endpoint's `ProjectListItem`s (with the
+    read-only `band_rank` / `band_size` filled).
     """
 
     from api.routers.projects import list_projects
 
     page_size = 500
     offset = 0
-    all_projects: list[Project] = []
+    all_projects: list[ProjectListItem] = []
     while True:
         page = await list_projects(
             hub_id=hub_id,
@@ -1019,9 +1020,7 @@ async def build_project_registration_sheets(
         type_=_types(type_),
         q=q,
     )
-    headers, rows = rows_from_models(
-        [ProjectListItem.model_validate(p) for p in projects], ProjectListItem
-    )
+    headers, rows = rows_from_models(projects, ProjectListItem)
     # ADR 0028: the leader name is exported (text cells pass `_neutralise_formula`).
     leader_ids = {p.leader_engineer_id for p in projects if p.leader_engineer_id}
     names: dict[uuid.UUID, str] = {}

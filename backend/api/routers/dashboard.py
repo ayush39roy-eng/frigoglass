@@ -111,6 +111,7 @@ from schemas.dashboard import (
     StepFacet,
 )
 from services.active_run import get_active_run
+from services.band_rank import band_sizes
 from services.capacity_supply import round2
 from services.categories import load_catalog
 from services.category_type_filter import any_of, category_type_filter
@@ -975,6 +976,8 @@ async def analytics_projects(
     if sort == "priority":
         projects.sort(key=lambda p: (rank.get(p.id, len(rank) + 1), p.name, str(p.id)))
 
+    # P54 (ADR 0064 R1): one grouped count (full band, all hubs) per request.
+    sizes = await band_sizes(db)
     rows: list[ProjectFilterRow] = []
     for p in projects:
         card = cards[p.id]
@@ -1021,6 +1024,12 @@ async def analytics_projects(
                 lab_weeks_calculated=card.lab_weeks_calculated,
                 expected_status=expected,
                 status_mismatch=status_mismatch(p.status, expected),
+                band_rank=p.band_rank,
+                band_size=(
+                    sizes.get(p.priority, 0)
+                    if p.band_rank is not None and p.priority is not None
+                    else None
+                ),
             )
         )
     return ProjectFilterResult(total_count=len(rows), rows=rows)

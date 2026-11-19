@@ -38,7 +38,7 @@ function oemProject(overrides: Partial<ProjectRead> = {}): ProjectRead {
     tcogs_eur: null, selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
     target_end_week: null, certification_testing_required: true, estimated_design_weeks: null, estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false,
     plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [],
-    schedule_stale: false, workflow_id: 'OEM', created_at: '', updated_at: '',
+    schedule_stale: false, workflow_id: 'OEM', created_at: '', updated_at: '', band_rank: null, band_size: null,
     ...overrides,
   };
 }

@@ -235,6 +235,17 @@ class ProjectRead(BaseModel):
     workflow_id: Literal["PDD", "OEM"]
     created_at: datetime
     updated_at: datetime
+    # --- P54 (ADR 0064 R1) -------------------------------------------------
+    #: Read-only. The position in the FULL priority band (dense 1..n, all
+    #: hubs), the same value as the Priority board card's `band_rank`; null
+    #: when the project is not a band member. Changed only through
+    #: `POST /projects/{id}/band-rank[/preview]` (ADR 0050); never accepted on
+    #: create / PATCH / register edits (`extra="forbid"`, 422).
+    band_rank: int | None = None
+    #: Read-only. The number of ranked projects in that band (the `n` of
+    #: `band_rank`, all hubs); null exactly when `band_rank` is null. Filled
+    #: by `services.band_rank.with_band_size` (one grouped count per request).
+    band_size: int | None = None
 
 
 class ProjectListItem(ProjectRead):

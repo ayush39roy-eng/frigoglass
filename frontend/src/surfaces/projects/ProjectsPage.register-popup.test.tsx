@@ -140,7 +140,7 @@ const PROJECT: ProjectRead = {
   schedule_stale: false,
   workflow_id: 'PDD',
   created_at: '2026-01-01T00:00:00Z',
-  updated_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null,
 };
 
 const STEPS: RegisterStepsResponse = {

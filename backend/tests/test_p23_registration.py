@@ -146,7 +146,8 @@ async def test_create_with_only_name_and_hub_lists_every_gate_field(db_session):
     assert list(detail["field_errors"]) == GATE_NAMES
     assert detail["missing_fields"] == [label for _n, label in HARD_GATE_FIELDS]
     assert detail["field_errors"]["tcogs_eur"] == "TCOGS is required."
-    assert detail["field_errors"]["actual_start_week"] == "Actual start date is required."
+    # ADR 0065 (P55-T02): the start week is optional, the scheduler decides it.
+    assert "actual_start_week" not in detail["field_errors"]
     assert detail["message"] == "Project cannot be registered: required fields missing."
     assert "Secret" not in resp.text  # no submitted value echoed
     assert await _count(db_session, Project) == 0
@@ -300,7 +301,6 @@ async def test_legacy_draft_submit_422_has_the_create_shape(db_session):
     assert names == [
         "leader_engineer_id",
         "category",
-        "actual_start_week",
         "tcogs_eur",
         "selling_price_eur",
         "gross_margin_pct",

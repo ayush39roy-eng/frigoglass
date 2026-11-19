@@ -2764,3 +2764,21 @@ Presentation over existing capabilities (ADR 0007 kinds, ADR 0045–0048 templat
 | P53-T04 | Frontend: constants removed, generic week labels/date conversion, Timeline axis + year row, delivery-by-year panel, copy, N setting, import pickers | frontend-builder | T03 contract | in progress |
 | P53-T05 | Audit on a disposable DB copy | workflow-auditor | T02–T04 | todo |
 | P53-T06 | Gate | — | T05 | todo |
+
+## P54 — Change a project's band rank from Project Registration (register column + form), like the Priority board (ADR 0064; owner 2026-11-19)
+
+| ID | Task | Owner | Depends | Verification | Status |
+|---|---|---|---|---|---|
+| P54-T01 | ADR 0064, plan | orchestrator | — | docs | DONE (MEMORY 2026-11-19 P54-T01) |
+| P54-T02 | Backend: serve read-only `band_rank` + `band_size` on project read and register list rows; confirm PATCH/register edits/create reject `band_rank`; contract test | backend-builder | T01 | pytest (targeted), ruff/mypy; MEMORY | DONE (MEMORY 2026-11-19 P54-T02) |
+| P54-T03 | Frontend: register "Rank" column (sortable, editable via `BandRankInput` → shared priority-move preview → confirm + recalc); registration form "Rank in P1: n of m" in edit mode; reuse board helpers; tests | frontend-builder | T02 | tsc/eslint/vitest targeted; MEMORY | DONE (MEMORY 2026-11-19 P54-T03) |
+| P54-T04 | Gate: qa, workflow, security | three gatekeepers | T02, T03 | three PASSes | DONE (MEMORY 2026-11-19 P54/P55-T04 gate closed) |
+
+## P55 — Actual start week optional at registration; the scheduler decides (ADR 0065; owner 2026-11-19)
+
+| ID | Task | Owner | Depends | Verification | Status |
+|---|---|---|---|---|---|
+| P55-T01 | ADR 0065, plan | orchestrator | — | docs | DONE (MEMORY 2026-11-19 P55-T01) |
+| P55-T02 | Backend: drop `actual_start_week` from `HARD_GATE_FIELDS` (create, hard-gate-status, submit); keep the started-status rule; tests (create without it → 201 In Queue; In Progress without it → 422 as today) | backend-builder | T01 | targeted pytest, ruff/mypy; MEMORY | DONE (MEMORY 2026-11-19 P55-T02) |
+| P55-T03 | Frontend: mirror in `required-fields-hint.ts`; form placeholder "Unset — scheduled by the scheduler", future-week hint, required only for started statuses; tests | frontend-builder | T02 | targeted vitest, tsc/eslint; MEMORY | DONE (MEMORY 2026-11-19 P55-T03) |
+| P55-T04 | Gate (with P54-T04): qa, workflow, security | three gatekeepers | T02, T03 | three PASSes | DONE (MEMORY 2026-11-19 P54/P55-T04 gate closed) |

@@ -24,6 +24,7 @@ import {
 import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
 import { PRIORITY_BAND_TITLE, priorityBandName } from '@/components/shared/priority-band-meta';
 import { PriorityMoveNotAppliedError } from '@/components/shared/priority-move/form-priority-move';
+import { usePriorityMoveHost, type PriorityMoveApi } from '@/components/shared/priority-move/priority-move-context';
 import { ProvisionalLeaderBadge } from '@/components/shared/capacity-roster-markers';
 import { ScoringTagsField } from '@/components/shared/scoring-tags';
 import { canonicalScoringTags } from '@/lib/scoring-tags';
@@ -33,8 +34,10 @@ import { useCategoriesForHub, type Hub } from '@/lib/api/reference';
 import { useCategoryCatalogSnapshot } from '@/lib/category-catalog';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
-import { formatDecimal } from '@/lib/format';
+import { formatDecimal, formatPlanWeek } from '@/lib/format';
+import { useCurrentWeek } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
+import { usePermission } from '@/stores/session';
 import {
   PROJECT_PRIORITIES,
   PROJECT_TYPES,
@@ -47,11 +50,14 @@ import {
 
 import { useEngineerOptions } from '../hooks/use-registration';
 import type { ProjectCreateRequest, ProjectRead } from '../api/types';
+import { BandRankField } from './band-rank-field';
 import { FormSubmitError } from './form-submit-error';
 import {
   REQUIRED_FIELD_LABELS,
   missingRequiredFields,
   requiredFieldErrorsFromApi,
+  startWeekErrorFromApi,
+  startWeekRequiredFor,
   type RequiredFieldErrors,
   type RequiredFieldKey,
 } from './required-fields-hint';
@@ -93,7 +99,6 @@ const REQUIRED_FIELD_IDS: Record<RequiredFieldKey, string> = {
   leader_engineer_id: 'reg-leader',
   category: 'reg-category',
   type: 'reg-type',
-  actual_start_week: 'reg-start-week',
   tcogs_eur: 'reg-tcogs',
   selling_price_eur: 'reg-selling-price',
   gross_margin_pct: 'reg-gross-margin',
@@ -149,6 +154,9 @@ function normaliseText(value: unknown): string {
   return String(value).replace(/\r\n/g, '\n');
 }
 
+/** ADR 0065 §3: the empty start week reads like Priority's "Unset". */
+export const START_WEEK_PLACEHOLDER = 'Unset — scheduled by the scheduler';
+
 function requiredMark(field: keyof typeof REQUIRED_FIELD_LABELS): React.ReactNode {
   return (
     <span className="text-danger" title={`Required to register a project (${REQUIRED_FIELD_LABELS[field]})`}>
@@ -179,6 +187,8 @@ export function ProjectForm({
   prelude,
   registerSection,
   hubIdOverride,
+  progressStatus = null,
+  rankMoveHost,
 }: {
   mode: 'create' | 'edit';
   project: ProjectRead | null;
@@ -207,8 +217,23 @@ export function ProjectForm({
   registerSection?: React.ReactNode;
   /** With `registerSection`: the hub picked there (category options follow it). */
   hubIdOverride?: string | undefined;
+  /**
+   * ADR 0065 §3: the progress status chosen for the project, when the caller
+   * has one. The actual start week gets its required mark only for In
+   * Progress, Blocked or Done; otherwise it is optional (the scheduler starts
+   * the project at max(current week, start week)).
+   */
+  progressStatus?: string | null | undefined;
+  /** P54 (ADR 0064 R3): the page's priority-move host for the rank input,
+   *  when the form is rendered outside its context (the Projects drawer). */
+  rankMoveHost?: PriorityMoveApi | null | undefined;
 }): React.JSX.Element {
   const withRegister = registerSection !== undefined;
+  const currentWeek = useCurrentWeek();
+  const startWeekRequired = startWeekRequiredFor(progressStatus);
+  const contextMoveHost = usePriorityMoveHost();
+  const moveHost = rankMoveHost ?? contextMoveHost;
+  const canMovePriority = usePermission('project_registration').write;
   const radix = variant !== 'inline';
   const sheet = variant === 'sheet';
   const Header = radix ? DialogHeader : InlineHeader;
@@ -321,7 +346,6 @@ export function ProjectForm({
     leader_engineer_id: leaderId === NONE ? '' : leaderId,
     category: category === NONE ? '' : category,
     type: type === NONE ? '' : type,
-    actual_start_week: normaliseText(watched.actual_start_week).trim(),
     tcogs_eur: normaliseText(watched.tcogs_eur).trim(),
     selling_price_eur: normaliseText(watched.selling_price_eur).trim(),
     gross_margin_pct: normaliseText(watched.gross_margin_pct).trim(),
@@ -352,6 +376,20 @@ export function ProjectForm({
     message: string;
     at: string;
   } | null>(null);
+  // ADR 0065 §3: the server's message for the start week (a started status
+  // without one), shown while the field still holds the rejected value.
+  const startWeekNow = normaliseText(watched.actual_start_week).trim();
+  const [startWeekRejected, setStartWeekRejected] = React.useState<{ message: string; at: string } | null>(null);
+  const startWeekServerError =
+    startWeekRejected !== null && startWeekRejected.at === startWeekNow ? startWeekRejected.message : undefined;
+  // ADR 0065 §3: a typed week later than the served current week only delays
+  // the start; at or before it, no hint (the scheduler starts at the current week).
+  const typedStartWeek = parseOptionalNumber(watched.actual_start_week);
+  const startWeekHint =
+    typedStartWeek !== undefined && Number.isInteger(typedStartWeek) && currentWeek !== null && typedStartWeek > currentWeek
+      ? `Won't start before ${formatPlanWeek(typedStartWeek)}`
+      : undefined;
+
   const effortError = (field: EffortField): string | undefined =>
     effortRejected?.field === field && effortRejected.at === normaliseText(watched[field]).trim()
       ? effortRejected.message
@@ -360,6 +398,7 @@ export function ProjectForm({
   const submit = handleSubmit(async (values) => {
     setSubmitError(null);
     setEffortRejected(null);
+    setStartWeekRejected(null);
     if (!effectiveHubId) {
       setSubmitError('Hub is required.');
       return;
@@ -417,6 +456,11 @@ export function ProjectForm({
         setEffortRejected({ field, message: EFFORT_SPLIT_REJECTED_COPY, at: normaliseText(values[field]).trim() });
         setSubmitError('Nothing was saved. Lower the effort figure marked below.');
         requestAnimationFrame(() => document.getElementById(EFFORT_FIELD_IDS[field])?.focus());
+      } else if (startWeekErrorFromApi(err) !== null && requiredFieldErrorsFromApi(err) === null) {
+        // ADR 0065 §3: a started status needs its start week (server's message).
+        setStartWeekRejected({ message: startWeekErrorFromApi(err) ?? '', at: normaliseText(values.actual_start_week).trim() });
+        setSubmitError('Nothing was saved. Check the field marked below.');
+        requestAnimationFrame(() => document.getElementById('reg-start-week')?.focus());
       } else if (requiredFieldErrorsFromApi(err)) {
         // P23-T02: the server's per-field 422 lands on the same fields.
         showRequiredErrors(requiredFieldErrorsFromApi(err) ?? {});
@@ -598,12 +642,29 @@ export function ProjectForm({
                   ))}
                 </SelectContent>
               </Select>
+              {/* P54 (ADR 0064 R3): the served rank inside the band, editable like the board. */}
+              <BandRankField
+                mode={mode}
+                savedPriority={project?.priority ?? null}
+                chosenPriority={priority === NONE ? null : (priority as ProjectPriority)}
+                projectId={project?.id ?? null}
+                projectName={project?.name ?? ''}
+                status={project?.status ?? null}
+                rank={project?.band_rank ?? null}
+                size={project?.band_size ?? null}
+                host={moveHost}
+                canMove={canMovePriority}
+              />
             </Field>
             {withRegister ? null : (
             <Field
-              label={<>Actual start week{requiredMark('actual_start_week')}</>}
+              label="Actual start week"
               htmlFor="reg-start-week"
-              error={errors.actual_start_week?.message ?? requiredError('actual_start_week')}
+              // ADR 0065 §3: required (mark + server message) only for a started status.
+              required={startWeekRequired}
+              requiredTitle="Required once work has started (In Progress, On Hold or Done)"
+              error={errors.actual_start_week?.message ?? startWeekServerError}
+              hint={startWeekHint ? <span data-testid="reg-start-week-hint">{startWeekHint}</span> : undefined}
             >
               <Input
                 id="reg-start-week"
@@ -612,7 +673,8 @@ export function ProjectForm({
                 max={DISPLAY_HORIZON_WEEKS}
                 inputMode="numeric"
                 className="tnum"
-                aria-invalid={errors.actual_start_week || requiredError('actual_start_week') ? true : undefined}
+                placeholder={START_WEEK_PLACEHOLDER}
+                aria-invalid={errors.actual_start_week || startWeekServerError ? true : undefined}
                 {...register('actual_start_week')}
               />
             </Field>
@@ -924,6 +986,7 @@ function Field({
   htmlFor,
   error,
   required,
+  requiredTitle,
   hint,
   children,
 }: {
@@ -931,6 +994,8 @@ function Field({
   htmlFor: string;
   error?: string | undefined;
   required?: boolean | undefined;
+  /** Tooltip on the required mark (ADR 0065: why the start week is required). */
+  requiredTitle?: string | undefined;
   /** Helper text under the control (P9 planning fields; P29 provisional-leader badge). */
   hint?: React.ReactNode;
   children: React.ReactNode;
@@ -939,7 +1004,11 @@ function Field({
     <div className="flex flex-col gap-1">
       <Label htmlFor={htmlFor} className="text-xs">
         {label}
-        {required ? <span className="text-danger"> *</span> : null}
+        {required ? (
+          <span className="text-danger" title={requiredTitle}>
+            {' '}*
+          </span>
+        ) : null}
       </Label>
       {children}
       {error ? (
