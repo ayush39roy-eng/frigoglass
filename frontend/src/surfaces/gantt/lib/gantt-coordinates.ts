@@ -7,11 +7,13 @@
  * scale — no bar position is ever computed by summing `duration_weeks`, and no
  * `Date` object is involved (the domain model is week-granular everywhere).
  *
- * The axis is the 52-week plan year (`DISPLAY_HORIZON_WEEKS`, ADR 0024): W1–W52
- * and nothing after. A bar that runs past W52 is CLIPPED at the W52 end edge and
- * reports `continuesPastEnd` so the row can show its "Spillover → 2027" marker;
- * one that starts after W52 is not drawn at all. Clipping is geometry only — the
- * project's spillover verdict is still the server's `row.spillover` flag (I9).
+ * P51 (ADR 0062): the Timeline axis runs W1 .. the scheduler horizon
+ * (`TIMELINE_HORIZON_WEEKS` = 78, W26 of the next year) under a year header row
+ * (`yearBands`); weeks after W52 belong to the next calendar year. A bar that runs
+ * past the axis' last week is CLIPPED at its end edge and reports
+ * `continuesPastEnd`; one that starts after it is not drawn at all. Clipping is
+ * geometry only — the project's spillover verdict is still the server's
+ * `row.spillover` flag (I9). Other surfaces keep the 52-week window (ADR 0024).
  *
  * This module contains no business logic: it maps week numbers the API already
  * computed to pixels. It is unit-tested (`gantt-coordinates.test.ts`).
@@ -45,10 +47,49 @@ export const ROW_HEIGHTS: Record<GanttDensity, { project: number; step: number }
   forest: { project: 22, step: 22 },
 };
 
+/**
+ * P51 (ADR 0062): the Timeline's axis length — the scheduler's search horizon
+ * (`SCHEDULER_HORIZON_WEEKS`, the DOMAIN_RULES constant mirrored, not derived),
+ * so work after W52 is drawn in full up to W26 of the next year.
+ */
+export const TIMELINE_HORIZON_WEEKS = SCHEDULER_HORIZON_WEEKS;
+
+/** Weeks in one calendar year of the absolute week numbering (W53 = next year's W1). */
+const WEEKS_PER_YEAR = DISPLAY_HORIZON_WEEKS;
+
+export interface YearBand {
+  /** 0 = the plan year (absolute weeks 1..52), 1 = the next year, … */
+  yearOffset: number;
+  /** First and last absolute week of this year that lie on the axis. */
+  startWeek: number;
+  endWeek: number;
+  /** Left edge and width in px. */
+  x: number;
+  width: number;
+}
+
+/**
+ * P51 (ADR 0062): one band per calendar year on the axis, clipped to it. Absolute
+ * week w is in year offset `floor((w − 1) / 52)`. Geometry only.
+ */
+export function yearBands(scale: WeekScale): YearBand[] {
+  const out: YearBand[] = [];
+  const last = lastScaleWeek(scale);
+  let start = scale.originWeek;
+  while (start <= last) {
+    const yearOffset = Math.floor((start - 1) / WEEKS_PER_YEAR);
+    const yearEnd = Math.min(last, (yearOffset + 1) * WEEKS_PER_YEAR);
+    const x = weekToX(start, scale);
+    out.push({ yearOffset, startWeek: start, endWeek: yearEnd, x, width: weekEndToX(yearEnd, scale) - x });
+    start = yearEnd + 1;
+  }
+  return out;
+}
+
 export interface WeekScale {
   /** First week rendered (1-indexed, absolute). */
   readonly originWeek: number;
-  /** Weeks on the axis: the 52-week plan year (`DISPLAY_HORIZON_WEEKS`). */
+  /** Weeks on the axis (the Timeline: `TIMELINE_HORIZON_WEEKS`). */
   readonly horizonWeeks: number;
   /** Pixels per one-week bucket. */
   readonly weekWidthPx: number;
@@ -98,7 +139,7 @@ export function weekEndToX(week: number, scale: WeekScale): number {
   return weekToX(week + 1, scale);
 }
 
-/** The last week drawn on the axis (W52 on the plan-year scale). */
+/** The last week drawn on the axis (W78 on the Timeline). */
 export function lastScaleWeek(scale: WeekScale): number {
   return scale.originWeek + scale.horizonWeeks - 1;
 }

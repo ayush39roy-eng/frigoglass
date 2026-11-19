@@ -7,7 +7,7 @@ import { ArrowUpRight, ChevronRight, Info, Snowflake } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { formatPlanWeek, formatWeekTitle } from '@/lib/format';
-import { usePlanYearLabels } from '@/lib/plan-clock';
+import { usePlanYear, usePlanYearLabels } from '@/lib/plan-clock';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
@@ -17,6 +17,7 @@ import {
   clampZoomPx,
   isPastScaleEnd,
   makeWeekScale,
+  TIMELINE_HORIZON_WEEKS,
   WEEK_WIDTH_PX,
   type WeekScale,
   plannedSpan,
@@ -36,7 +37,7 @@ import { ProjectRowBadges, StepRowBadges } from './gantt-badges';
 import { GanttCompletionMarkers } from './gantt-completion-markers';
 import { GanttProjectDetailsDialog } from './gantt-project-details';
 import { ProjectMetaLine, RowWeeks } from './gantt-row-meta';
-import { AXIS_HEIGHT, GanttGridLines, GanttWeekAxis } from './gantt-time-axis';
+import { AXIS_HEIGHT, GanttGridLines, GanttWeekAxis, GanttYearRow, YEAR_ROW_HEIGHT } from './gantt-time-axis';
 import { StepBarGraphic, StepLeftCell } from './gantt-step-row';
 import { STEP_PIN_CELL_WIDTH, StepPinCell } from './step-pin-cell';
 import { useStepPinEdit } from '../hooks/use-step-pin-edit';
@@ -84,7 +85,7 @@ export interface GanttChartProps {
   maxHeight?: number;
   /**
    * P32-R04 (Workflow page "Project step timing"): an axis other than the
-   * Timeline's W1–W52. `scaleFor(px)` builds it for a week width; with `fill`
+   * Timeline's W1 .. W78 (P51, ADR 0062). `scaleFor(px)` builds it for a week width; with `fill`
    * the weeks grow (from the zoom width) to fill the visible width.
    * `weekLabel` formats ticks and bar hover text (e.g. "W5 '27"). Omitted =
    * the Timeline, unchanged.
@@ -171,7 +172,8 @@ export function GanttChart({
   const detailsProject = detailsId === null ? null : (rows.find((r) => r.project_id === detailsId) ?? null);
 
   const scale = React.useMemo(() => {
-    if (!axis) return makeWeekScale(zoom);
+    // P51 (ADR 0062): the Timeline runs to the scheduler horizon (W26 of the next year).
+    if (!axis) return makeWeekScale(zoom, TIMELINE_HORIZON_WEEKS);
     const minPx = typeof zoom === 'number' ? clampZoomPx(zoom) : WEEK_WIDTH_PX[zoom];
     const min = axis.scaleFor(minPx);
     // The visible width minus both sticky columns and the 1.5 px borders.
@@ -179,6 +181,7 @@ export function GanttChart({
     return axis.fill && available > min.totalWidthPx ? axis.scaleFor(available / min.horizonWeeks) : min;
   }, [axis, zoom, boxWidth, LEFT_COL_WIDTH, BADGE_COL_WIDTH]);
   const weekText = axis?.weekLabel;
+  const planYear = usePlanYear();
   // P40-T01: Forest view never shows step rows (one line per project).
   const visualRows = React.useMemo(
     () => buildVisualRows(rows, compact ? NO_EXPANDED : expandedIds),
@@ -263,6 +266,24 @@ export function GanttChart({
           {/* sticky header: corner + week axis + status label, then (P13-T13)
               the served weekly PDD / OEM counts and the activity strip */}
           <div className="sticky top-0 z-30 border-b border-border bg-surface-sunken">
+            {/* P51 (ADR 0062): the year header row — "2026", "2027", … over their weeks */}
+            <div className="flex border-b border-border/70" style={{ height: YEAR_ROW_HEIGHT }}>
+              <div
+                className="sticky left-0 z-10 shrink-0 border-r border-border bg-surface-sunken"
+                style={{ width: LEFT_COL_WIDTH }}
+                aria-hidden="true"
+              />
+              <div style={{ width: scale.totalWidthPx }} className="shrink-0">
+                <GanttYearRow scale={scale} baseYear={planYear} stickyLeft={LEFT_COL_WIDTH} />
+              </div>
+              {hasStatusCol ? (
+                <div
+                  className="sticky right-0 z-10 shrink-0 border-l border-border bg-surface-sunken"
+                  style={{ width: BADGE_COL_WIDTH }}
+                  aria-hidden="true"
+                />
+              ) : null}
+            </div>
             <div className="flex" style={{ height: AXIS_HEIGHT }}>
               <div
                 className={cn(
@@ -459,9 +480,10 @@ function BarLayer({
 }): React.JSX.Element {
   const years = usePlanYearLabels();
   let group: React.ReactNode;
-  // ADR 0024: the axis ends at W52. A row whose work runs past it (clipped
-  // geometry), or that the server flags spillover / left out, gets the
-  // "Spillover → 2027" marker at the right edge instead of W53+ columns.
+  // P51 (ADR 0062): the axis runs past W52, so bars after the year-end are
+  // drawn in full and the server's spillover / left-out verdict is the badge in
+  // the Status column. The right-edge marker remains only for work that still
+  // runs past the axis' last week (clipped geometry).
   let spilloverMarker: React.ReactNode = null;
   if (row.kind === 'project') {
     const planned = plannedSpan(row.project.steps);
@@ -495,7 +517,7 @@ function BarLayer({
       isPastScaleEnd(p.projected_end_week, scale);
     // P42 (ADR 0056): a project that does not count toward the year (queued P3,
     // P4 / Q) never "spills over" — it was never in this year's plan.
-    if (p.counts_toward_year !== false && (p.spillover || p.left_out || runsPastAxis)) {
+    if (p.counts_toward_year !== false && runsPastAxis) {
       spilloverMarker = (
         <GanttSpilloverMarker
           scale={scale}

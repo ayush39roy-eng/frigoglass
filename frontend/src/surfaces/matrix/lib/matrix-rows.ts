@@ -18,11 +18,12 @@ import {
   type PriorityDistribution,
   type PriorityMatrixRow,
 } from '../api/types';
+import { compileSearch, type SearchMatcher } from '@/lib/project-search';
 import { rowBand } from './row-scores';
 import { isVipRow } from './vip-row';
 
 export interface RowViewFilters {
-  /** Project search: name or code, case-insensitive substring. */
+  /** Project search: name or code, case-insensitive substring; `*` / `?` wildcards (P51-T02). */
   q: string;
   hubText: string;
   leaderText: string;
@@ -32,19 +33,18 @@ export interface RowViewFilters {
 }
 
 /** Name or project code (P34-T03 serves `external_code`). Read as optional so a
- *  pre-P34-T03 API (field absent) still searches by name. */
-function matchesSearch(row: PriorityMatrixRow, q: string): boolean {
-  if (row.project_name.toLowerCase().includes(q)) return true;
-  const code = (row as Partial<PriorityMatrixRow>).external_code;
-  return typeof code === 'string' && code.toLowerCase().includes(q);
+ *  pre-P34-T03 API (field absent) still searches by name. P51-T02: the shared
+ *  matcher (`*` / `?` wildcards, everything else literal). */
+function matchesProjectSearch(row: PriorityMatrixRow, search: SearchMatcher): boolean {
+  return search(row.project_name, (row as Partial<PriorityMatrixRow>).external_code);
 }
 
 /** Every view filter except the band pick (the distribution counts these rows). */
 export function narrowExceptBand(rows: readonly PriorityMatrixRow[], f: Omit<RowViewFilters, 'band'>): PriorityMatrixRow[] {
-  const q = f.q.trim().toLowerCase();
+  const search = compileSearch(f.q);
   const hub = f.hubText.trim().toLowerCase();
   const leader = f.leaderText.trim().toLowerCase();
-  if (q === '' && hub === '' && leader === '' && !f.capacityFill && !f.vipOnly) return [...rows];
+  if (search === null && hub === '' && leader === '' && !f.capacityFill && !f.vipOnly) return [...rows];
   return rows.filter((r) => {
     if (f.vipOnly && !isVipRow(r)) return false;
     if (f.capacityFill && r.capacity_fill !== true) return false;
@@ -54,7 +54,7 @@ export function narrowExceptBand(rows: readonly PriorityMatrixRow[], f: Omit<Row
       const shown = r.leader_name ?? (r.leader_engineer_id ? 'unavailable' : '');
       if (!shown.toLowerCase().includes(leader)) return false;
     }
-    if (q !== '' && !matchesSearch(r, q)) return false;
+    if (search !== null && !matchesProjectSearch(r, search)) return false;
     return true;
   });
 }

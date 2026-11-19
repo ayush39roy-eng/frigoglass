@@ -15,6 +15,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatInteger } from '@/lib/format';
+import { compileSearch } from '@/lib/project-search';
 import { cn } from '@/lib/utils';
 
 import type {
@@ -266,10 +267,9 @@ function ChooseSection({
   const searchId = React.useId();
   const [query, setQuery] = React.useState('');
   const n = preview.counts.choosable;
-  const needle = query.trim().toLowerCase();
-  const shown = needle
-    ? preview.choosable.filter((p) => p.name.toLowerCase().includes(needle) || p.hub.toLowerCase().includes(needle))
-    : preview.choosable;
+  // P51-T02: the shared project search (`*` / `?` wildcards, everything else literal).
+  const search = compileSearch(query);
+  const shown = search ? preview.choosable.filter((p) => search(p.name, p.hub)) : preview.choosable;
 
   const toggle = (id: string, on: boolean) =>
     setTicked((prev) => {

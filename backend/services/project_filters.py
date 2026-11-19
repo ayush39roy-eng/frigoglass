@@ -2,10 +2,9 @@
 (P13-T13/T14, `docs/API_CONTRACT_P13.md` §7), with the §3 semantics that
 `/dashboard/projects` (P13-T01) already serves:
 
-- `q`: stripped, case-insensitive substring of `Project.name` OR
-  `Project.external_code`. `%`, `_` and `\\` are escaped so the term is
-  matched literally; the pattern is a bound parameter (`ilike(..., escape=)`),
-  never interpolated into SQL text.
+- `q`: `services.text_search.project_search_filter` (P51-T02: one shared
+  helper; case-insensitive substring of name OR external code, `*` / `?`
+  wildcards, everything else literal, bound parameter with escape).
 - `leader_name`: OQ #8 / P3-T09 GDPR rule — a person's name is served only to
   that person (the leader's linked `User` is the caller). Every other reader
   gets `None`; `leader_engineer_id` stays available.
@@ -21,35 +20,25 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable, Iterable
 
-from sqlalchemy import ColumnElement, or_
-
 from core.principal import Principal
 from models.project import Project
+from services.text_search import Q_MAX_LENGTH, escape_like, project_search_filter
 
-#: Same bound as `/dashboard/projects` (§3).
-Q_MAX_LENGTH = 100
+__all__ = [
+    "Q_MAX_LENGTH",
+    "STEP_CODE_MAX_LENGTH",
+    "escape_like",
+    "leader_name_if_self",
+    "score_ranks",
+    "search_predicate",
+]
+
 #: Step template ids are short codes such as `PDD-E` / `OEM-H`.
 STEP_CODE_MAX_LENGTH = 10
 
-
-def escape_like(value: str) -> str:
-    """Escape LIKE wildcards so the term is matched literally (escape `\\`)."""
-
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
-def search_predicate(q: str | None) -> ColumnElement[bool] | None:
-    """Name OR external code contains `q` (case-insensitive); `None` when
-    `q` is absent or blank."""
-
-    term = q.strip() if q is not None else ""
-    if not term:
-        return None
-    pattern = f"%{escape_like(term)}%"
-    return or_(
-        Project.name.ilike(pattern, escape="\\"),
-        Project.external_code.ilike(pattern, escape="\\"),
-    )
+#: P51-T02: the search is `services.text_search`'s; re-exported under the
+#: names the Gantt / Matrix routers import.
+search_predicate = project_search_filter
 
 
 def leader_name_if_self(project: Project, principal: Principal) -> str | None:

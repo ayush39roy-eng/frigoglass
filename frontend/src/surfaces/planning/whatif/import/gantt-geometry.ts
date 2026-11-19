@@ -2,7 +2,6 @@ import { snapWeekDelta, type WeekScale } from '@/surfaces/gantt/lib/gantt-coordi
 import { overlapForDrop, type OverlapStep } from '@/surfaces/gantt/lib/step-overlap';
 
 import type { ImportResultStep, ImportSimulateResponse } from './import-types';
-import { cutoffWeek } from './plan-window';
 import { shortWeekLabel } from './week-labels';
 
 /**
@@ -12,25 +11,17 @@ import { shortWeekLabel } from './week-labels';
 
 export const IMPORT_WEEK_PX = 16;
 
-/** Weeks drawn after the plan-year end when nothing spills over, so its marker label fits. */
-export const AXIS_TAIL_WEEKS = 4;
-
 /**
- * The week scale of the import Gantt: from the served `current_week` to the latest served
- * end week (project or step), at least a few weeks past the plan-year end and at most the
- * served `horizon_weeks`. Pixels only; every week is a served field.
+ * The week scale of the import Gantt (P51, ADR 0062): from the served `current_week` to the
+ * served `horizon_weeks` (the import's search horizon, `plan_until_week` + 26 — up to W130,
+ * W26 of the year after next), under a year header row. Pixels only; every week is a served
+ * field.
  */
 export function importScale(
-  result: Pick<ImportSimulateResponse, 'current_week' | 'horizon_weeks' | 'plan_year_end_week' | 'plan_until_week' | 'projects'>,
+  result: Pick<ImportSimulateResponse, 'current_week' | 'horizon_weeks'>,
   weekPx = IMPORT_WEEK_PX,
 ): WeekScale {
-  // P50 (R49-16): past the served cut-off (`plan_until_week`, else the plan-year end).
-  let latest = cutoffWeek(result) + AXIS_TAIL_WEEKS;
-  for (const p of result.projects) {
-    if (p.end_week !== null) latest = Math.max(latest, p.end_week);
-    for (const st of p.steps) if (st.end_week !== null) latest = Math.max(latest, st.end_week);
-  }
-  const last = Math.max(result.current_week, Math.min(result.horizon_weeks, latest));
+  const last = Math.max(result.current_week, result.horizon_weeks);
   const horizonWeeks = last - result.current_week + 1;
   return { originWeek: result.current_week, horizonWeeks, weekWidthPx: weekPx, totalWidthPx: horizonWeeks * weekPx };
 }

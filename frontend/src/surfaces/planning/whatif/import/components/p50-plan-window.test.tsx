@@ -170,9 +170,9 @@ describe('P50 picker logic', () => {
     });
     // A served u equal to the preset (no window label) keeps the plan-year wording.
     expect(planScope({ ...SIMULATE_RESPONSE, plan_until_week: 104, plan_window_label: null }).inPhrase).toBe('in 2027');
-    // The Gantt axis runs past the served cut-off, not past the preset.
-    const noProjects = { ...WINDOWED, projects: [] };
-    expect(importScale(noProjects).horizonWeeks).toBe(72 + 4 - 42 + 1);
+    // P51 (ADR 0062): the Gantt axis runs to the served horizon (u + 26 = 98 for u = 72).
+    const noProjects = { ...WINDOWED, horizon_weeks: 98, projects: [] };
+    expect(importScale(noProjects).horizonWeeks).toBe(98 - 42 + 1);
   });
 
   it('labels: band source, saved window and banner use week-of-year labels (never W53+)', () => {

@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { compileSearch, type SearchMatcher } from '@/lib/project-search';
 import { cn } from '@/lib/utils';
 
 import { int } from '../../components/figures';
@@ -190,15 +191,14 @@ const ROW_COLUMNS: ColumnDef<DrillRow>[] = [
   },
 ];
 
-function matchesProject(p: ImportResultProject, q: string): boolean {
-  return [p.name, p.hub, p.category, p.priority, p.status, p.leader_name ?? ''].some((v) => v.toLowerCase().includes(q));
+// P51-T02: the shared project search (`*` / `?` wildcards, everything else literal).
+function matchesProject(p: ImportResultProject, search: SearchMatcher): boolean {
+  return search(p.name, p.hub, p.category, p.priority, p.status, p.leader_name);
 }
 
-function matchesRow(d: DrillRow, q: string): boolean {
+function matchesRow(d: DrillRow, search: SearchMatcher): boolean {
   const r = d.row;
-  return [r.name, r.hub, r.category, r.status, r.priority, engineerOf(r), String(r.file_row)].some((v) =>
-    v.toLowerCase().includes(q),
-  );
+  return search(r.name, r.hub, r.category, r.status, r.priority, engineerOf(r), String(r.file_row));
 }
 
 function unitOf(d: Drill, n: number): string {
@@ -211,7 +211,7 @@ function DrillBody({ drill }: { drill: Drill }): React.JSX.Element {
   const focusOnGantt = useImportPlan((s) => s.focusOnGantt);
   const yearKey = useImportPlan((s) => s.yearFilter);
   const [query, setQuery] = React.useState('');
-  const q = query.trim().toLowerCase();
+  const search = compileSearch(query);
   const listed = listedCount(drill);
   const total = drill.kind === 'projects' ? drill.projects.length : drill.rows.length;
 
@@ -228,8 +228,8 @@ function DrillBody({ drill }: { drill: Drill }): React.JSX.Element {
     () => (drill.kind === 'projects' ? projectColumns(drill, onGantt) : []),
     [drill, onGantt],
   );
-  const projects = drill.kind === 'projects' ? drill.projects.filter((p) => q === '' || matchesProject(p, q)) : [];
-  const rows = drill.kind === 'rows' ? drill.rows.filter((d) => q === '' || matchesRow(d, q)) : [];
+  const projects = drill.kind === 'projects' ? drill.projects.filter((p) => search === null || matchesProject(p, search)) : [];
+  const rows = drill.kind === 'rows' ? drill.rows.filter((d) => search === null || matchesRow(d, search)) : [];
   const shownCount = drill.kind === 'projects' ? projects.length : rows.length;
   const searchId = React.useId();
 
@@ -269,7 +269,7 @@ function DrillBody({ drill }: { drill: Drill }): React.JSX.Element {
             data-testid="drill-search"
           />
         </span>
-        {q !== '' ? (
+        {search !== null ? (
           <span className="text-2xs text-text-muted" role="status" aria-live="polite">
             {`${int(shownCount)} of ${int(total)} match`}
           </span>

@@ -232,12 +232,13 @@ def _weekly_active_counts(
     projects: Sequence[Project],
     steps_by_project: dict[uuid.UUID, list[ScheduleRunProjectStep]],
 ) -> list[GanttWeeklyActiveCount]:
-    """Active non-skipped run steps per display week (1..WITHIN_YEAR_WEEK)
+    """Active non-skipped run steps per display week (1..HORIZON_WEEKS; ADR 0062
+    extends the Timeline past W52)
     over the whole filtered set, split by the project's workflow, and (P40-T01)
     by step code (`by_step`, the step id such as `"PDD-A"`; same rows, so it
     sums to `pdd + oem`)."""
 
-    last = dc.WITHIN_YEAR_WEEK
+    last = dc.HORIZON_WEEKS
     pdd = [0] * (last + 1)
     oem = [0] * (last + 1)
     by_step: list[dict[str, int]] = [defaultdict(int) for _ in range(last + 1)]

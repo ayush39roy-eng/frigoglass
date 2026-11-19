@@ -1,3 +1,4 @@
+import { compileSearch } from '@/lib/project-search';
 import { isMappedStatus } from './import-rows';
 import type { ImportMode, ImportPlanProject, ImportRow } from './import-types';
 
@@ -96,14 +97,15 @@ export interface PickFilters {
 export const NO_PICK_FILTERS: PickFilters = { query: '', category: '', hub: '', priority: '', source: '' };
 
 export function filterPicks(items: readonly PickItem[], f: PickFilters): PickItem[] {
-  const q = f.query.trim().toLowerCase();
+  // P51-T02: the shared project search (`*` / `?` wildcards, everything else literal).
+  const search = compileSearch(f.query);
   return items.filter(
     (it) =>
       (f.category === '' || it.category === f.category) &&
       (f.hub === '' || it.hub === f.hub) &&
       (f.priority === '' || it.priority === f.priority) &&
       (f.source === '' || it.source === f.source) &&
-      (q === '' || [it.name, it.hub, it.category, it.priority, it.status].some((v) => v.toLowerCase().includes(q))),
+      (search === null || search(it.name, it.hub, it.category, it.priority, it.status)),
   );
 }
 

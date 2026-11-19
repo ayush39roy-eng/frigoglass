@@ -211,7 +211,7 @@ export default function GanttPage(): React.JSX.Element {
   const title = TIMELINE_SURFACE?.title ?? 'Project Execution Timeline';
   const description =
     TIMELINE_SURFACE?.summary ??
-    'Hand-built virtualized Gantt: 14 workflow steps per project across the 52-week plan year.';
+    'Hand-built virtualized Gantt: 14 workflow steps per project across the plan year and the first 26 weeks of the next.';
 
   const denied = authKind([ganttQuery.error]);
   const rows = React.useMemo<GanttProjectRow[]>(
@@ -453,9 +453,10 @@ export default function GanttPage(): React.JSX.Element {
                           </span>
                           <span className="block">
                             <strong>Red connector</strong> = delay magnitude. The timeline shows
-                            the plan year, week 1 to week {WITHIN_YEAR_WEEK}; work that runs past
-                            it is cut at the dashed year-end line and marked{' '}
-                            <strong>Spillover → {years.spilloverYear}</strong>. Whether a project
+                            the plan year and the first 26 weeks of {years.spilloverYear}, with the
+                            year above the weeks; work after the dashed week {WITHIN_YEAR_WEEK}{' '}
+                            year-end line runs into the shaded {years.spilloverYear} weeks
+                            (spillover). Whether a project
                             completes within the year is the server&apos;s <code>spillover</code>{' '}
                             / <code>left out</code> flag, shown as a badge — not computed here.
                           </span>

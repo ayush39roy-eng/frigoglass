@@ -57,7 +57,8 @@ Same read permission as the other `/dashboard/*` endpoints.
 New optional query params, all ANDed and server-side:
 
 - `region`;
-- `q`, a case-insensitive substring of name or `external_code`, at most 100 characters;
+- `q`, a case-insensitive substring of name or `external_code`, at most 100 characters (P51-T02:
+  `*` / `?` wildcards, everything else literal; see DOMAIN_RULES "Project search");
 - `type` (`ProjectType`);
 - `leader_engineer_id` (uuid);
 - `current_step` (step code, for example `PDD-E`).

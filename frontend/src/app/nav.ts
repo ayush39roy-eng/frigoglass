@@ -145,7 +145,7 @@ export const SURFACES: readonly SurfaceNavItem[] = [
     icon: CalendarRange,
     task: 'P4-T05',
     summary:
-      'Hand-built virtualized Gantt: 14 workflow steps per project across the 52-week plan year (W1–W52, later work shown as spillover), engineer and chamber assignments, conflict and spillover markers.',
+      'Hand-built virtualized Gantt: 14 workflow steps per project across the plan year and the first 26 weeks of the next, under a year header row (work after W52 is spillover, shaded), engineer and chamber assignments, conflict and spillover markers.',
     group: 'Execute',
     density: 'working',
   },

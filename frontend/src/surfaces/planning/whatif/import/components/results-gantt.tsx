@@ -19,16 +19,18 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import { MultiSelectDropdown } from '@/components/shared/multi-select-dropdown';
+import { compileSearch } from '@/lib/project-search';
 import { cn } from '@/lib/utils';
 import { barGeometry, weekEndToX, weekToX, type WeekScale } from '@/surfaces/gantt/lib/gantt-coordinates';
 import type { OverlapStep } from '@/surfaces/gantt/lib/step-overlap';
+import { GanttYearRow, YEAR_ROW_HEIGHT } from '@/surfaces/gantt/components/gantt-time-axis';
 
 import type { WhatIfOutcome } from '../../../api/whatif-types';
 import { OUTCOME_LABEL, OUTCOME_ORDER, OUTCOME_TONE } from '../../components/outcome-meta';
 import { editKey } from '../import-rows';
 import { useImportPlan } from '../import-store';
 import type { ImportResultProject, ImportResultStep, ImportSimulateResponse, ImportStepMeta } from '../import-types';
-import { axisTicks, longWeekLabel, shortWeekLabel, weekOrDash } from '../week-labels';
+import { axisTicks, longWeekLabel, shortWeekLabel, weekOrDash, weekYear } from '../week-labels';
 import { planScope } from '../plan-window';
 import { importScale, type DropEdit } from '../gantt-geometry';
 import { projectInYear, YEAR_ALL } from '../year-filter';
@@ -39,6 +41,8 @@ const LEFT_PX = 300;
 const PROJECT_H = 40;
 const STEP_H = 30;
 const AXIS_H = 34;
+/** P51 (ADR 0062): the year header row sits above the week ruler. */
+const HEADER_H = YEAR_ROW_HEIGHT + AXIS_H;
 /** Rows are virtualized over 100 (CLAUDE.md); below that every row is drawn. */
 const VIRTUALIZE_OVER = 100;
 
@@ -126,16 +130,19 @@ export function ResultsGantt({
   // P50 (R49-16): the dashed cut-off line is the served `plan_until_week` (fallback: the plan-year end).
   const scope = planScope(result);
   const yearEndX = weekEndToX(scope.cutoffWeek, scale);
+  // P51: years after the served plan year (`plan_year_end_week`) are shaded in the year row.
+  const planYearOffset = weekYear(result.plan_year_end_week, base).year - base;
 
   const filtered = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
+    // P51-T02: the shared project search (`*` / `?` wildcards, everything else literal).
+    const nameSearch = compileSearch(search);
     return result.projects.filter(
       (p) =>
         projectInYear(p, yearKey, base) &&
         (sources.length === 0 || sources.includes(p.source)) &&
         (hubFilter.length === 0 || hubFilter.includes(p.hub)) &&
         (outcomes.length === 0 || outcomes.includes(p.outcome)) &&
-        (q === '' || p.name.toLowerCase().includes(q)),
+        (nameSearch === null || nameSearch(p.name)),
     );
   }, [result.projects, sources, hubFilter, outcomes, search, yearKey, base]);
 
@@ -339,15 +346,27 @@ export function ResultsGantt({
           <div
             style={{
               width: totalW,
-              height: AXIS_H + totalH,
+              height: HEADER_H + totalH,
               position: 'relative',
             }}
           >
-            {/* Axis */}
-            <div
-              className="sticky top-0 z-20 flex border-b border-border bg-surface-raised"
-              style={{ height: AXIS_H, width: totalW }}
-            >
+            {/* Year header row (P51, ADR 0062) + week axis */}
+            <div className="sticky top-0 z-20 border-b border-border bg-surface-raised" style={{ width: totalW }}>
+            <div className="flex border-b border-border/70" style={{ height: YEAR_ROW_HEIGHT, width: totalW }}>
+              <div
+                className="sticky left-0 z-30 bg-surface-raised"
+                style={{ width: LEFT_PX, minWidth: LEFT_PX }}
+                aria-hidden="true"
+              />
+              <GanttYearRow
+                scale={scale}
+                baseYear={base}
+                planYearOffset={planYearOffset}
+                stickyLeft={LEFT_PX}
+                testId="import-gantt-year-row"
+              />
+            </div>
+            <div className="flex" style={{ height: AXIS_H, width: totalW }}>
               <div
                 className="sticky left-0 z-30 flex items-end bg-surface-raised px-s3 pb-1 text-2xs font-semibold uppercase tracking-wide text-text-muted"
                 style={{ width: LEFT_PX, minWidth: LEFT_PX }}
@@ -355,7 +374,9 @@ export function ResultsGantt({
                 Project / step
               </div>
               <svg width={scale.totalWidthPx} height={AXIS_H} aria-hidden="true" data-testid="import-gantt-axis">
-                {ticks.map((t) => (
+                {ticks.map((t) => {
+                  const yw = weekYear(t.week, base);
+                  return (
                   <g key={t.week}>
                     <line
                       x1={weekToX(t.week, scale)}
@@ -370,11 +391,14 @@ export function ResultsGantt({
                       fontSize={10}
                       fill="hsl(var(--color-text-muted))"
                       fontWeight={t.yearStart ? 700 : 400}
+                      data-testid="import-gantt-tick"
                     >
-                      {t.label}
+                      <title>{`Week ${String(yw.week)} of ${String(yw.year)}`}</title>
+                      {`W${String(yw.week)}`}
                     </text>
                   </g>
-                ))}
+                  );
+                })}
                 <YearEndLine x={yearEndX} height={AXIS_H} />
                 <text
                   x={Math.max(2, yearEndX - 4)}
@@ -386,6 +410,7 @@ export function ResultsGantt({
                   {`End of ${scope.name}`}
                 </text>
               </svg>
+            </div>
             </div>
 
             {items.map((v) => {
@@ -400,7 +425,7 @@ export function ResultsGantt({
                     row.kind === 'step' && 'bg-surface-sunken/30',
                     row.kind === 'project' && focus?.ref === row.p.ref && 'ring-2 ring-inset ring-primary',
                   )}
-                  style={{ top: AXIS_H + v.start, height: h, width: totalW }}
+                  style={{ top: HEADER_H + v.start, height: h, width: totalW }}
                   data-testid={row.kind === 'project' ? 'import-gantt-project' : 'import-gantt-step'}
                   data-ref={row.p.ref}
                   data-step-id={row.kind === 'step' ? row.s.step_id : undefined}

@@ -2735,3 +2735,11 @@ The ruling is labelled R49 (written before the phase number was assigned; P49 is
 | P50-T03 | What-if import: "Plan from" / "Plan until" pickers, server labels, "band" source, banners, cut-off reads served `plan_until_week` | frontend-builder | T01, T02 | done (MEMORY 2026-11-19) |
 | P50-T04 | Display: no week ≥ 53 on any surface — next-year weeks read W1.. with the year on hover (owner 2026-11-18) | frontend-builder | — | done (MEMORY 2026-11-19) |
 | P50-T05 | Gate: qa-inspector, workflow-auditor, security-auditor | — | T01–T04 | done — gate PASS (qa, workflow, security; MEMORY 2026-11-19) |
+
+## P51 — Timeline shows 2027/2028 with a year header row; project search wildcards (owner 2026-11-19; ADR 0062)
+
+| ID | Task | Owner | Depends on | Status |
+|---|---|---|---|---|
+| P51-T01 | Timeline + What-if import Gantt run to the horizon (W78 / up to W130) with a 2026/2027/2028 year row; weekly active counts served to HORIZON_WEEKS | frontend-builder (+ orchestrator one-line `gantt.py`) | — | done (MEMORY 2026-11-19) |
+| P51-T02 | Search: `*` / `?` wildcards, every other character literal, one helper server + browser | backend-builder | — | done (MEMORY 2026-11-19) |
+| P51-T03 | Lab chamber stages: old app also lets chambers run PDD-J (Pr. Pr) and PDD-L (Pilot); the client's 2027 Process-steps sheet counts lab = F + H only | owner decision | — | on hold (owner: decide later) |

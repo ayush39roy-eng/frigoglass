@@ -318,19 +318,51 @@ describe('GanttPage', () => {
     });
   });
 
-  describe('ADR 0024 — 52-week display horizon (client ask 2026-10-13)', () => {
-    // 16 px per week at the default zoom (P13-T13 slider minimum) → 52 × 16 = 832 px.
+  describe('ADR 0062 — the Timeline runs past W52 under a year header row (owner 2026-11-19)', () => {
+    // 16 px per week at the default zoom (P13-T13 slider minimum); the axis is W1..W78.
     const W = 16;
 
-    it('the week axis ends at W52 — no week columns past 52', () => {
+    /** A tick's printed label (its last text node; the first child is the <title>). */
+    function tickLabel(tick: Element): string {
+      return tick.lastChild?.textContent ?? '';
+    }
+
+    it('the week axis runs W1..W78 (W26 2027); tick labels restart at 1 and never print ≥ 53', () => {
       renderWithProviders(<GanttPage />);
-      const axis = screen.getByRole('img', { name: 'Week axis, week 1 to week 52' });
-      expect(axis).toHaveAttribute('width', String(52 * W));
-      expect(within(axis).queryByText('53')).not.toBeInTheDocument();
+      const axis = screen.getByRole('img', { name: 'Week axis, Week 1 of 2026 to Week 26 of 2027' });
+      expect(axis).toHaveAttribute('width', String(78 * W));
       expect(within(axis).getByText('W52 year-end')).toBeInTheDocument();
+      const ticks = within(axis).getAllByTestId('gantt-week-tick');
+      // Stride 4 at 16 px: absolute 1, 5, …, 49, 53, 57, …, 77.
+      expect(ticks.map((t) => t.getAttribute('data-week'))).toContain('53');
+      for (const t of ticks) {
+        const n = Number(tickLabel(t));
+        expect(n).toBeGreaterThanOrEqual(1);
+        expect(n).toBeLessThanOrEqual(52);
+      }
+      const w53 = ticks.find((t) => t.getAttribute('data-week') === '53');
+      const w57 = ticks.find((t) => t.getAttribute('data-week') === '57');
+      expect(w53 && tickLabel(w53)).toBe('1');
+      expect(w57 && tickLabel(w57)).toBe('5');
+      expect(w57?.querySelector('title')).toHaveTextContent('Week 5 of 2027');
+      expect(axis.textContent).not.toMatch(/\b(5[3-9]|[6-9]\d)\b/);
     });
 
-    it('clips a project and a step that run past W52 at the W52 edge and marks them "Spillover → 2027"', async () => {
+    it('a year header row spans 2026 (W1–W52) and 2027 (W53–W78) from the served plan year', () => {
+      renderWithProviders(<GanttPage />);
+      const row = screen.getByTestId('gantt-year-row');
+      expect(row).toHaveStyle({ width: `${String(78 * W)}px` });
+      const bands = within(row).getAllByTestId('gantt-year-band');
+      expect(bands.map((b) => b.textContent)).toEqual(['2026', '2027']);
+      expect(bands[0]).toHaveAttribute('data-start-week', '1');
+      expect(bands[0]).toHaveAttribute('data-end-week', '52');
+      expect(bands[0]).toHaveStyle({ width: `${String(52 * W)}px` });
+      expect(bands[1]).toHaveAttribute('data-end-week', '78');
+      expect(bands[1]).toHaveStyle({ width: `${String(26 * W)}px` });
+      expect(bands[1]).toHaveAttribute('title', '2027: week 1 to week 26');
+    });
+
+    it('draws a project and steps past W52 in full; spillover is the Status badge, not a pill over the bars', async () => {
       const steps = Array.from({ length: 14 }, (_, i) => step(i + 1, 30 + i * 2, 31 + i * 2));
       // Step 14 runs W56–W57 (wholly in 2027); step 12 runs W52–W53 (straddles).
       hooks.useGantt.mockReturnValue(
@@ -344,40 +376,45 @@ describe('GanttPage', () => {
       renderWithProviders(<GanttPage />);
 
       const row = screen.getByTestId('gantt-project-row');
-      // P40-T01: the line is one segment per step. It starts at W30 (x = 29 × W)
-      // and the W52–W53 step is cut at the W52 end edge; W56–W57 draws nothing.
       const segs = [...row.querySelectorAll('rect[data-bar="planned"], rect[data-bar="elapsed"]')];
-      expect(segs).toHaveLength(12);
+      expect(segs).toHaveLength(14);
       const xs = segs.map((r) => Number(r.getAttribute('x')));
       const ends = segs.map((r) => Number(r.getAttribute('x')) + Number(r.getAttribute('width')));
       expect(Math.min(...xs)).toBe(29 * W);
-      expect(Math.max(...ends)).toBe(52 * W);
-      expect(row.querySelector('rect[data-step="PDD-L"]')).toHaveAttribute('width', String(1 * W));
-      // The spillover marker sits on the row; the projected line (W57) is not drawn past the axis.
-      const marker = within(row).getByTestId('gantt-spillover-marker');
-      expect(marker).toHaveTextContent('Spillover → 2027');
-      expect(within(row).queryByTestId('gantt-marker-projected')).not.toBeInTheDocument();
-      expect(within(row).getByTestId('gantt-marker-expected')).toHaveAttribute('data-week', '50');
+      expect(Math.max(...ends)).toBe(57 * W);
+      expect(row.querySelector('rect[data-step="PDD-L"]')).toHaveAttribute('width', String(2 * W));
+      // No right-edge pill; the projected line (W57) is drawn on the 2027 weeks.
+      expect(within(row).queryByTestId('gantt-spillover-marker')).not.toBeInTheDocument();
+      expect(within(row).getByTestId('gantt-marker-projected')).toHaveAttribute('data-week', '57');
+      expect(within(row).getByTestId('gantt-status-cell')).toHaveTextContent('Spillover');
       // No title or label on the row prints a W53+ week.
       expect(row.textContent).not.toMatch(/W5[3-9]/);
       expect(within(row).getByRole('img', { name: /will be completed W5 '27/ })).toBeInTheDocument();
 
       await user.click(screen.getByRole('button', { name: 'Expand steps for Cooler Alpha' }));
       const stepRows = screen.getAllByTestId('gantt-step-row');
-      // Step 12 (W52–W53) is clipped to one week and flagged; step 14 (W56–W57) has no bar but is flagged.
-      expect(within(stepRows[11]).getByTestId('gantt-step-spillover')).toBeInTheDocument();
-      expect(stepRows[11].querySelector('rect[data-bar]')).toHaveAttribute('width', String(1 * W));
-      expect(within(stepRows[13]).getByTestId('gantt-step-spillover')).toBeInTheDocument();
-      expect(stepRows[13].querySelector('rect[data-bar]')).toBeNull();
-      // Steps inside the year carry no marker.
-      expect(within(stepRows[0]).queryByTestId('gantt-step-spillover')).not.toBeInTheDocument();
+      // Step 12 (W52–W53) and step 14 (W56–W57) are drawn in full, with no clip cue.
+      expect(stepRows[11].querySelector('rect[data-bar]')).toHaveAttribute('width', String(2 * W));
+      expect(stepRows[13].querySelector('rect[data-bar]')).toHaveAttribute('x', String(55 * W));
+      expect(within(stepRows[11]).queryByTestId('gantt-step-spillover')).not.toBeInTheDocument();
+      expect(within(stepRows[13]).queryByTestId('gantt-step-spillover')).not.toBeInTheDocument();
     });
 
-    it('a server left-out project is shown inside the spillover framing', () => {
+    it('work past the axis end (W78) is still clipped there and keeps the right-edge cue', () => {
+      const steps = [step(1, 70, 90)];
+      hooks.useGantt.mockReturnValue(ganttData({ rows: [project({ spillover: true, steps })] }));
+      renderWithProviders(<GanttPage />);
+      const row = screen.getByTestId('gantt-project-row');
+      const seg = row.querySelector('rect[data-bar="planned"]');
+      expect(Number(seg?.getAttribute('x')) + Number(seg?.getAttribute('width'))).toBe(78 * W);
+      expect(within(row).getByTestId('gantt-spillover-marker')).toHaveTextContent('Spillover → 2027');
+    });
+
+    it('a server left-out project keeps its Status badge and gets no pill', () => {
       hooks.useGantt.mockReturnValue(ganttData({ rows: [project({ left_out: true, steps: [] })] }));
       renderWithProviders(<GanttPage />);
       const row = screen.getByTestId('gantt-project-row');
-      expect(within(row).getByTestId('gantt-spillover-marker')).toHaveTextContent('Spillover → 2027');
+      expect(within(row).queryByTestId('gantt-spillover-marker')).not.toBeInTheDocument();
       expect(within(row).getByText('Spillover · unplaced')).toBeInTheDocument();
     });
 
@@ -762,7 +799,7 @@ describe('GanttPage', () => {
       expect(within(row).queryByTestId('gantt-marker-expected')).not.toBeInTheDocument();
 
       await user.click(screen.getByRole('button', { name: 'Zoom in' }));
-      expect(screen.getByRole('img', { name: 'Week axis, week 1 to week 52' })).toHaveAttribute('width', String(52 * 20));
+      expect(screen.getByRole('img', { name: 'Week axis, Week 1 of 2026 to Week 26 of 2027' })).toHaveAttribute('width', String(78 * 20));
       expect(screen.getByRole('slider', { name: 'Zoom' })).toHaveValue('20');
       // Zoom is a rendering concern: the query params are unchanged.
       expect(hooks.useGantt).toHaveBeenLastCalledWith({ includeUnplaced: true, sort: 'priority' });

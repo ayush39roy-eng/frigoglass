@@ -139,9 +139,12 @@ describe('Import plan (Excel)', () => {
     // --- Gantt
     await user.click(screen.getByRole('tab', { name: 'Gantt' }));
     const axis = await screen.findByTestId('import-gantt-axis');
-    expect(axis).toHaveTextContent("W42 '26");
-    expect(axis).toHaveTextContent("W1 '27");
+    // P51 (ADR 0062): ticks are week-of-year (the year is in the header row), hover "Week 1 of 2027".
+    expect(axis).toHaveTextContent('W42');
+    expect(axis).toHaveTextContent('Week 1 of 2027W1');
     expect(axis).toHaveTextContent('End of 2027');
+    const years = within(screen.getByTestId('import-gantt-year-row')).getAllByTestId('gantt-year-band');
+    expect(years.map((b) => b.textContent)).toEqual(['2026', '2027', '2028']);
     expect(screen.getAllByTestId('import-gantt-project')).toHaveLength(3);
     expect(screen.getAllByTestId('import-gantt-summary-bar').length).toBeGreaterThan(0);
     expect(screen.getByTestId('import-gantt-unplaced')).toHaveTextContent('Not placed');

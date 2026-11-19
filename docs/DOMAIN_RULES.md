@@ -277,7 +277,7 @@ Lab region mapping:
 ```
 CURRENT_WEEK      = 42      (env RPD_CURRENT_WEEK; test suites pin 31)
 WITHIN_YEAR_WEEK   = 52
-DISPLAY_HORIZON    = 52      every surface shows W1–W52 only
+DISPLAY_HORIZON    = 52      every surface shows W1–W52 only, except the Gantt surfaces (ADR 0062: to the horizon, year header row)
 HORIZON_WEEKS      = 78      the scheduler's internal search limit, never displayed
 ```
 
@@ -1140,6 +1140,24 @@ Every portfolio read endpoint takes an optional `hub_id` that is **ANDed with th
 never widens it**; an out-of-scope `hub_id` returns empty rows and zero totals. Every total, count
 and percentage under a filter is computed by the server for the filtered set (I9, I19, I23). Lab
 capacity stays region-wide under a hub filter (chambers are shared per region).
+
+## Project search *(2026-11-19, P51-T02; extends `API_CONTRACT_P13.md` §3 `q`)*
+
+Every project search box follows one rule, on the server (`q` on `/projects`, `/dashboard/projects`,
+`/gantt`, `/priorities`, `/priority-board` and the exports built on them; one helper,
+`services/text_search.py`) and in the browser (client-side filters; one matcher,
+`frontend/src/lib/project-search.ts`):
+
+- Case-insensitive. Leading and trailing whitespace is stripped; a blank term is no filter. At most
+  100 characters (422 above that, unchanged).
+- `*` matches any run of characters (including none); `?` matches exactly one character.
+- Every other character matches literally, including `% _ \ - / + ( ) [ ] . & ' " # > < =` and
+  non-ASCII.
+- It is still a substring match (an implicit `*` at both ends). A term without `*` or `?` keeps
+  the earlier substring behaviour; `SP*` finds any name or code containing "SP"; `S*45` finds
+  "S-45 SZ…".
+- Server-side the term is name OR `external_code`; the pattern is a bound parameter with an escape
+  character, never interpolated into SQL. A search never widens the RBAC hub scope.
 
 ## Weekly check-in and tracking status *(2026-10-10, ADR 0021)*
 

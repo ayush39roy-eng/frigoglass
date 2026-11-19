@@ -24,13 +24,15 @@ const stepE = project.steps.find((s) => s.step_id === 'PDD-E');
 if (!stepE) throw new Error('fixture');
 
 describe('import Gantt geometry', () => {
-  it('the axis runs from the current week to the latest served end week, capped at the horizon', () => {
-    // Latest served end: the plan project ends W110 (fixture).
-    expect(scale).toEqual({ originWeek: 42, horizonWeeks: 69, weekWidthPx: 16, totalWidthPx: 69 * 16 });
-    const late = { ...SIMULATE_RESPONSE, projects: SIMULATE_RESPONSE.projects.map((p) => ({ ...p, end_week: 200 })) };
-    expect(importScale(late).horizonWeeks).toBe(130 - 42 + 1);
+  it('the axis runs from the served current week to the served horizon (P51, ADR 0062)', () => {
+    // horizon_weeks 130 (plan_until 104 + 26) = W26 2028.
+    expect(scale).toEqual({ originWeek: 42, horizonWeeks: 89, weekWidthPx: 16, totalWidthPx: 89 * 16 });
+    // Served end weeks no longer shorten or stretch the axis.
     const early = { ...SIMULATE_RESPONSE, projects: [] };
-    expect(importScale(early).horizonWeeks).toBe(104 + 4 - 42 + 1);
+    expect(importScale(early).horizonWeeks).toBe(130 - 42 + 1);
+    expect(importScale({ ...SIMULATE_RESPONSE, horizon_weeks: 98 }).horizonWeeks).toBe(98 - 42 + 1);
+    // A horizon before today still draws one week.
+    expect(importScale({ ...SIMULATE_RESPONSE, horizon_weeks: 30 }).horizonWeeks).toBe(1);
   });
 
   it('a later drop is a floor without overlap', () => {

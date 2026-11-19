@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { compileSearch } from '@/lib/project-search';
 import { cn } from '@/lib/utils';
 
 /**
@@ -39,13 +40,9 @@ export function SearchPicker({
   const inputId = React.useId();
   const listId = React.useId();
 
-  const q = query.trim().toLowerCase();
-  const matches =
-    q === ''
-      ? []
-      : options
-          .filter((o) => o.label.toLowerCase().includes(q) || o.sublabel?.toLowerCase().includes(q))
-          .slice(0, maxResults);
+  // P51-T02: the shared search rule (`*` / `?` wildcards, everything else literal).
+  const search = compileSearch(query);
+  const matches = search === null ? [] : options.filter((o) => search(o.label, o.sublabel)).slice(0, maxResults);
   const open = matches.length > 0;
 
   const choose = (option: SearchPickerOption) => {

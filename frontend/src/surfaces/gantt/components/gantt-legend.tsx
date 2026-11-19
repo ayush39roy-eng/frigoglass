@@ -135,16 +135,17 @@ export function GanttLegend({ rows = [] }: { rows?: readonly GanttProjectRow[] }
           className="h-3 w-0.5 border-l-2 border-dashed border-gantt-marker-year"
           aria-hidden="true"
         />
-        <dt>Week {WITHIN_YEAR_WEEK} — year-end (the timeline ends here)</dt>
+        <dt>Week {WITHIN_YEAR_WEEK} — year-end of {years.planYear}</dt>
       </div>
       <div className="flex items-center gap-1.5">
         <span
-          className="inline-flex h-3.5 items-center rounded-pill border border-gantt-marker-year bg-warning-subtle px-1.5 text-[0.625rem] font-bold leading-none text-warning-subtle-fg"
+          className="h-3 w-5 rounded-sm border border-gantt-marker-year/40 bg-gantt-marker-year/10"
           aria-hidden="true"
-        >
-          → {years.spilloverYear}
-        </span>
-        <dt>Spillover — not done by week {WITHIN_YEAR_WEEK}, bar cut at year-end</dt>
+        />
+        <dt>
+          {years.spilloverYear} and later (shaded) — work past week {WITHIN_YEAR_WEEK} is spillover, flagged in the
+          Status column
+        </dt>
       </div>
       {currentWeek !== null ? (
         <div className="flex items-center gap-1.5">

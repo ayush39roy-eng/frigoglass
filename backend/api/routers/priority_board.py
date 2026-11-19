@@ -45,7 +45,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -81,6 +81,7 @@ from services.hub_scope import global_hub_filter, hub_scope_filter
 from services.plan_clock import PlanClock, get_plan_clock
 from services.priority_capacity_fill import compute_capacity_fill
 from services.project_cards import build_project_cards
+from services.text_search import Q_MAX_LENGTH, project_search_filter
 
 router = APIRouter(prefix="/priority-board", tags=["priority-board"])
 
@@ -96,18 +97,11 @@ COLUMN_ORDER: tuple[ProjectPriority, ...] = (
 )
 
 
-def _escape_like(value: str) -> str:
-    """Escape LIKE wildcards so `q` is matched literally (bound parameter,
-    escape character `\\`)."""
-
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 @router.get("", response_model=PriorityBoardResponse)
 async def get_priority_board(
     hub_id: HubIdListQuery = None,
     region: RegionListQuery = None,
-    q: Annotated[str | None, Query(max_length=100)] = None,
+    q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
     category: CategoryListQuery = None,
     type_: TypeListQuery = None,
     status_: StatusListQuery = None,
@@ -145,15 +139,10 @@ async def get_priority_board(
         predicate = any_of(column, values)
         if predicate is not None:
             stmt = stmt.where(predicate)
-    term = q.strip() if q is not None else ""
-    if term:
-        pattern = f"%{_escape_like(term)}%"
-        stmt = stmt.where(
-            or_(
-                Project.name.ilike(pattern, escape="\\"),
-                Project.external_code.ilike(pattern, escape="\\"),
-            )
-        )
+    # P51-T02: the one shared project search (`*` / `?` wildcards, the rest literal).
+    search = project_search_filter(q)
+    if search is not None:
+        stmt = stmt.where(search)
     projects = (await db.execute(stmt)).scalars().all()
 
     active_run = await get_active_run(db)
