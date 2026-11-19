@@ -45347,3 +45347,25 @@ Owner 2026-11-19: "SP*" returned nothing. No migration, no scheduler change, not
 - Verdict: **PASS** for P52 (workflow/domain). No feature code written.
 
 - [2026-11-19] P52-T01 follow-up (domain-audit advisory) — frontend-builder: when "Apply to App" saved Resource (kind) changes first, the apply dialog now shows a top notice "Resource changes (PDD-J → Lab, …) are already saved. Cancel here keeps the week/gap edits as drafts; it does not undo the resource change." (only when resources were saved in that Apply; new optional `ApplyRequestOptions.notice`, rendered in `template-apply/apply-dialog.tsx`, `data-testid="template-apply-notice"`). Test added in `WorkflowSettingsPage.p52.test.tsx`; tsc/eslint clean, workflow-settings vitest 13 files / 114 passed. Not committed.
+
+## [2026-11-19] P52-T02 — Gate: qa-inspector — **PASS**
+
+**Scope.** Commit eb52d6f (P52-T01, Workflow "Effort & Timeline Planning" matrix tab, unsaved-leave guard, Chambers tab lab stages). `git show --stat`: 17 files, all under `frontend/src/surfaces/workflow-settings/` plus docs; **no backend, no migration** changes.
+
+**Static checks.** `npx tsc -b` clean (exit 0). `npx eslint src/surfaces/workflow-settings src/surfaces/capacity`: 0 errors, 2 warnings, both pre-existing in `capacity/components/engineer-utilization-heatmap.tsx:77` (react-hooks/incompatible-library on TanStack Virtual) — not P52 code; workflow-settings has zero findings. No `dangerouslySetInnerHTML`, `console.*` or raw `fetch(` in the new files.
+
+**Tests.** `vitest run src/surfaces/workflow-settings src/surfaces/capacity`: 30 files, 223/223 passed. Full `vitest run`: 291 files, 2489 passed / 1 failed — the failure is the known flake `src/app/app.test.tsx > navigates to the Project Execution Timeline surface on nav click` (9.2 s timeout), unrelated to P52.
+
+**Coverage (workflow-settings, vitest --coverage scoped).** All files 90.32% stmts / 80.16% branch / 89.84% funcs / 92.93% lines (>= 70% bar). `components/effort-matrix/` 96.55% stmts; `matrix-grid.tsx` 100%; `lib/effort-matrix.ts` 97.01%; `chambers-tab.tsx` 96% (branch 68.75%).
+
+**Acceptance (mapped to tests in `WorkflowSettingsPage.p52.test.tsx` + `lib/effort-matrix.test.ts`).**
+- Drafts never auto-apply: cell edit / Resource change stay drafts (tests L136, L195); drafts survive tab switch (L325). PASS.
+- Leaving with drafts warns: beforeunload asserted (L325); in-app nav uses `useBlocker` dialog in `unsaved-leave-guard.tsx`. PASS with gap: the in-app `RouterLeaveGuard` branch is not exercised by a test (test harness has no data router) — follow-up recommended, non-blocking.
+- Apply uses existing endpoints: resources -> steps PUT with base + stale banner, no template apply when only resources (L218); KIND_IN_USE stops apply, keeps drafts (L234); cells + gaps -> one change set through existing apply-preview dialog, cancel keeps drafts, confirm clears (L249, L275). PASS.
+- Permissions: Resource dropdown gated on `canWriteSettings` (Super Admin), weeks on `canWriteTemplates` (Admin+SA); Admin edits weeks/reads resources, read-only role sees text and no Apply (L355). PASS.
+- Invalid cells block Apply (L158; parseWeeks 0..104 unit test). PASS.
+- Keyboard nav: arrows, Enter/Shift+Enter, Escape restores (L170). PASS.
+- Axe: no serious violations with a draft on screen (L388). PASS (jsdom axe; not checked in a live browser/Playwright).
+- Chambers tab lists lab-kind steps incl. a step served as Lab (L397). PASS.
+
+**Verdict: P52 qa-inspector PASS.** Nothing committed.

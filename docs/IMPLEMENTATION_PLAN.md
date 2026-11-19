@@ -2752,4 +2752,4 @@ Presentation over existing capabilities (ADR 0007 kinds, ADR 0045–0048 templat
 | ID | Task | Owner | Depends on | Status |
 |---|---|---|---|---|
 | P52-T01 | Matrix tab: PDD + OEM grids (categories × steps, editable weeks), Resource row (Design/Lab/Other = kind), Total W + D/L, per-category timeline previews with gap ±, B-equivalent, Apply to App; Chambers tab lists every lab-kind step | frontend-builder | — | done (MEMORY 2026-11-19 P52-T01) |
-| P52-T02 | Gate | — | T01 | todo |
+| P52-T02 | Gate | — | T01 | done — gate PASS (qa, workflow, security; MEMORY 2026-11-19) |
