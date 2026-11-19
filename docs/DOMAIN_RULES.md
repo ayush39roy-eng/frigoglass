@@ -278,7 +278,7 @@ Lab region mapping:
 CURRENT_WEEK      = 42      (env RPD_CURRENT_WEEK; test suites pin 31)
 WITHIN_YEAR_WEEK   = 52
 DISPLAY_HORIZON    = 52      every surface shows W1–W52 only, except the Gantt surfaces (ADR 0062: to the horizon, year header row)
-HORIZON_WEEKS      = 78      the scheduler's internal search limit, never displayed
+HORIZON_WEEKS      = 78      the scheduler's internal search limit; displayed only on the Gantt surfaces (ADR 0062)
 ```
 
 The planning year is 52 weeks. No surface shows a week past W52; work that runs past W52 is

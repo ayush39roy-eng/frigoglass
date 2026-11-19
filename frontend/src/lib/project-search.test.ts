@@ -109,3 +109,21 @@ describe('client-side project searches use the shared matcher', () => {
     expect(filterPicks(items, { ...NO_PICK_FILTERS, query: 'r&d-*' })).toHaveLength(2);
   });
 });
+
+describe('P51 security gate: no catastrophic backtracking', () => {
+  it('a term with many * against a long value returns fast', () => {
+    const term = 'a*'.repeat(50) + 'b';
+    const value = 'a'.repeat(200);
+    const t0 = performance.now();
+    expect(matchesSearch(term, value)).toBe(false);
+    expect(matchesSearch('a*'.repeat(50), value)).toBe(true);
+    expect(performance.now() - t0).toBeLessThan(200);
+  });
+
+  it('? inside pieces and ordered pieces', () => {
+    expect(matchesSearch('s?45*sz', 'S-45 SZ Feasibility')).toBe(true);
+    expect(matchesSearch('sz*s-45', 'S-45 SZ')).toBe(false);
+    expect(matchesSearch('**', 'anything')).toBe(true);
+  });
+});
+

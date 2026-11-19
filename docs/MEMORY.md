@@ -45270,3 +45270,36 @@ Owner 2026-11-19: "SP*" returned nothing. No migration, no scheduler change, not
 - T01 + T02 done (entries above). Orchestrator: `api/routers/gantt.py` `_weekly_active_counts` now serves weeks 1..`HORIZON_WEEKS` (was W52) so the Timeline's per-week counts / activity strip fill the 2027 weeks; `tests/test_p13_slice_c.py` updated (4 asserts). Gantt/what-if/search backend tests: 860 passed; 1 failure is pre-existing (`test_p20_fte_followups.py::test_gantt_step_row_contract` field list predates P40's `pin_*` fields) — not caused by P51. Frontend gantt/planning/lib/matrix vitest 1056 passed, tsc/eslint clean, vite build ok.
 - T03 on hold by owner: old app (`src/constants.js` LAB_STAGES, "B-20 fix") treats PDD-J and PDD-L as lab steps; our kinds (ADR 0007) and the client's 2027 Process-steps sheet (Lab Time = F + H) say otherwise. Decide with the owner/client before changing kinds.
 - Gate for P51 not yet run.
+
+## [2026-11-19] P51 gate — workflow-auditor (domain referee): PASS
+
+- Scope: commit 3a090ad (ADR 0062 Timeline/import Gantt past W52 + year row; P51-T02 search wildcards). Display/search only; no solver change, so no greedy vs CP-SAT diff required and I1–I8/I10 untouched.
+- I9: Live Timeline spillover/left-out verdicts come from served `left_out`, `counts_toward_year`, `projected_end_week` (gantt-chart.tsx); the only client geometry is the right-edge clip cue (`isPastScaleEnd`), not a verdict. Import Gantt labels come from served `outcome`. No client recomputation of spillover/left-out.
+- Per-week counts: `gantt.py::_weekly_active_counts` now runs 1..HORIZON_WEEKS over the same filtered, hub-scoped project set and the same non-skipped `ScheduleRunProjectStep` rows as the step rows; per week `pdd + oem = sum(by_step)` holds by construction. `test_p13_slice_c.py` updated; 43 tests pass (P51 + slice C).
+- W52 year-end marker: WITHIN_YEAR_WEEK = 52 still the year-end line and spillover threshold; HORIZON_WEEKS = 78 unchanged. DOMAIN_RULES DISPLAY_HORIZON line now carves out the Gantt surfaces per ADR 0062; the line "HORIZON_WEEKS ... never displayed" is now stale wording for the Gantt surfaces (non-blocking doc nit; suggest amending next doc pass).
+- Search: one helper `services/text_search.py`; escape `\ % _` first, then `*`→`%`, `?`→`_`; bound `ilike(..., escape)`. Every caller applies it via `stmt.where(...)` after the RBAC hub filter, so it can only narrow; hub scoping unchanged. Matches DOMAIN_RULES "Project search".
+- Verdict: PASS for P51.
+
+## [2026-11-19] P51 gate — security-auditor — PASS
+
+- Scope: commit 3a090ad (P51-T01 timeline display, P51-T02 search wildcards).
+- Backend `services/text_search.py`: escape `\ % _` then `*`→`%`, `?`→`_`; pattern passed as bound parameter to `ilike(..., escape="\\")`; no SQL interpolation. All project-`q` callers (`/projects`, `/dashboard/projects`, `/gantt`, `/priorities`, `/priority-board`, exports) keep `max_length=100`; diff touches only the `q` predicate, hub-scope filters unchanged. `test_p51_search_wildcards.py` 22 passed (incl. out-of-scope hub never matches, 101 chars → 422). Postgres LIKE matcher prunes (LIKE_ABORT) and is bounded by 100 chars — Info.
+- Frontend `lib/project-search.ts`: specials escaped correctly under `u`; no `dangerouslySetInnerHTML` in timeline changes.
+- **Medium (open, non-blocking): client-side ReDoS.** `*`→`.*` with no collapsing/linear matcher; `"a*".repeat(50)+"b"` on a 200-char value hung node >120 s. Term comes only from the user's own typed input (not URL), so self-tab freeze only. Remediation: collapse runs of `*`, and match by splitting on `*` and scanning segments with indexOf (linear), or cap wildcard count.
+- No High/Critical. P51 security gate: PASS.
+
+## [2026-11-19] P51 gate — qa-inspector — PASS
+
+- **Backend** (`backend/.venv`, COVERAGE_FILE in scratch): `test_p51_search_wildcards.py` + `test_p13_slice_a/c.py` + `test_p20_fte_followups.py`: 93 passed, 1 failed. Coverage: `services/text_search.py` 100% (18 stmts), `api/routers/gantt.py` 76% (≥70%; misses 628-672, 743-865 export paths), `schemas/gantt.py` 100%. Nothing under `backend/scheduling/` touched, so the 85% bar is not affected.
+- **Known failures confirmed pre-existing** by running them in a temporary worktree at f80152a (before P51): `tests/test_p20_fte_followups.py::test_gantt_step_row_contract` fails the same way there (its field list predates P40's `pin_*` fields); `src/app/app.test.tsx` "navigates to the Project Execution Timeline surface on nav click" fails the same way there (1 failed / 14 passed). Neither is a P51 regression. They are still open follow-ups.
+- **Frontend:** `npx tsc -b` clean; `npx eslint src --quiet` clean; vitest gantt + planning + lib + matrix + admin-users + workflow-settings + app: 124 files, 1198 passed, 1 failed (the known app.test flake above).
+- **Axis checks:** `yearBands` uses year offset floor((w-1)/52), clipped to the axis. The tests cover 2026/2027/2028 bands, W1..W78 Timeline ticks and W1..W130 import ticks, and assert that no tick label is ever ≥ 53 (absolute W53 prints "1"). The import axis runs from served `current_week` to `horizon_weeks`. `_weekly_active_counts` now serves 1..`dc.HORIZON_WEEKS` (gantt.py:241), and test_p13_slice_c covers it.
+- **Search checks:** the server builds the pattern by escaping `\ % _` first, then mapping `*`→`%` and `?`→`_`, then wrapping it in `%…%`. It is passed as a bound `ilike(..., escape="\\")` on name OR external_code, with no string interpolation, and the endpoint tests cover literal `% _ \`, `EEI>15%`, Greek text, hub scope and 101 chars → 422. Note: the client matcher (`lib/project-search.ts`) no longer uses a regex. Since the T02 entry it has used ordered-piece matching (no backtracking), where `?` matches one code point and specials are compared literally. The T02 entry's "regex with flags su" description is out of date. `wildcardSource` is still exported but no matcher code uses it (minor, non-blocking).
+- Verdict: **PASS** for P51 (QA). No commit made.
+
+## [2026-11-19] P51 — gate closed (orchestrator)
+
+- qa-inspector PASS, workflow-auditor PASS, security-auditor PASS (entries above). P51-T01/T02 closed; T03 (J/L lab stages) on hold by owner.
+- Security Medium (browser ReDoS in `frontend/src/lib/project-search.ts`) fixed before push: wildcard terms no longer compile to a regex; pieces between `*` are matched in order (`?` = one code point), linear, no backtracking. Regression test: `"a*"×50+"b"` vs 200 chars < 200 ms. The P51-T02 entry's "regex" description is superseded. `wildcardSource` stays exported (tests) but is unused by the matcher.
+- DOMAIN_RULES HORIZON_WEEKS line reworded ("displayed only on the Gantt surfaces (ADR 0062)") per the domain audit.
+- Pre-existing, still open: `test_p20_fte_followups.py::test_gantt_step_row_contract` (field list predates P40 pin_*), app.test Timeline-nav flake.
