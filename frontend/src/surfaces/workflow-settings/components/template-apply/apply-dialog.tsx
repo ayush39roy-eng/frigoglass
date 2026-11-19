@@ -67,6 +67,16 @@ export function ApplyDialog({
           <DialogTitle>Save template changes</DialogTitle>
           <DialogDescription>Check which projects these changes reach. Nothing is saved until you press Apply.</DialogDescription>
         </DialogHeader>
+        {flow?.options.notice ? (
+          <p
+            role="note"
+            className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning-subtle px-3 py-2 text-xs text-warning-subtle-fg"
+            data-testid="template-apply-notice"
+          >
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            {flow.options.notice}
+          </p>
+        ) : null}
         {flow ? <ChangeSummary lines={flow.options.summary} /> : null}
         {flow?.kind === 'checking' ? (
           <div className="space-y-2" aria-busy="true">

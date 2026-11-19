@@ -286,7 +286,9 @@ function TemplateTabs({
           canWriteSettings={canWriteSettings}
           applying={busy}
           onSaveSteps={onSaveSteps}
-          onStartApply={(changeSet, summary, onApplied) => start(changeSet, { summary, onApplied })}
+          onStartApply={(changeSet, summary, onApplied, notice) =>
+            start(changeSet, notice ? { summary, onApplied, notice } : { summary, onApplied })
+          }
           onEditWorkflow={() => setTab('steps')}
         />
       </TabsContent>

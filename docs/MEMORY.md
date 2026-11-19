@@ -45325,3 +45325,25 @@ Owner 2026-11-19: "SP*" returned nothing. No migration, no scheduler change, not
 **Verification.** `npx tsc -b` clean; `npx eslint src/surfaces/workflow-settings` clean; `npx vitest run src/surfaces/workflow-settings`: 13 files, 113 passed (P52: 14 page tests incl. axe, 6 lib tests: matrix/headers/Resource row, totals + draft, invalid cell, keyboard nav, Resource confirm + cancel, Resource Apply → steps PUT with base + stale banner and no template apply, KIND_IN_USE stops apply and keeps drafts, cells + timeline gap/length ± → one apply-preview change set → dialog summary → cancel keeps drafts → confirm applies and clears, tab switch keeps drafts + beforeunload, Edit Workflow, Admin/reader permissions, OEM card, Chambers lab stages). `src/app` run: only the known pre-existing Timeline-nav flake. Not checked in a live browser. Nothing committed.
 
 **Open / for the gate.** No ADR needed (presentation over ADR 0007 / 0045–0048). P51-T03 (J/L as lab stages) still owner-on-hold; with this tab a Super Admin can set PDD-J/PDD-L to Lab, which then appear in the chamber stage lists — that is a global kind change (moves load), confirm-gated as before.
+
+## [2026-11-19] P52 — security gate review (security-auditor)
+
+- Scope: commit eb52d6f, frontend only (`frontend/src/surfaces/workflow-settings/**`); no backend diff, no new endpoint, no migration.
+- XSS: no `dangerouslySetInnerHTML` / `innerHTML` / `eval` added. No localStorage/sessionStorage; drafts held in React state only; no logging of data.
+- AuthZ: client gating (cells/Apply = `workflow_templates.write`; Resource = `workflow_settings.write`) is UI only; server still enforces: `PUT /workflow-settings/steps/{wf}` uses `_write` dependency, template apply/preview writes use `require_workflow_templates_write` (backend/api/routers/workflow_templates.py). Unchanged by P52.
+- Input validation: `parseWeeks` accepts whole weeks 0..104 only (rejects 1.5, -1, 1e2, abc); server-side Pydantic validation remains authoritative.
+- `beforeunload` guard: no data exposure.
+- Findings: none High/Critical/Medium. Info: client range check (0..104) should stay aligned with server limits.
+- Verdict: **PASS** for P52 (security).
+
+## [2026-11-19] P52 gate — workflow-auditor — PASS
+
+- **Scope:** eb52d6f (frontend only, Effort & Timeline Planning matrix). No solver/backend change, so no greedy/CP-SAT diff and no I1–I10 schedule re-derivation needed; I9 checked on the displayed numbers.
+- **Template edits (ADR 0045–0048, P33):** cell lengths and gaps are P33 template-drafts; `matrixChangeSet` builds the existing E1 change set and `onStartApply` goes through the shared `useTemplateApply` dialog (E2 preview of projects reached → E3 apply, cancellable). No other write path. Bounds 0..104 match `WEEKS_MIN/MAX`.
+- **Resource row (ADR 0007):** Design/Lab/Other map to design/lab/elapsed. Each change is confirm-gated with `kindChangeExplanation`. It is saved through the same `onSaveSteps` as the Steps tab (per-step `base`, 409 conflict flow, `track()` → StaleBanner), and needs `workflow_settings.write` (Super Admin).
+- **Numbers (I9):** TOTAL = Σ weeks, D = Σ design-kind weeks, L = Σ lab-kind weeks (elapsed is in TOTAL only). These are labelled in the UI as template totals and are not plan figures. Timeline starts and totals come from `useTimelinePreview` (server). B-equivalent comes from `useBEquivalent` (server, saved template, labelled "updates after Apply to App"). The client does not recalculate any schedule figure.
+- **Builder decision classified, acceptable, no ADR:** pressing Apply to App saves the drafted kinds first (steps PUT + stale banner), then opens the template apply dialog. Cancelling that dialog keeps the kind change. This matches the existing Steps tab, where a confirmed kind change saves straight away, and the per-change confirm already says "draft until you press Apply to App". Ordering kinds first is correct because the E2 preview and D/L should use the kinds in force. Advisory (non-blocking): the apply dialog should say that resource changes were already saved.
+- Verification: `npx vitest run src/surfaces/workflow-settings`: 113/113 passed.
+- Verdict: **PASS** for P52 (workflow/domain). No feature code written.
+
+- [2026-11-19] P52-T01 follow-up (domain-audit advisory) — frontend-builder: when "Apply to App" saved Resource (kind) changes first, the apply dialog now shows a top notice "Resource changes (PDD-J → Lab, …) are already saved. Cancel here keeps the week/gap edits as drafts; it does not undo the resource change." (only when resources were saved in that Apply; new optional `ApplyRequestOptions.notice`, rendered in `template-apply/apply-dialog.tsx`, `data-testid="template-apply-notice"`). Test added in `WorkflowSettingsPage.p52.test.tsx`; tsc/eslint clean, workflow-settings vitest 13 files / 114 passed. Not committed.

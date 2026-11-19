@@ -246,6 +246,32 @@ describe('P52-T01 — Effort & Timeline Planning matrix', () => {
     expect(screen.getByTestId('apply-to-app')).toHaveTextContent('Apply to App (2)');
   });
 
+  it('when Apply to App saved resources first, the apply dialog says they are saved and Cancel does not undo them', async () => {
+    const { user } = await openMatrix();
+    await user.click(screen.getByRole('combobox', { name: 'Resource — PDD-J Pre-Production (Pr. Pr)' }));
+    await user.click(await screen.findByRole('option', { name: 'Lab' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Change resource' }));
+    await user.clear(cell('A+', 'PDD-E'));
+    await user.type(cell('A+', 'PDD-E'), '7');
+    await user.click(screen.getByTestId('apply-to-app'));
+    const dialog = await screen.findByTestId('template-apply-dialog');
+    // The steps PUT went first, then the apply preview.
+    expect(puts('/workflow-settings/steps/PDD')).toHaveLength(1);
+    expect(within(dialog).getByTestId('template-apply-notice')).toHaveTextContent(
+      'Resource changes (PDD-J → Lab) are already saved. Cancel here keeps the week/gap edits as drafts; it does not undo the resource change.',
+    );
+    await within(dialog).findByTestId('apply-counts');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    // Week edit kept as a draft; the resource is no longer a draft (it is saved).
+    expect(screen.getByTestId('apply-to-app')).toHaveTextContent('Apply to App (1)');
+    expect(screen.getByTestId('resource-PDD-J')).not.toHaveAttribute('data-drafted');
+    expect(screen.getByRole('combobox', { name: 'Resource — PDD-J Pre-Production (Pr. Pr)' })).toHaveTextContent('Lab');
+    // A later Apply with no resource changes shows no notice.
+    await user.click(screen.getByTestId('apply-to-app'));
+    const again = await screen.findByTestId('template-apply-dialog');
+    expect(within(again).queryByTestId('template-apply-notice')).not.toBeInTheDocument();
+  });
+
   it('Apply to App: cell lengths and timeline gaps go as one change set through the existing apply dialog; applied drafts clear', async () => {
     const { user } = await openMatrix();
     await user.clear(cell('A+', 'PDD-E'));
@@ -279,6 +305,8 @@ describe('P52-T01 — Effort & Timeline Planning matrix', () => {
       },
     ]);
     expect(await within(dialog).findByText('A+ · PDD-E length 6w → 7w')).toBeInTheDocument();
+    // No resource was saved in this Apply, so no "already saved" notice.
+    expect(within(dialog).queryByTestId('template-apply-notice')).not.toBeInTheDocument();
     expect(within(dialog).getByText('A+ · PDD-H gap 0w → −1w')).toBeInTheDocument();
     // Cancelling keeps the drafts.
     await within(dialog).findByTestId('apply-counts');

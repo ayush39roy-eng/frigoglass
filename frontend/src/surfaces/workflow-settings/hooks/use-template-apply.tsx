@@ -38,6 +38,11 @@ export interface ApplyRequestOptions {
   summary: string[];
   /** Called once the apply succeeded (drafts can be cleared). */
   onApplied?: () => void;
+  /**
+   * P52-T01: shown at the top of the dialog — e.g. Resource (kind) changes
+   * already saved by "Apply to App" before this dialog opened.
+   */
+  notice?: string;
 }
 
 export type ApplyFlow =

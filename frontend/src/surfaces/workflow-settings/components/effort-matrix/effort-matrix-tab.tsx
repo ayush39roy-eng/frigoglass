@@ -48,7 +48,7 @@ export interface EffortMatrixTabProps {
   /** An apply is being checked / written / followed. */
   applying: boolean;
   onSaveSteps: (workflowId: string, body: StepsUpdateRequest) => Promise<WorkflowSettingsSaveResult>;
-  onStartApply: (changeSet: TemplateChangeSet, summary: string[], onApplied: () => void) => void;
+  onStartApply: (changeSet: TemplateChangeSet, summary: string[], onApplied: () => void, notice?: string) => void;
   onEditWorkflow: () => void;
 }
 
@@ -97,6 +97,7 @@ export function EffortMatrixTab({
     setError(null);
     // 1. Resources: one steps PUT per workflow with drafted kinds (predecessors as served).
     setSavingKinds(true);
+    const savedResources: string[] = [];
     try {
       for (const w of ordered) {
         const drafted = state.kinds[w.id] ?? {};
@@ -105,6 +106,9 @@ export function EffortMatrixTab({
           .sort((a, b) => a.sequence_order - b.sequence_order)
           .map((s) => ({ step_id: s.step_id, kind: drafted[s.step_id] ?? s.kind, predecessor_ids: [...s.predecessor_ids] }));
         await onSaveSteps(w.id, { steps });
+        for (const s of steps) {
+          if (s.step_id in drafted) savedResources.push(`${s.step_id} → ${RESOURCE_LABEL[s.kind]}`);
+        }
         state.clearKinds(w.id);
       }
     } catch (err) {
@@ -116,7 +120,12 @@ export function EffortMatrixTab({
     // 2. Lengths and gaps: the apply dialog shows which projects they reach.
     const changeSet = matrixChangeSet(state.drafts, versions);
     if (changeSet.changes.length === 0) return;
-    onStartApply(changeSet, matrixSummary(state.drafts, state.savedOf), state.clearTemplateDrafts);
+    // Domain-audit advisory: say that resources are already saved and Cancel does not undo them.
+    const notice =
+      savedResources.length > 0
+        ? `Resource changes (${savedResources.join(', ')}) are already saved. Cancel here keeps the week/gap edits as drafts; it does not undo the resource change.`
+        : undefined;
+    onStartApply(changeSet, matrixSummary(state.drafts, state.savedOf), state.clearTemplateDrafts, notice);
   };
 
   return (
