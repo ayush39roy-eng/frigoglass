@@ -46156,3 +46156,11 @@ Judged P53 files only (shared tree has P54/P55 WIP). Nothing committed, no featu
 Owner: "remove all the mandatory fields except project title"; the owner chose to keep Hub. ADR 0066
 written and the DOMAIN_RULES registration rule updated. Backend and frontend done (entries above).
 The owner asked to push fast, so this was pushed before the P56-T04 gate; the gate is still owed.
+
+## 2026-11-19 — Hotfix: blank project code no longer breaks registration (backend-engineer)
+- Bug: `projects.external_code` is UNIQUE; the form sent `""`, a hosted row already held `''`, so every blank-code registration hit the constraint (500).
+- Fix: `schemas/project.py` `blank_external_code_to_none` (mode="before" validator on ProjectCreateRequest + ProjectUpdateRequest; strip, blank -> None; max_length 100 now also on update). `RegisterEditPatch` has no external_code; plan import does not write it.
+- `api/routers/projects.py` `_ensure_external_code_free` (global, not hub-scoped, matching the global constraint) -> 409 `DUPLICATE_EXTERNAL_CODE` "Another project already uses this project code." on create and in `stage_project_update` (PATCH). Pre-check only; a concurrent race would still surface as the constraint error.
+- No migration, existing '' row untouched (hosted data rule); a PATCH with blank code turns it NULL.
+- Frontend: project-form sends `external_code?.trim() || null`; error copy added to API_ERROR_MESSAGES.
+- Tests: `backend/tests/test_external_code_blank.py` (5). 553 backend tests in the external_code/registration/P56 set pass; registration + lib/api vitest 151 pass; tsc, ruff, mypy (touched files) clean. Not committed.

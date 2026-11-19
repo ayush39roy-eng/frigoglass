@@ -18,7 +18,14 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+)
 
 from models.enums import (
     HubName,
@@ -61,6 +68,16 @@ ScoringTags = Annotated[
 ]
 
 
+
+def blank_external_code_to_none(value: object) -> object:
+    """`projects.external_code` is UNIQUE: a blank or whitespace-only code is
+    stored as NULL (no code), never as '' (two '' rows collide). Non-strings
+    pass through to the normal type check."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return value
+
 class ProjectCreateRequest(BaseModel):
     """ADR 0034 (2026-10-21): registration creates the project `In Queue`.
 
@@ -79,6 +96,11 @@ class ProjectCreateRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=300)
     external_code: str | None = Field(default=None, max_length=100)
+
+    @field_validator("external_code", mode="before")
+    @classmethod
+    def _normalise_external_code(cls, value: object) -> object:
+        return blank_external_code_to_none(value)
     hub_id: uuid.UUID
     leader_engineer_id: uuid.UUID | None = None
     #: P33-T07 (ADR 0047): a `categories.code`; existence and the hub's
@@ -135,7 +157,12 @@ class ProjectUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=300)
-    external_code: str | None = None
+    external_code: str | None = Field(default=None, max_length=100)
+
+    @field_validator("external_code", mode="before")
+    @classmethod
+    def _normalise_external_code(cls, value: object) -> object:
+        return blank_external_code_to_none(value)
     hub_id: uuid.UUID | None = None
     leader_engineer_id: uuid.UUID | None = None
     #: P33-T07 (ADR 0047): a `categories.code`; existence and the hub's

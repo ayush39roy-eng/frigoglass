@@ -38,6 +38,8 @@ export function isBandRankBusy(err: unknown): boolean {
 }
 
 export const API_ERROR_MESSAGES: Record<string, string> = {
+  // Project code is unique across the portfolio (`projects.external_code`).
+  DUPLICATE_EXTERNAL_CODE: 'Another project already uses this project code.',
   // Session / users (ADR 0010)
   LAST_SUPER_ADMIN: 'This change would leave no active Super Admin. Promote another user to Super Admin first.',
   ADMIN_ACCOUNT_REQUIRES_SUPER_ADMIN: 'Only a Super Admin can change an Admin or Super Admin account or grant those roles.',

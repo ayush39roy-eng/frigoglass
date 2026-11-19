@@ -646,6 +646,25 @@ async def get_hard_gate_status(
 TARGET_END_MAX_AHEAD = 520
 
 
+
+async def _ensure_external_code_free(
+    db: AsyncSession, code: str | None, exclude_id: uuid.UUID | None
+) -> None:
+    """409 `DUPLICATE_EXTERNAL_CODE` when another project already holds the
+    (non-blank) code — instead of the UNIQUE constraint's 500. Unscoped on
+    purpose: the constraint is global."""
+    if code is None:
+        return
+    stmt = select(Project.id).where(Project.external_code == code)
+    if exclude_id is not None:
+        stmt = stmt.where(Project.id != exclude_id)
+    if (await db.execute(stmt.limit(1))).scalar_one_or_none() is not None:
+        raise CodedHTTPException(
+            status.HTTP_409_CONFLICT,
+            "DUPLICATE_EXTERNAL_CODE",
+            "Another project already uses this project code.",
+        )
+
 def _check_target_end(value: object, week: int) -> None:
     """R53-8: `1 <= target_end_week <= current_week + 520` (replaces the fixed
     520). 422 `TARGET_END_OUT_OF_RANGE`."""
@@ -719,6 +738,7 @@ async def create_project(
             [field_error("leader_engineer_id", "Unknown leader_engineer_id")],
         )
 
+    await _ensure_external_code_free(db, body.external_code, None)
     _figures_to_decimal(data)
     kinds = await template_kinds(db)
     # ADR 0041 R7: a figure whose split exceeds 104 weeks on a step rejects
@@ -924,6 +944,8 @@ async def stage_project_update(
     `project_leader_history` row (`leader_cause`), at `clock`'s week."""
 
     status_before = project.status
+    if "external_code" in updates:
+        await _ensure_external_code_free(db, updates["external_code"], project.id)
     if "target_end_week" in updates:
         _check_target_end(updates["target_end_week"], (clock or plan_clock_now()).week)
     # ADR 0058 D1.1: only a Super Admin sets a project to Cancelled.

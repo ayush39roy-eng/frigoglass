@@ -402,7 +402,8 @@ export function ProjectForm({
     }
     const body: ProjectCreateRequest = {
       name: values.name,
-      external_code: values.external_code ?? null,
+      // Blank code -> null: `projects.external_code` is UNIQUE, '' would collide.
+      external_code: values.external_code?.trim() || null,
       hub_id: effectiveHubId,
       leader_engineer_id: leaderId === NONE ? null : leaderId,
       category: category === NONE ? null : (category as ProjectCategory),
