@@ -2753,3 +2753,14 @@ Presentation over existing capabilities (ADR 0007 kinds, ADR 0045–0048 templat
 |---|---|---|---|---|
 | P52-T01 | Matrix tab: PDD + OEM grids (categories × steps, editable weeks), Resource row (Design/Lab/Other = kind), Total W + D/L, per-category timeline previews with gap ±, B-equivalent, Apply to App; Chambers tab lists every lab-kind step | frontend-builder | — | done (MEMORY 2026-11-19 P52-T01) |
 | P52-T02 | Gate | — | T01 | done — gate PASS (qa, workflow, security; MEMORY 2026-11-19) |
+
+## P53 — One week line across years, P1–P3 scheduled to completion, delivery by year (ADR 0063; R53; owner 2026-11-19). Supersedes P37-F01. Deploy before 28 Dec 2026.
+
+| ID | Task | Owner | Depends on | Status |
+|---|---|---|---|---|
+| P53-T01 | Fold ruling into DOMAIN_RULES, ADR 0063, OQ #117–#120 | orchestrator | — | done (MEMORY 2026-11-19) |
+| P53-T02 | Engine: week helpers, search limit, counting/queue split, Commercialized fix, CP-SAT greedy tail, MC, What-if, plan import, active_weeks, delivery table, LEFT_OUT reason, warnings, invariants, clock self-tests | algorithm-engineer | T01 | in progress |
+| P53-T03 | Backend: clock rewrite, /me, check-in 409 removed, P37-T05 weekly rollover, p53a + checksum test, Admin N setting, fixed-bound readers, delivery table + warnings served, API contract, deploy-run script | backend-builder | T01; T02 helpers | in progress |
+| P53-T04 | Frontend: constants removed, generic week labels/date conversion, Timeline axis + year row, delivery-by-year panel, copy, N setting, import pickers | frontend-builder | T03 contract | in progress |
+| P53-T05 | Audit on a disposable DB copy | workflow-auditor | T02–T04 | todo |
+| P53-T06 | Gate | — | T05 | todo |

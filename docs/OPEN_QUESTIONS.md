@@ -1366,3 +1366,21 @@ Options: 6 months (today), 12 months, or only the year end.
 of 2027. P37-F01 must be planned before 28 Dec 2026.
 **Assuming until answered:** 52.
 **Who must answer:** owner.
+
+### 117
+**Queued P3 now counts toward the year** (R53-2; reverses the ADR 0056 owner answer "P3 queued, not counted").
+**Assuming until answered:** yes, counted. **Who must answer:** owner + client.
+
+### 118
+**A Commercialized project with no actual end date** is treated as delivered in 2026.
+**Assuming until answered:** 2026. **Who must answer:** client.
+
+### 119
+**Search limit N years** (Admin setting): default 5, range 1–10 — confirm.
+**Assuming until answered:** 5. **Who must answer:** owner.
+
+### 120
+**Typed step Start/End pins only inside the current plan year?**
+**Assuming until answered:** yes. **Who must answer:** owner.
+
+*(#88, #115, #116 closed by ADR 0063 / R53, 2026-11-19.)*

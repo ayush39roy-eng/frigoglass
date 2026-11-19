@@ -2043,3 +2043,20 @@ security (OQ #113).
   weekly capacity `cw..u`, calendar-year windows clipped to u. Server serves `plan_until_week` and
   `plan_window_label`. Saved scenarios store u; re-run u := max(u, f) (`PLAN_UNTIL_RAISED`); Compare
   warns when windows differ. **I56** `cw ≤ f ≤ u ≤ 104`; u unset → every pre-R49 field identical, only the window fields added. `BAND_VALUE_INVALID` applies to the four new band columns only; "Must Do" keeps its pre-R49 reading of other text.
+
+## One week line, open horizon, delivery by year *(2026-11-19, ADR 0063; ruling R53-1..R53-9, I57–I63)*
+
+Binding; the full ruling text is the "[2026-11-19] R53 — workflow-auditor ruling" entry in
+`docs/MEMORY.md` (with its measurement addendum). Where earlier sections (Horizon constants, plan
+clock / closed year, ADR 0056 queued P3, ADR 0061 bounds, ADR 0024/0062 display) disagree, this wins.
+
+- Weeks are absolute from 2026 W1, never re-based; CURRENT_WEEK = absolute ISO week (Europe/Athens,
+  ISO W53 → W52); plan year = year of CURRENT_WEEK; no closed year (`PLAN_YEAR_CLOSED` retired).
+- P1, P2, P3 (queued P3 included) are scheduled to completion and counted; P4 not scheduled. Search
+  limit = CURRENT_WEEK + N×52 (Admin setting, 1–10, default 5, stored per run). Unplaced → LEFT_OUT
+  "Cannot be scheduled within N years — check resources".
+- Commercialized counts only in the year of its actual end week (none → 2026).
+- Delivery by year: server-computed; first row equals the Dashboard within-year count (I59).
+- CP-SAT window = plan-year end + 26, then a greedy tail to the search limit (I60).
+- Stored runs are history, never rewritten (I57, I62); warnings `far_finish` / `leader_overloaded`
+  never affect placement (I63).
