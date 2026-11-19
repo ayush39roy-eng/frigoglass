@@ -3,8 +3,8 @@ import { Play, Wand2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { useCurrentWeek, usePlanYearLabels } from '@/lib/plan-clock';
+import { formatWeek } from '@/lib/format';
+import { useCurrentWeek, usePlanYearEndWeek, usePlanYearLabels } from '@/lib/plan-clock';
 
 import type { CapacityBasis } from '../../api/types';
 import type { CapacityUnit } from '../../lib/figures';
@@ -31,6 +31,7 @@ export interface PlanningToolbarProps {
 export function PlanningToolbar({ basis, onBasisChange, unit, onUnitChange, onApplyLogic, onAutoAssign }: PlanningToolbarProps): React.JSX.Element {
   // P37: the served calendar week and plan year.
   const currentWeek = useCurrentWeek();
+  const yearEndWeek = usePlanYearEndWeek();
   const { planYear } = usePlanYearLabels();
   return (
     <div className="flex max-w-full flex-wrap items-center gap-2" data-testid="planning-toolbar">
@@ -47,7 +48,7 @@ export function PlanningToolbar({ basis, onBasisChange, unit, onUnitChange, onAp
         <ToggleGroupItem
           value="remaining"
           className={PILL_ITEM}
-          title={`Remaining year: week ${String(currentWeek ?? '…')} to week ${String(WITHIN_YEAR_WEEK)}`}
+          title={`Remaining year: ${currentWeek === null ? '…' : formatWeek(currentWeek)} to ${yearEndWeek === null ? '…' : formatWeek(yearEndWeek)}`}
         >
           YTD {planYear}
         </ToggleGroupItem>

@@ -70,14 +70,19 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import domain_constants as dc
 from models.chamber import Chamber
 from models.engineer import Engineer
 from models.enums import ScheduleRunStatus, SolverType
 from models.hub import Hub
 from models.project import Project, workflow_id_for_hub
-from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
+from models.schedule import (
+    RULES_EPOCH_P53,
+    ScheduleRun,
+    ScheduleRunProjectOutcome,
+    ScheduleRunProjectStep,
+)
 from models.workflow import ProjectWorkflowStep, WorkflowLeadTime, WorkflowStepTemplate
+from scheduling.delivery import outcome_left_out_reason
 from scheduling.types import (
     ChamberInput,
     EngineerInput,
@@ -92,11 +97,13 @@ from scheduling.types import (
     require_plan_week,
 )
 from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
+from scheduling.weeks import plan_year_end_week
 from scheduling.workflow import canonical_categories, is_valid_fte
 from services import plan_clock
 from services.categories import load_catalog
 from services.notifications import generate_schedule_change_notifications
 from services.schedule_stale import clear_stale_for_run
+from services.scheduling_settings import horizon_weeks_for
 from services.workflow_durations import EFFORT_KINDS, run_input_lead_and_override
 
 
@@ -278,8 +285,8 @@ async def build_schedule_input_from_db(
     db: AsyncSession,
     *,
     current_week: int,
-    horizon_weeks: int = dc.HORIZON_WEEKS,
-    within_year_week: int = dc.WITHIN_YEAR_WEEK,
+    horizon_weeks: int | None = None,
+    within_year_week: int | None = None,
 ) -> ScheduleInput:
     """Load every `Project`/`Engineer`/`Chamber`/`WorkflowStepTemplate` row and
     map it into `scheduling.types.ScheduleInput`.
@@ -294,8 +301,16 @@ async def build_schedule_input_from_db(
     risk silently diverging from `scheduling/`'s own logic.
     """
 
-    # I41: the clock's or a stored row's week must be a plan week (1..52).
+    # I41: the clock's or a stored row's week must be an absolute plan week.
     current_week = require_plan_week(current_week)
+    # P53 (R53-2, I58): the search limit is `cw + 52 × N` with the stored
+    # Admin setting N, unless the caller passes a run row's stored horizon
+    # (the worker, R37-2 pattern). The within-year cut-off is the plan-year
+    # end of the input week (I50 amended).
+    if horizon_weeks is None:
+        horizon_weeks = await horizon_weeks_for(db, current_week)
+    if within_year_week is None:
+        within_year_week = plan_year_end_week(current_week)
     project_rows = (
         (await db.execute(select(Project).options(selectinload(Project.hub)))).scalars().all()
     )
@@ -432,6 +447,9 @@ async def build_schedule_input_from_db(
             workflow_id=workflow_id_for_hub(p.hub.is_oem),
             certification_testing_required=p.certification_testing_required,
             target_end_week=p.target_end_week,
+            # P53 (R53-2b, I61): the delivered year of a Commercialized
+            # project.
+            actual_end_week=p.actual_end_week,
             step_progress=tuple(progress_by_project.get(p.id, ())),
             step_timing=_project_step_timing(
                 timing_by_project.get(p.id, ()),
@@ -667,6 +685,7 @@ async def persist_schedule_output(
         run.completed_at = datetime.now(UTC)
         run.workflow_snapshot = snapshot
         run.solver_status = effective_solver_status
+        run.rules_epoch = RULES_EPOCH_P53
         if triggered_by_user_id is not None:
             run.triggered_by_user_id = triggered_by_user_id
         db.add(run)
@@ -684,6 +703,8 @@ async def persist_schedule_output(
             trigger_reason=trigger_reason,
             workflow_snapshot=snapshot,
             solver_status=effective_solver_status,
+            # P53 (R53-7): every run persisted from here on is a P53 run.
+            rules_epoch=RULES_EPOCH_P53,
         )
         db.add(run)
     await db.flush()  # assigns run.id (new-row case) / persists in-place edits
@@ -784,6 +805,11 @@ async def persist_schedule_output(
                 # P42 (R42-4, I50): stored exactly as the scheduler emitted them.
                 counts_toward_year=outcome.counts_toward_year,
                 not_scheduled_priority=outcome.not_scheduled_priority,
+                # P53 (R53-3): the band in the run input, and (R53-2) the
+                # not-placed reason with the scheduler's diagnostics, which
+                # the outcome row does not otherwise keep.
+                priority_at_run=project_input.priority if project_input is not None else None,
+                left_out_reason=outcome_left_out_reason(outcome),
             )
         )
 
@@ -812,7 +838,7 @@ async def create_queued_schedule_run(
     solver_type: SolverType,
     trigger_reason: str,
     triggered_by_user_id: uuid.UUID | None,
-    horizon_weeks: int = dc.HORIZON_WEEKS,
+    horizon_weeks: int | None = None,
     current_week: int | None = None,
 ) -> ScheduleRun:
     """Create and COMMIT (not just flush) a new `ScheduleRun` row in
@@ -855,6 +881,10 @@ async def create_queued_schedule_run(
     if current_week is None:
         current_week = plan_clock.current_week()
     current_week = require_plan_week(current_week)  # I41
+    # P53 (R53-2, I58): N is read once, here, with the week; the worker
+    # builds the input with the stored horizon.
+    if horizon_weeks is None:
+        horizon_weeks = await horizon_weeks_for(db, current_week)
     version = await _next_version(db)
     # P9-T03 (I15): snapshot the settings in force at creation too, so even a
     # run that later fails or is cancelled records them. On completion,
@@ -874,6 +904,7 @@ async def create_queued_schedule_run(
         triggered_by_user_id=triggered_by_user_id,
         trigger_reason=trigger_reason,
         workflow_snapshot=snapshot,
+        rules_epoch=RULES_EPOCH_P53,
     )
     db.add(run)
     await db.commit()

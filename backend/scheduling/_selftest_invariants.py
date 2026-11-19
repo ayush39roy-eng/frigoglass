@@ -242,6 +242,7 @@ def direction1_left_out_at_horizon() -> None:
         lead_times=LEAD_TIMES,
         current_week=77,
         horizon_weeks=78,
+        within_year_week=52,  # P53: pre-P53 overflow golden (cut-off 52 pinned)
     )
     out = run_greedy_sgs(si)
     v = validate_invariants(si, out)

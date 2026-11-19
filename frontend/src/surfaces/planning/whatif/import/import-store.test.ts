@@ -17,7 +17,7 @@ describe('import store (session only)', () => {
     expect(s().rows[0]).not.toBe(PARSE_RESPONSE.rows[0]);
     expect(s().options).toEqual({
       mode: 'merge',
-      planYearEndWeek: 104,
+      planYearEndWeek: null,
       expandMulti: true,
     });
     expect(s().edits).toEqual({});
@@ -33,7 +33,7 @@ describe('import store (session only)', () => {
     s().setOptions({ mode: 'file_only' });
     expect(s().options).toMatchObject({
       mode: 'file_only',
-      planYearEndWeek: 104,
+      planYearEndWeek: null,
     });
     s().setAllIncluded(false);
     expect(s().rows.every((r) => !r.include)).toBe(true);

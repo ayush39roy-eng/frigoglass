@@ -21,7 +21,6 @@ import {
   type EditBase,
 } from '@/lib/api/edit-conflict';
 import { apiErrorMessage } from '@/lib/api/error-messages';
-import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import { formatPlanWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { useEditConflict } from '@/lib/use-edit-conflict';
@@ -418,7 +417,6 @@ function WeekInput({
         id={id}
         type="number"
         min={1}
-        max={DISPLAY_HORIZON_WEEKS}
         inputMode="numeric"
         placeholder="W"
         value={value === null ? '' : String(value)}

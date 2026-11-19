@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Ban, CalendarCheck, CalendarX, CircleCheck, CirclePause, CircleX, TriangleAlert } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { formatWeek, formatWeekTitle, weekTitleIfNextYear } from '@/lib/format';
 import { usePlanYearLabels } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
@@ -46,7 +45,8 @@ export function HealthChip({ health, className }: { health: ServedHealth | null;
   );
 }
 
-/** The served R42-4 text for a queued project finishing past W52. */
+/** The served R42-4 text for a queued project finishing past its run's year
+ *  end. P53 (R53-2): only pre-P53 stored rows carry it; P53 runs never do. */
 const QUEUED_AFTER_YEAR = 'Queued — after W52';
 
 /**
@@ -59,7 +59,9 @@ export function outcomeLabelForDisplay(
   label: string | null | undefined,
   projectedEndWeek: number | null | undefined,
 ): string | null | undefined {
-  if (label === QUEUED_AFTER_YEAR && projectedEndWeek != null && projectedEndWeek > WITHIN_YEAR_WEEK) {
+  // The served label already says the finish is past the year end; the
+  // served week only names it (no client comparison, I9).
+  if (label === QUEUED_AFTER_YEAR && projectedEndWeek != null) {
     return `Queued — fits by ${formatWeek(projectedEndWeek)}`;
   }
   return label;

@@ -72,13 +72,18 @@ A pin that could not be pre-booked (window past the horizon, lab pin with no
 eligible chamber) sends the project to the greedy walk (LEFT_OUT).
 `manual_overlap` is evaluated after the solve on this solve's own rows.
 
-Priority band meaning (ADR 0056 R42-5): a non-frozen project with
-`counts_toward_year = false` (a queued P3) is never a decision variable, nor
-walked before the model. After both passes every CP-SAT placement is booked
-into the shared `_ResourceState` and the queued projects are walked, in
-`ctx.ordered` order, with the shared `greedy._schedule_one_project` (spare
-capacity only). So the model of an input X equals the model of X without its
-queued projects (I52). Non-frozen P4/Q projects never reach the model
+Priority band meaning (ADR 0056 R42-5, R53-2): a non-frozen queue-tier
+project (a queued P3) is never a decision variable, nor walked before the
+model. Window and tail (ADR 0063 R53-5, I60): the model's window is `W_cp =
+min(within_year_week + 26, H)` (78 for a 2026 live run, so the model over the
+same projects is the pre-P53 one, hint included). After both passes every
+CP-SAT placement is booked into the shared `_ResourceState`, then one
+post-solve walk, in `ctx.ordered` order, runs the shared
+`greedy._schedule_one_project` up to H over every project the model did not
+place: the counting projects it left absent, then the queue-tier ones. The
+tail never moves a model placement; a CP-SAT LEFT_OUT <=> the tail found no
+slot <= H. So the model of an input X equals the model of X without its
+queue-tier projects (I52). Non-frozen P4/Q projects never reach the model
 (`ctx.not_scheduled`, R42-3); the P4/Q entries of `PRIORITY_OBJECTIVE_WEIGHT`
 are therefore unreachable (frozen projects are never in the model either) and
 are kept only for the record.
@@ -125,6 +130,7 @@ from scheduling.greedy import (
     prebook_anchored_steps,
     prepare_run,
     project_counts_toward_year,
+    project_queue_tier,
     run_greedy_sgs,
     year_flags,
 )
@@ -137,6 +143,7 @@ from scheduling.types import (
     ScheduleOutput,
     StepSchedule,
 )
+from scheduling.weeks import cp_sat_window
 from scheduling.workflow import (
     FRONTIER_SOURCE,
     ProjectPlan,
@@ -211,6 +218,17 @@ class CpSatSolveInfo:
     # ADR 0056 R42-5: non-frozen non-counting (queued P3) projects kept out of
     # the model and walked after the solve on the residual capacity.
     num_queued_walked: int = 0
+    # R53-5 / I60: counting projects the model left absent inside `W_cp` and
+    # re-walked by the greedy tail up to H.
+    num_tail_walked: int = 0
+    # I60 evidence: the searched (model) projects in `ctx.ordered` order, and
+    # the projects the post-solve tail walked, in walk order.
+    model_project_ids: tuple[str, ...] = ()
+    tail_project_ids: tuple[str, ...] = ()
+    # P53-R01 / I60: the projects resolved before the model (frozen, then the
+    # non-frozen counting no_leader / data_error / needs-greedy ones), in walk
+    # order. Queued P3 (step 6) and the tail are not in it.
+    pre_model_project_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -256,7 +274,10 @@ def run_cp_sat(
 
     ctx = prepare_run(schedule_input)
     state = _ResourceState(schedule_input)
-    horizon = schedule_input.horizon_weeks
+    # R53-5 / I60: the model window `W_cp = min(within_year_week + 26, H)`;
+    # every greedy walk (frozen, needs-greedy, the post-solve tail) searches
+    # to the run's H (`schedule_input.horizon_weeks`).
+    horizon = cp_sat_window(schedule_input.within_year_week, schedule_input.horizon_weeks)
     current_week = schedule_input.current_week
 
     frozen = [p for p in ctx.ordered if p.frozen]
@@ -281,9 +302,10 @@ def run_cp_sat(
     solvable: list[ProjectInput] = []
     queued: list[ProjectInput] = []
     num_pre_resolved = 0
+    pre_model_ids: list[str] = [p.project_id for p in frozen]
     for project in non_frozen:
         pid = project.project_id
-        if not project_counts_toward_year(project):
+        if project_queue_tier(project):
             queued.append(project)
             continue
         plan = ctx.plans[pid]
@@ -293,17 +315,20 @@ def run_cp_sat(
         if plan.data_error is not None:
             outcomes_by_id[pid] = _data_error_outcome(project, plan)
             num_pre_resolved += 1
+            pre_model_ids.append(pid)
             continue
         leader = ctx.engineers_by_id.get(project.leader_engineer_id or "")
         if leader is None:
             outcomes_by_id[pid] = _no_leader_outcome(project, plan, current_week)
             num_pre_resolved += 1
+            pre_model_ids.append(pid)
             continue
         if _needs_greedy(ctx, plan, prebooked):
             outcomes_by_id[pid] = _schedule_one_project(
                 ctx, state, plan, prebooked=prebooked, pre_flags=pre_flags
             )
             num_pre_resolved += 1
+            pre_model_ids.append(pid)
             continue
         solvable.append(project)
 
@@ -333,9 +358,20 @@ def run_cp_sat(
         fixed_ends = [pl.end_week + 1 for pl in prebooked.values()]
         # P33 (R33-5): waits widen the room the absent case needs; + 0 when
         # no step waits, so the model is unchanged.
-        upper_bound = max([horizon, frontier, *fixed_ends]) + sum(
-            sp.span + sp.wait_weeks for sp in plan.steps.values()
-        )
+        # R53-5: a start floor may now lie past `W_cp` (floors are <= H); it
+        # joins the max so the absent case stays SAT. With every floor <=
+        # `W_cp` the bound is exactly the pre-P53 one.
+        floors = [
+            sp.start_not_before_week
+            for sp in plan.steps.values()
+            if sp.start_not_before_week is not None
+        ]
+        # The within-year cut-off joins too, so `completion > within_year_week`
+        # stays satisfiable when absent even on an input whose cut-off lies
+        # past `W_cp` (only an engine-level input violating I57 does that).
+        upper_bound = max(
+            [horizon, frontier, *fixed_ends, *floors, schedule_input.within_year_week]
+        ) + sum(sp.span + sp.wait_weeks for sp in plan.steps.values())
         lower_bound = frontier
         # Tightest valid floor for the derived max/skip vars: a fixed (Done)
         # end may lie before the frontier. Wide domains cripple propagation
@@ -403,7 +439,7 @@ def run_cp_sat(
             # `prepare_run`). The output row still reports `sp.duration` (effort).
             duration = sp.span
             # ADR 0019 earliest start: a Not Started step may not start before
-            # its `start_not_before_week` (<= horizon, so `upper_bound` still
+            # its `start_not_before_week` (inside `upper_bound`, so it still
             # leaves room for the whole chain and the absent case stays SAT).
             step_lo = lower_bound
             if sp.start_not_before_week is not None:
@@ -594,13 +630,21 @@ def run_cp_sat(
             category_workflow=ctx.categories.workflow,
         )
 
-    # --- 6. R42-5 residual placement: spare capacity only -------------------
-    # Book every CP-SAT placement into the shared state, then walk the queued
-    # projects in `ctx.ordered` order with the shared greedy routine (their
-    # anchored / pinned steps were pre-booked in step 2, as in greedy).
-    if queued:
-        _book_solved_placements(state, ctx.chambers_by_id, solvable, outcomes_by_id, prebooked_all)
-        for project in queued:
+    # --- 6. R53-5 / I60 greedy tail (and R42-5 residual placement) ---------
+    # Book every CP-SAT placement into the shared state, then walk, in
+    # `ctx.ordered` order, every project the model did not place: the
+    # counting projects it left absent (no slot inside `W_cp`), then the
+    # queue-tier projects, with the shared greedy routine up to H (their
+    # anchored / pinned steps were pre-booked in step 2, as in greedy). The
+    # model's placements are never moved; a CP-SAT LEFT_OUT <=> the tail
+    # found no slot <= H.
+    absent = [p for p in solvable if outcomes_by_id[p.project_id].left_out]
+    tail_ids = {p.project_id for p in absent} | {p.project_id for p in queued}
+    tail = [p for p in ctx.ordered if p.project_id in tail_ids]
+    if tail:
+        placed = [p for p in solvable if p.project_id not in tail_ids]
+        _book_solved_placements(state, ctx.chambers_by_id, placed, outcomes_by_id, prebooked_all)
+        for project in tail:
             pid = project.project_id
             outcomes_by_id[pid] = _schedule_one_project(
                 ctx,
@@ -613,7 +657,7 @@ def run_cp_sat(
     apply_eng_conflict_flags(outcomes_by_id, state)
 
     for project in ctx.excluded:
-        outcomes_by_id[project.project_id] = _excluded_outcome(project)
+        outcomes_by_id[project.project_id] = _excluded_outcome(project, current_week)
     for project in ctx.not_scheduled:
         outcomes_by_id[project.project_id] = not_scheduled_priority_outcome(project)
 
@@ -654,6 +698,10 @@ def run_cp_sat(
         num_frozen_projects=len(frozen),
         num_pre_resolved_left_out=num_pre_resolved,
         num_queued_walked=len(queued),
+        num_tail_walked=len(absent),
+        model_project_ids=tuple(p.project_id for p in solvable),
+        tail_project_ids=tuple(p.project_id for p in tail),
+        pre_model_project_ids=tuple(pre_model_ids),
     )
     return output, info
 
@@ -815,12 +863,24 @@ def _apply_greedy_hint(
     (the `scheduling-algorithms` skill's "feed the greedy SGS result in as a
     hint" guidance). `AddHint` hints one variable per call."""
 
-    greedy_output = run_greedy_sgs(schedule_input)
+    # R53-5 / I60: hint from a greedy run over the model window `W_cp`, so a
+    # model over the same projects gets exactly the pre-P53 hint. An input
+    # whose pins / floors lie past `W_cp` cannot be validated at `W_cp`; it
+    # is hinted from the full-H run, a placement ending past `W_cp` as absent.
+    w_cp = cp_sat_window(schedule_input.within_year_week, schedule_input.horizon_weeks)
+    try:
+        greedy_output = run_greedy_sgs(replace(schedule_input, horizon_weeks=w_cp))
+    except ValueError:
+        greedy_output = run_greedy_sgs(schedule_input)
     for outcome in greedy_output.project_outcomes:
         pv = project_vars.get(outcome.project_id)
         if pv is None:
             continue
-        is_present = not outcome.left_out and not outcome.excluded
+        is_present = (
+            not outcome.left_out
+            and not outcome.excluded
+            and all(s.end_week <= w_cp for s in outcome.steps)
+        )
         model.AddHint(pv.present, 1 if is_present else 0)
         if not is_present:
             continue

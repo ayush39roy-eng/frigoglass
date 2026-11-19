@@ -201,6 +201,9 @@ class GanttProjectRow(BaseModel):
     pin_lapsed: bool = False
     manual_overlap: bool = False
     steps: list[GanttStepRow]
+    #: P53 (R53-9): scheduled and finishing after Y0 + 1 ("Finishes {year} —
+    #: check leader load"). A warning only (I63).
+    far_finish: bool = False
 
 
 class GanttWeeklyActiveCount(BaseModel):
@@ -234,6 +237,12 @@ class GanttResponse(BaseModel):
     current_step_counts: dict[str, int] = Field(default_factory=dict)
     #: The plan week `current_step_counts` was taken at (`plan_clock`).
     current_week: int | None = None
+    #: P53 (R53-6, API_CONTRACT_P53 §7): the run's plan-year window and the
+    #: Timeline axis end (largest non-skipped end week, never below the plan
+    #: year end, rounded up to a year end). Null without an active run.
+    plan_year_start_week: int | None = None
+    plan_year_end_week: int | None = None
+    last_finish_week: int | None = None
 
 
 class FreezeToggleRequest(BaseModel):

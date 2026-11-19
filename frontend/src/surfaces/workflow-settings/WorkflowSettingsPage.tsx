@@ -7,6 +7,7 @@ import { usePermission } from '@/stores/session';
 
 import { AccessNotice } from './components/access-notice';
 import { WorkflowTemplatesSection } from './components/workflow-templates-section';
+import { SchedulingHorizonCard } from './components/scheduling-horizon/scheduling-horizon-card';
 
 const SURFACE = SURFACES.find((s) => s.path === '/settings/workflow');
 
@@ -48,6 +49,8 @@ export default function WorkflowSettingsPage(): React.JSX.Element {
         title={SURFACE?.title ?? 'Workflow Settings'}
         description="The workflow templates every project follows: steps and precedence, lead times, category timelines, hub calendars and chambers."
       />
+      {/* P53 (ADR 0063, R53-2): the scheduling search limit N (Admin setting). */}
+      {canTemplates ? <SchedulingHorizonCard /> : null}
       {canTemplates ? <WorkflowTemplatesSection /> : <AccessNotice kind="forbidden" />}
     </>
   );

@@ -16,9 +16,9 @@ import { useSessionStore } from '@/stores/session';
  * from the other; it only shows both when they differ.
  */
 export interface PlanClock {
-  /** The calendar week, 1..52. */
+  /** The calendar week, ABSOLUTE from the base year (P53, R53-1). */
   week: number;
-  /** `52 − week`, served. */
+  /** `plan_year_end_week − week`, served. */
   weeksLeft: number;
   /** Today in Europe/Athens, `YYYY-MM-DD`. */
   asOfDate: string;
@@ -27,7 +27,14 @@ export interface PlanClock {
   spilloverYear: number;
   /** The year unfinished projects were carried over from. A label: `plan_year − 1`. */
   carryOverYear: number;
-  closed: boolean;
+  /** P53 (R53-6): served week line. Null only for a pre-P53 server. */
+  baseYear: number | null;
+  /** First / last absolute week of the plan year (served; null pre-P53). */
+  planYearStartWeek: number | null;
+  planYearEndWeek: number | null;
+  /** The Admin setting N and the search limit the next run uses (served). */
+  horizonYears: number | null;
+  horizonWeeks: number | null;
   source: 'calendar' | 'pinned';
   weekEndsAt: string;
   planWeek: PlanWeek | null;
@@ -42,7 +49,11 @@ export function planClockFrom(me: MeResponse): PlanClock {
     planYear: me.plan_year,
     spilloverYear: me.plan_year + 1,
     carryOverYear: me.plan_year - 1,
-    closed: me.plan_year_closed,
+    baseYear: me.week_base_year ?? null,
+    planYearStartWeek: me.plan_year_start_week ?? null,
+    planYearEndWeek: me.plan_year_end_week ?? null,
+    horizonYears: me.horizon_years ?? null,
+    horizonWeeks: me.horizon_weeks ?? null,
     source: me.week_source,
     weekEndsAt: me.week_ends_at,
     planWeek: me.plan_week,
@@ -62,6 +73,38 @@ export function usePlanClock(): PlanClock | null {
 /** The served calendar week, or null before `/me` has resolved. */
 export function useCurrentWeek(): number | null {
   return useSessionStore((s) => s.me?.current_week ?? null);
+}
+
+/** P53: the served plan-year window `[plan_year_start_week, plan_year_end_week]`,
+ *  or null before `/me` has resolved (or from a pre-P53 server). Non-Gantt
+ *  surfaces frame their weekly figures on it (R53-6). */
+export function usePlanYearWindow(): { start: number; end: number } | null {
+  const start = useSessionStore((s) => s.me?.plan_year_start_week ?? null);
+  const end = useSessionStore((s) => s.me?.plan_year_end_week ?? null);
+  return start !== null && end !== null ? { start, end } : null;
+}
+
+/** P53: the served last week of the plan year (the within-year cut-off for
+ *  run-independent copy), or null before `/me` has resolved. */
+export function usePlanYearEndWeek(): number | null {
+  return useSessionStore((s) => s.me?.plan_year_end_week ?? null);
+}
+
+/** P53: the year-end week a figure is framed on — the run's served
+ *  `within_year_week` when given, else the served plan-year end. */
+export function useYearEndWeek(runWithinYearWeek?: number | null): number | null {
+  const served = usePlanYearEndWeek();
+  return runWithinYearWeek ?? served;
+}
+
+/** "W52" for a served year-end week; "the year end" before it is known. */
+export function yearEndText(week: number | null, format: (w: number) => string): string {
+  return week === null ? 'the year end' : format(week);
+}
+
+/** P53 (R53-2): the served search-limit setting N, or null. */
+export function useHorizonYears(): number | null {
+  return useSessionStore((s) => s.me?.horizon_years ?? null);
 }
 
 /** The served planning year, or null before `/me` has resolved. */

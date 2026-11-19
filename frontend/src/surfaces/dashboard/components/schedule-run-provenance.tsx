@@ -2,8 +2,7 @@ import * as React from 'react';
 
 import { CardInfo } from '@/components/ui/card-info';
 import { RunProvenanceChips } from '@/components/ui/run-provenance-chips';
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { usePlanYearLabels } from '@/lib/plan-clock';
+import { usePlanYearLabels, useYearEndWeek, yearEndText } from '@/lib/plan-clock';
 import { formatWeek } from '@/lib/format';
 
 import type { ScheduleRunSummary } from '../api/types';
@@ -46,6 +45,7 @@ export function ScheduleRunProvenance({
   showTimestampChip = false,
 }: ScheduleRunProvenanceProps): React.JSX.Element {
   const years = usePlanYearLabels();
+  const yearEnd = useYearEndWeek(activeRun?.within_year_week ?? null);
   return (
     <RunProvenanceChips
       scheduleRunVersion={scheduleRunVersion}
@@ -60,13 +60,13 @@ export function ScheduleRunProvenance({
         <p>
           A project is counted as <strong className="text-text">completing within the year</strong>{' '}
           when it is not left out and its last scheduled step ends — plus any applied delay — on or
-          before {formatWeek(WITHIN_YEAR_WEEK)} (<code>DOMAIN_RULES.md</code>). Projects with{' '}
+          before {yearEndText(yearEnd, formatWeek)} (<code>DOMAIN_RULES.md</code>). Projects with{' '}
           <strong className="text-text">Commercialized</strong> status are counted as already
           delivered this year.
         </p>
         <p>
-          <strong className="text-text">Spillover (past {formatWeek(WITHIN_YEAR_WEEK)})</strong> = not
-          done by {formatWeek(WITHIN_YEAR_WEEK)}, carried into {years.spilloverYear}. It includes any
+          <strong className="text-text">Spillover (past {yearEndText(yearEnd, formatWeek)})</strong> = not
+          done by {yearEndText(yearEnd, formatWeek)}, carried into {years.spilloverYear}. It includes any
           project the run could not place yet (shown as &quot;not yet placed&quot;).{' '}
           <strong className="text-text">On Hold at a stage</strong> = in the plan, waiting at a stage
           that is on hold; it wins outright over the others, so the counts never overlap. It is not

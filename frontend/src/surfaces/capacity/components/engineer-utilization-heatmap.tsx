@@ -1,10 +1,10 @@
 import * as React from 'react';
+import { Hourglass } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 import { NotInCapacityRosterBadge } from '@/components/shared/capacity-roster-markers';
 import { cn } from '@/lib/utils';
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { formatDecimal, formatPercent, formatWeek, formatWeekTitle, weekOfYear } from '@/lib/format';
+import { formatDecimal, formatPercent, formatWeek, formatWeekTitle, formatWeekWithYear, weekOfYear } from '@/lib/format';
 
 import type { EngineerUtilizationResponse, EngineerUtilizationRow } from '../api/types';
 
@@ -111,6 +111,19 @@ export function EngineerUtilizationHeatmap({ data }: { data: EngineerUtilization
           <span className="text-text-subtle">{e.role}</span>
           {/* P29 (API_CONTRACT_P29 §3.3): served flag; an older API omits it (no marker). */}
           {e.counts_in_capacity === false ? <NotInCapacityRosterBadge /> : null}
+          {/* P53 (R53-9): served leader-tail warning — shown only here, where
+              engineer utilisation is already served (OQ #8). Display only (I63). */}
+          {e.leader_overloaded ? (
+            <span
+              className="inline-flex items-center gap-0.5 rounded-pill bg-warning-subtle px-1.5 text-[0.625rem] font-semibold text-warning-subtle-fg"
+              title={`Booked as leader until ${e.leader_tail_week == null ? 'after next year' : formatWeekTitle(e.leader_tail_week)}; ${String(e.far_finish_count ?? 0)} of their projects finish after next year — check leader load`}
+              data-testid="leader-overloaded"
+            >
+              <Hourglass className="size-3" aria-hidden="true" />
+              Booked to {e.leader_tail_week == null ? 'later years' : formatWeekWithYear(e.leader_tail_week)}
+              {e.far_finish_count ? ` · ${String(e.far_finish_count)} late` : ''}
+            </span>
+          ) : null}
         </div>
         {weeks.map((w) => {
           const cell = byWeek.get(w);
@@ -178,7 +191,7 @@ export function EngineerUtilizationHeatmap({ data }: { data: EngineerUtilization
                   'py-1.5 text-center font-medium tabular-nums text-text-muted',
                   w === data.current_week && 'font-bold text-primary underline',
                 )}
-                title={`${formatWeek(w)}${w === data.current_week ? ' (current week)' : ''}${w > WITHIN_YEAR_WEEK ? ` · ${formatWeekTitle(w)}` : ''}`}
+                title={`${formatWeek(w)}${w === data.current_week ? ' (current week)' : ''}${weekOfYear(w).yearOffset !== 0 ? ` · ${formatWeekTitle(w)}` : ''}`}
                 aria-current={w === data.current_week ? 'date' : undefined}
               >
                 {/* Owner rule 2026-11-18: a week past W52 shows as its next-year week. */}
@@ -223,7 +236,7 @@ export function EngineerUtilizationHeatmap({ data }: { data: EngineerUtilization
         </div>
         <div className="flex items-center gap-1.5">
           <span className="size-3 rounded-full outline outline-2 outline-primary" aria-hidden="true" />
-          <dt>Current week (W{String(data.current_week)})</dt>
+          <dt>Current week ({formatWeek(data.current_week)})</dt>
         </div>
       </dl>
     </div>

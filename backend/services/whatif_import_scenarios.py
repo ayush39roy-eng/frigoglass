@@ -62,6 +62,7 @@ from services.active_run import get_active_run
 from services.edit_conflict import AuditRef, check_base, listed_change
 from services.export_builder import ExportSheets, xlsx_bytes
 from services.outcome_buckets import priority_label
+from services.week_labels import week_label
 from services.whatif_baseline import Scope, WhatIfContext, principal_audit_hub_id, resolve_scope
 from services.whatif_import import (
     do_import_simulate,
@@ -266,9 +267,13 @@ def stored_result(row: WhatifImportScenario) -> ImportSimulateResponse:
         res.plan_from_week = f
         res.plan_from_min_week = res.current_week
         res.plan_from_label = plan_week_label(f)
-        res.plan_week_choices = plan_week_choices(res.current_week)
+        res.plan_week_choices = plan_week_choices(res.current_week, res.horizon_weeks)
     if res.plan_until_week is None:
         res.plan_until_week = stored_plan_until_week(row.request, row.plan_year_end_week)
+    if res.delivery_by_year is None:
+        # P53 (R53-3, I62): a scenario saved before P53 has no table; it is
+        # never recomputed on read.
+        res.delivery_by_year_unavailable = "pre_p53_run"
     return res
 
 
@@ -783,7 +788,7 @@ def scenario_sheets(
     shown_name = name or "Current result"
     context = [
         f"Scenario: {shown_name}",
-        f"Simulated at W{result.current_week} of {result.base_year}",
+        f"Simulated at {week_label(result.current_week)}",
         f"{len(result.projects)} project(s)",
     ]
     if result.plan_from_week is not None and result.plan_from_week != result.current_week:
@@ -926,7 +931,7 @@ def compare_sheets(rows: Sequence[WhatifImportScenario]) -> ExportSheets:
             title=f"S{i + 1}: {r.name} — Gantt",
             context=[
                 f"Saved {r.created_at:%Y-%m-%d}",
-                f"Simulated at W{r.simulated_week}",
+                f"Simulated at {week_label(r.simulated_week)}",
                 f"{len(res.projects)} project(s)",
             ],
         )

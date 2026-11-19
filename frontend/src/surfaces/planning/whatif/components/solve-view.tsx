@@ -7,6 +7,8 @@ import { SimulatedWeekNotice } from '@/components/shared/plan-week-notice';
 import { useCurrentWeek } from '@/lib/plan-clock';
 
 import type { SolveResponse } from '../../api/whatif-types';
+import { DeliveryByYearTable } from '@/components/shared/delivery-by-year/delivery-by-year-table';
+
 import { SimulateView } from './simulate-view';
 import {
   Callout,
@@ -176,6 +178,12 @@ export function SolveView({ data }: { data: SolveResponse }): React.JSX.Element 
           {data.semantics}
         </p>
       )}
+
+      {/* P53 (R53-3): the served delivery-by-year table of the solved scenario
+          (shown inside the achieved result when that carries it). */}
+      {data.delivery_by_year && !data.achieved?.delivery_by_year ? (
+        <DeliveryByYearTable data={data.delivery_by_year} testId="solve-delivery-by-year" />
+      ) : null}
 
       {data.achieved ? (
         <details className="group rounded-md border border-border" data-testid="solve-achieved">

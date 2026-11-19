@@ -9,7 +9,7 @@
  * just format what the API already computed.
  */
 
-import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
+import { servedBaseYear, weekOfYearNumber, yearIndexOf, yearOf } from '@/lib/week-line';
 import { useSessionStore } from '@/stores/session';
 import type { CurrencyCode } from '@/types/enums';
 
@@ -95,41 +95,65 @@ export function formatBookedPct(value: number | null): string {
 
 /**
  * Owner rule 2026-11-18 (binding): no screen ever shows "week 53" or higher.
- * Weeks are absolute — 1..52 = the plan year, 53..104 = the next year, and so
- * on — and a week past W52 is SHOWN as the week of its own year: absolute 53 →
- * "W1 '27", 57 → "W5 '27", with "Week 5 of 2027" on hover
- * ({@link formatWeekTitle}). Display only: the week the server serves, and any
- * week the client sends back, stays absolute.
+ * P53 (ADR 0063, R53-1/R53-6): weeks are ABSOLUTE from the served
+ * `/me.week_base_year` W1, never re-based (2027 W1 = 53, 2028 W1 = 105, …),
+ * for any year — no year is hard-coded. A week is SHOWN as the week of its own
+ * year: "W5" when that year is the plan year, "W5 '28" otherwise, with
+ * "Week 5 of 2028" on hover ({@link formatWeekTitle}). Display only: the week
+ * the server serves, and any week the client sends back, stays absolute.
  *
- * `planYear` is the served `/me.plan_year` (P37). It defaults to the session's
- * value so every call site gets the year without plumbing; before `/me` has
- * resolved (isolated tests only) the tag reads "(next year)".
+ * `planYear` is the year shown without a tag; it defaults to the served
+ * `/me.plan_year`. Before `/me` has resolved (isolated tests only) the base
+ * year falls back to `planYear`, and with neither the tag reads "(next year)".
  */
 function servedPlanYear(): number | null {
   return useSessionStore.getState().me?.plan_year ?? null;
 }
 
-/** An absolute week as `{ week: 1..52, yearOffset: 0 = plan year, 1 = next year, … }`.
- *  Weeks ≤ 52 (including 0 / negatives) are returned as they are, offset 0. */
-export function weekOfYear(week: number): { week: number; yearOffset: number } {
-  if (week <= DISPLAY_HORIZON_WEEKS) return { week, yearOffset: 0 };
-  const zero = Math.floor(week) - 1;
-  return { week: (zero % DISPLAY_HORIZON_WEEKS) + 1, yearOffset: Math.floor(zero / DISPLAY_HORIZON_WEEKS) };
+function baseYearFor(planYear: number | null): number | null {
+  return servedBaseYear() ?? planYear;
 }
 
-function yearTag(yearOffset: number, planYear: number | null): string {
-  if (planYear === null) return yearOffset === 1 ? '(next year)' : `(+${String(yearOffset)} years)`;
-  return `'${String((planYear + yearOffset) % 100).padStart(2, '0')}`;
+/** The calendar year of an absolute week, or null when no base year is known. */
+export function calendarYearOf(week: number, planYear: number | null = servedPlanYear()): number | null {
+  const base = baseYearFor(planYear);
+  return base === null ? null : yearOf(week, base);
+}
+
+/** An absolute week as `{ week: 1..52, yearOffset: 0 = plan year, 1 = next year, … }`
+ *  (negative for a year before the plan year). Weeks < 1 are returned as they are. */
+export function weekOfYear(week: number, planYear: number | null = servedPlanYear()): { week: number; yearOffset: number } {
+  const base = baseYearFor(planYear);
+  const offset = base !== null && planYear !== null ? yearOf(week, base) - planYear : yearIndexOf(week);
+  return { week: weekOfYearNumber(week), yearOffset: week < 1 ? 0 : offset };
+}
+
+function shortYear(year: number): string {
+  return `'${String(((year % 100) + 100) % 100).padStart(2, '0')}`;
 }
 
 /**
- * A served absolute week: `W47` inside the plan year, `W5 '27` for absolute
- * week 57 (plan year 2026). Never prints W53+.
+ * A served absolute week: `W47` inside the plan year, `W5 '28` in any other
+ * year. Never prints W53+.
  */
 export function formatWeek(week: number, planYear: number | null = servedPlanYear()): string {
-  const yw = weekOfYear(week);
-  if (yw.yearOffset === 0) return `W${String(yw.week)}`;
-  return `W${String(yw.week)} ${yearTag(yw.yearOffset, planYear)}`;
+  const n = weekOfYearNumber(week);
+  if (week < 1) return `W${String(n)}`;
+  const year = calendarYearOf(week, planYear);
+  if (year === null) {
+    const idx = yearIndexOf(week);
+    if (idx === 0) return `W${String(n)}`;
+    return `W${String(n)} ${idx === 1 ? '(next year)' : `(+${String(idx)} years)`}`;
+  }
+  if (planYear !== null && year === planYear) return `W${String(n)}`;
+  return `W${String(n)} ${shortYear(year)}`;
+}
+
+/** A week with its year always named ("W5 '28"), for places with no year row. */
+export function formatWeekWithYear(week: number, planYear: number | null = servedPlanYear()): string {
+  const year = calendarYearOf(week, planYear);
+  const n = weekOfYearNumber(week);
+  return year === null || week < 1 ? `W${String(n)}` : `W${String(n)} ${shortYear(year)}`;
 }
 
 /**
@@ -137,15 +161,19 @@ export function formatWeek(week: number, planYear: number | null = servedPlanYea
  * "Week 5 of 2027". Before `/me` resolves: "Week 5 of next year".
  */
 export function formatWeekTitle(week: number, planYear: number | null = servedPlanYear()): string {
-  const yw = weekOfYear(week);
-  if (planYear !== null) return `Week ${String(yw.week)} of ${String(planYear + yw.yearOffset)}`;
-  if (yw.yearOffset === 0) return `Week ${String(yw.week)} of the plan year`;
-  return `Week ${String(yw.week)} of ${yw.yearOffset === 1 ? 'next year' : `the plan year +${String(yw.yearOffset)}`}`;
+  const n = weekOfYearNumber(week);
+  const year = calendarYearOf(week, planYear);
+  if (year !== null) return `Week ${String(n)} of ${String(year)}`;
+  const idx = yearIndexOf(week);
+  if (idx === 0) return `Week ${String(n)} of the plan year`;
+  return `Week ${String(n)} of ${idx === 1 ? 'next year' : `the plan year +${String(idx)}`}`;
 }
 
-/** The hover title for a week only when it is past W52 (its year is not obvious), else undefined. */
+/** The hover title for a week only when it is outside the plan year (its year
+ *  is not obvious from "W5"), else undefined. */
 export function weekTitleIfNextYear(week: number | null | undefined, planYear: number | null = servedPlanYear()): string | undefined {
-  return week != null && week > DISPLAY_HORIZON_WEEKS ? formatWeekTitle(week, planYear) : undefined;
+  if (week == null) return undefined;
+  return weekOfYear(week, planYear).yearOffset !== 0 ? formatWeekTitle(week, planYear) : undefined;
 }
 
 /**

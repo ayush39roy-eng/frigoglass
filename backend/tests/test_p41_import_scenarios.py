@@ -436,7 +436,8 @@ async def test_save_recomputes_and_stores_a_frozen_record(db_session):
     assert saved["request"]["exclude_plan_project_ids"] == [str(world.gamma.id)]
     assert saved["simulated_week"] == fresh["current_week"]
     assert saved["plan_version"] is None  # no active run in this world
-    assert saved["mode"] == "merge" and saved["plan_year_end_week"] == 104
+    # P53 (I56): an unset preset is year_end(year_of(cw)).
+    assert saved["mode"] == "merge" and saved["plan_year_end_week"] == 52
     # P41-R01 (H-1): every hub of the snapshot plus the saver's scope (all hubs).
     import domain_constants as dc
 
@@ -461,7 +462,7 @@ async def test_save_recomputes_and_stores_a_frozen_record(db_session):
     # ADR 0061 (R49-13, R49-19): the saved audit row gains the plan window.
     assert set(audit.after_state) == {"id", "name", "counts", "plan_from_week", "plan_until_week"}
     assert audit.after_state["plan_from_week"] == saved["result"]["current_week"]
-    assert audit.after_state["plan_until_week"] == 104
+    assert audit.after_state["plan_until_week"] == 52  # P53 (I56)
     dumped = json.dumps(audit.after_state)
     for leak in ("Fresh", "Kanarios", "rows", "Alpha", "plan.xlsx"):
         assert leak not in dumped

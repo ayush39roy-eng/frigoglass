@@ -204,15 +204,15 @@ async def test_gantt_leader_name_is_served_to_every_reader(db_session):
 # --- T13: weekly active counts -----------------------------------------------------------
 
 
-def _recount(rows) -> dict[int, tuple[int, int]]:
-    out = {w: [0, 0] for w in range(1, dc.HORIZON_WEEKS + 1)}
+def _recount(rows, last: int) -> dict[int, tuple[int, int]]:
+    out = {w: [0, 0] for w in range(1, last + 1)}
     for row in rows:
         col = 1 if row["workflow_id"] == "OEM" else 0
         for s in row["steps"]:
             if s["skipped"]:
                 continue
             for w in range(max(1, s["planned_start_week"]),
-                           min(dc.HORIZON_WEEKS, s["planned_end_week"]) + 1):
+                           min(last, s["planned_end_week"]) + 1):
                 out[w][col] += 1
     return {w: (v[0], v[1]) for w, v in out.items()}
 
@@ -227,8 +227,10 @@ async def test_weekly_active_counts_reconcile_with_step_rows(db_session):
         paged = await _get(client, "/gantt", limit=3, region="India")
     for body in (full, india, greece):
         counts = body["weekly_active_counts"]
-        assert [c["week"] for c in counts] == list(range(1, dc.HORIZON_WEEKS + 1))
-        assert {c["week"]: (c["pdd"], c["oem"]) for c in counts} == _recount(body["rows"])
+        # P53 (R53-6): year_start(Y0)..last_finish_week (served, a year end).
+        assert [c["week"] for c in counts] == list(range(1, body["last_finish_week"] + 1))
+        assert body["last_finish_week"] % 52 == 0
+        assert {c["week"]: (c["pdd"], c["oem"]) for c in counts} == _recount(body["rows"], body["last_finish_week"])
     assert sum(c["pdd"] + c["oem"] for c in full["weekly_active_counts"]) > 0
     # Region slices add up to the portfolio (Romania is the remainder).
     romania = await _counts_for(db_session, "Romania")
@@ -255,11 +257,11 @@ async def test_weekly_active_counts_follow_filters_and_empty_without_run(db_sess
         cat_b = await _gantt(client, category="B")
         nothing = await _gantt(client, q="no-such-project-zzz")
     assert {c["week"]: (c["pdd"], c["oem"]) for c in cat_b["weekly_active_counts"]} == (
-        _recount(cat_b["rows"])
+        _recount(cat_b["rows"], cat_b["last_finish_week"])
     )
     assert nothing["total_count"] == 0
     assert all(c["pdd"] == c["oem"] == 0 for c in nothing["weekly_active_counts"])
-    assert len(nothing["weekly_active_counts"]) == dc.HORIZON_WEEKS
+    assert len(nothing["weekly_active_counts"]) == nothing["last_finish_week"]
 
 
 async def test_gantt_without_active_run_serves_empty_counts(db_session):
@@ -271,6 +273,8 @@ async def test_gantt_without_active_run_serves_empty_counts(db_session):
         "rows": [], "weekly_active_counts": [],
         # P40 (docs/API_CONTRACT_P40.md §3).
         "current_step_counts": {}, "current_week": None,
+        # P53 (API_CONTRACT_P53 §7).
+        "plan_year_start_week": None, "plan_year_end_week": None, "last_finish_week": None,
     }
 
 

@@ -248,12 +248,24 @@ export function TimelineUpdatedPanel({
  * are the runs' stored `current_week` values, served on the changes response.
  */
 function WeekMoveNote({ changes }: { changes: ScheduleRunChanges }): React.JSX.Element | null {
-  if (changes.baseline_week === changes.run_week) return null;
+  const rule = changes.includes_rule_change === true;
+  if (changes.baseline_week === changes.run_week && !rule) return null;
   return (
-    <span className="font-semibold text-warning-subtle-fg" data-testid="changes-week-move">
-      {' '}
-      · includes the move from {formatWeek(changes.baseline_week)} to {formatWeek(changes.run_week)}
-    </span>
+    <>
+      {changes.baseline_week !== changes.run_week ? (
+        <span className="font-semibold text-warning-subtle-fg" data-testid="changes-week-move">
+          {' '}
+          · includes the move from {formatWeek(changes.baseline_week)} to {formatWeek(changes.run_week)}
+        </span>
+      ) : null}
+      {/* P53 (R53-7): served flag — the baseline ran under the earlier rules. */}
+      {rule ? (
+        <span className="font-semibold text-warning-subtle-fg" data-testid="changes-rule-change">
+          {' '}
+          · includes the scheduling-rule change (P53)
+        </span>
+      ) : null}
+    </>
   );
 }
 

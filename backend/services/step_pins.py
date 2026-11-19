@@ -18,7 +18,7 @@ ADR 0054 "Ruling (P40-T02)" R40-1, R40-2, R40-11; docs/DOMAIN_RULES.md
    project's workflow is 422 `UNKNOWN_STEP`.
 3. Under the lock, for every item whose pair differs from the stored one
    (an equal pair is a no-op and is never refused):
-   - set: 422 `PIN_OUT_OF_RANGE` unless `CW <= ms <= me <= 52` (CW = the
+   - set: 422 `PIN_OUT_OF_RANGE` unless `CW <= ms <= me <= plan_year_end_week(CW)` (CW = the
      request's `plan_clock` week); then 409 `PROJECT_FROZEN`,
      `PROJECT_CLOSED` (Cancelled / Commercialized), `STEP_STARTED` (stored
      stage not Not Started), `STEP_SKIPPED` (R35-1 `eff = 0`), first failing
@@ -46,7 +46,6 @@ from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import domain_constants as dc
 from api.errors import HTTP_422, CodedHTTPException
 from core.principal import Principal
 from models.enums import (
@@ -60,6 +59,7 @@ from models.hub import Hub
 from models.project import Project, workflow_id_for_hub
 from models.schedule import ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
+from scheduling.weeks import plan_year_end_week
 from scheduling.workflow import fte_span, is_valid_fte
 from schemas.step_pin import (
     PinBlockReason,
@@ -78,6 +78,7 @@ from services.priority_move import (
 from services.schedule_stale import mark_projects_stale
 from services.step_pin_clear import CAUSE_MANUAL, add_pin_audit
 from services.template_apply import lock_projects_in_scope
+from services.week_labels import week_label
 from services.workspace import row_is_skipped, row_own_effort_kinds
 
 #: `ScheduleRun.trigger_reason` of the run a pin save starts (R40-11).
@@ -87,7 +88,9 @@ TRIGGER_REASON = "step_pin"
 PIN_ROLES: frozenset[RoleName] = frozenset({RoleName.ADMIN, RoleName.SUPER_ADMIN})
 
 #: R40-1: the stored / written cap (WITHIN_YEAR_WEEK, not HORIZON_WEEKS).
-PIN_MAX_WEEK = dc.WITHIN_YEAR_WEEK
+#: Retired at P53 (R53-8): the cap is `plan_year_end_week(current_week)`.
+#: Kept as the 2026 value for importers only.
+PIN_MAX_WEEK = 52
 
 _CLOSED = frozenset({ProjectStatus.CANCELLED, ProjectStatus.COMMERCIALIZED})
 
@@ -410,13 +413,16 @@ async def save_step_pins(
         start, end = item.manual_start_week, item.manual_end_week
         if start is None or end is None:
             continue
-        if not (current_week <= start <= end <= PIN_MAX_WEEK):
+        # P53 (R53-8): the plan-year cap generalised, `CW <= ms <= me <=
+        # plan_year_end_week(CW)` (the DB CHECK no longer carries it).
+        last = plan_year_end_week(current_week)
+        if not (current_week <= start <= end <= last):
             range_errors.append(
                 _error(
                     i,
                     item,
                     "PIN_OUT_OF_RANGE",
-                    f"Pick weeks between W{current_week} and W{PIN_MAX_WEEK}.",
+                    f"Pick weeks between {week_label(current_week)} and {week_label(last)}.",
                 )
             )
     if range_errors:

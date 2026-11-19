@@ -77,16 +77,17 @@ def _client(db_session) -> AsyncClient:
 
 
 def test_monday_16_nov_2026_is_w47_with_5_left():
-    c = compute(_athens(2026, 11, 16, 9), plan_year=2026, pin=None)
+    c = compute(_athens(2026, 11, 16, 9), pin=None)
     assert (c.week, c.weeks_left_in_year, c.source) == (47, 5, "calendar")
     assert (c.iso_year, c.iso_week, c.plan_year_closed) == (2026, 47, False)
+    assert (c.plan_year, c.week_of_year) == (2026, 47)
     assert c.as_of_date == date(2026, 11, 16)
     assert c.week_ends_at == _athens(2026, 11, 23, 0)
     assert c.week_ends_at.isoformat() == "2026-11-23T00:00:00+02:00"
 
 
 def test_sunday_23_30_athens_is_still_w46():
-    c = compute(_athens(2026, 11, 15, 23, 30), plan_year=2026, pin=None)
+    c = compute(_athens(2026, 11, 15, 23, 30), pin=None)
     assert c.week == 46
     assert c.as_of_date == date(2026, 11, 15)
     assert c.week_ends_at == _athens(2026, 11, 16, 0)
@@ -94,11 +95,11 @@ def test_sunday_23_30_athens_is_still_w46():
 
 def test_athens_midnight_edge_utc_sunday_is_athens_monday():
     # 22:30 UTC on Sun 15 Nov = 00:30 Mon 16 Nov in Athens.
-    c = compute(datetime(2026, 11, 15, 22, 30, tzinfo=UTC), plan_year=2026, pin=None)
+    c = compute(datetime(2026, 11, 15, 22, 30, tzinfo=UTC), pin=None)
     assert c.week == 47
     assert c.as_of_date == date(2026, 11, 16)
     # One minute earlier in Athens is still Sunday, W46.
-    c2 = compute(datetime(2026, 11, 15, 21, 59, tzinfo=UTC), plan_year=2026, pin=None)
+    c2 = compute(datetime(2026, 11, 15, 21, 59, tzinfo=UTC), pin=None)
     assert c2.week == 46
 
 
@@ -106,44 +107,64 @@ def test_athens_midnight_edge_utc_sunday_is_athens_monday():
     "instant", [_athens(2026, 12, 28), _athens(2027, 1, 1), _athens(2027, 1, 3, 23, 59)]
 )
 def test_iso_w53_maps_to_52_not_closed(instant):
-    c = compute(instant, plan_year=2026, pin=None)
+    c = compute(instant, pin=None)
     assert (c.iso_year, c.iso_week) == (2026, 53)
     assert (c.week, c.plan_year_closed, c.weeks_left_in_year) == (52, False, 0)
 
 
-def test_4_jan_2027_is_52_and_closed():
-    c = compute(_athens(2027, 1, 4, 0, 0), plan_year=2026, pin=None)
+def test_4_jan_2027_is_53_plan_year_2027_never_closed():
+    """P53 (R53-1, I41): the week line continues; no closed year."""
+
+    c = compute(_athens(2027, 1, 4, 0, 0), pin=None)
     assert (c.iso_year, c.iso_week) == (2027, 1)
-    assert (c.week, c.plan_year_closed, c.source) == (52, True, "calendar")
+    assert (c.week, c.plan_year, c.week_of_year, c.plan_year_closed, c.source) == (
+        53, 2027, 1, False, "calendar"
+    )
+    assert (c.plan_year_start_week, c.plan_year_end_week, c.weeks_left_in_year) == (53, 104, 51)
 
 
-def test_before_the_plan_year_is_week_1():
-    c = compute(_athens(2026, 11, 16), plan_year=2027, pin=None)
-    assert (c.week, c.plan_year_closed) == (1, False)
+@pytest.mark.parametrize(
+    ("instant", "week", "year"),
+    [
+        (_athens(2027, 12, 31), 104, 2027),
+        (_athens(2028, 1, 2), 104, 2027),  # ISO 2027-W52 ends Sun 2 Jan 2028
+        (_athens(2028, 1, 3), 105, 2028),
+        (_athens(2032, 12, 27), 364, 2032),  # ISO 2032-W53 → 52 of 2032
+        (_athens(2033, 1, 2), 364, 2032),
+        (_athens(2033, 1, 3), 365, 2033),
+        (_athens(2025, 12, 1), 1, 2026),  # before the base year
+    ],
+)
+def test_absolute_week_line(instant, week, year):
+    c = compute(instant, pin=None)
+    assert (c.week, c.plan_year, c.plan_year_closed) == (week, year, False)
 
 
 def test_w52_dates():
-    assert compute(_athens(2026, 12, 21), plan_year=2026, pin=None).week == 52
-    assert compute(_athens(2026, 10, 12), plan_year=2026, pin=None).week == 42
+    assert compute(_athens(2026, 12, 21), pin=None).week == 52
+    assert compute(_athens(2026, 10, 12), pin=None).week == 42
 
 
 def test_pin_wins_and_never_closes():
     for instant in (_athens(2026, 11, 16), _athens(2027, 3, 1)):
-        c = compute(instant, plan_year=2026, pin=31)
+        c = compute(instant, pin=31)
         assert (c.week, c.source, c.plan_year_closed, c.weeks_left_in_year) == (
             31, "pinned", False, 21
         )
+    # P53: a pin is absolute; 60 is W8 of 2027.
+    c = compute(_athens(2026, 11, 16), pin=60)
+    assert (c.week, c.plan_year, c.week_of_year, c.weeks_left_in_year) == (60, 2027, 8, 44)
 
 
 def test_naive_datetime_is_rejected():
     with pytest.raises(ValueError):
-        compute(datetime(2026, 11, 16, 9), plan_year=2026, pin=None)
+        compute(datetime(2026, 11, 16, 9), pin=None)
 
 
 def test_week_ends_at_across_the_dst_change():
     # EU summer time ends Sun 25 Oct 2026 03:00 → 02:00; the next Monday
     # midnight is at +02:00 (EET) while "now" (Sat 24 Oct) is at +03:00.
-    c = compute(_athens(2026, 10, 24), plan_year=2026, pin=None)
+    c = compute(_athens(2026, 10, 24), pin=None)
     assert c.week == 43
     assert c.week_ends_at.isoformat() == "2026-10-26T00:00:00+02:00"
 
@@ -158,26 +179,28 @@ def test_suite_pin_reduces_to_test_week():
     assert (c.week, c.source) == (TEST_WEEK, "pinned")
 
 
-@pytest.mark.parametrize("raw", ["0", "53", "x", "31.0", "-1"])
+@pytest.mark.parametrize("raw", ["0", "5201", "x", "31.0", "-1"])
 def test_bad_pin_is_rejected(raw):
     with pytest.raises(PlanClockConfigError, match="RPD_CURRENT_WEEK"):
         plan_clock.validate_environment({"RPD_CURRENT_WEEK": raw})
 
 
-@pytest.mark.parametrize("raw", ["1999", "2101", "abc"])
-def test_bad_plan_year_is_rejected(raw):
+@pytest.mark.parametrize("raw", ["1999", "2027", "2101", "abc"])
+def test_retired_plan_year_other_than_2026_is_rejected(raw):
+    """P53 (R53-1): `RPD_PLAN_YEAR` is retired; any value but 2026 stops startup."""
+
     with pytest.raises(PlanClockConfigError, match="RPD_PLAN_YEAR"):
         plan_clock.validate_environment({"RPD_PLAN_YEAR": raw})
 
 
 def test_good_values_and_blank_pin():
-    plan_clock.validate_environment({"RPD_CURRENT_WEEK": "1", "RPD_PLAN_YEAR": "2027"})
-    plan_clock.validate_environment({"RPD_CURRENT_WEEK": "52"})
+    plan_clock.validate_environment({"RPD_CURRENT_WEEK": "1", "RPD_PLAN_YEAR": "2026"})
+    plan_clock.validate_environment({"RPD_CURRENT_WEEK": "53"})
+    plan_clock.validate_environment({"RPD_CURRENT_WEEK": "5200", "RPD_PLAN_YEAR": ""})
     assert plan_clock.read_pin({"RPD_CURRENT_WEEK": ""}) is None
-    assert plan_clock.read_plan_year({}) == 2026
 
 
-@pytest.mark.parametrize("raw", ["0", "53", "x"])
+@pytest.mark.parametrize("raw", ["0", "5201", "x"])
 def test_bad_pin_stops_the_app_at_startup(monkeypatch, raw):
     monkeypatch.setenv("RPD_CURRENT_WEEK", raw)
     with pytest.raises(PlanClockConfigError, match="RPD_CURRENT_WEEK"):
@@ -266,14 +289,19 @@ async def test_me_calendar_week_47(db_session, calendar):
     assert (body["week_source"], body["plan_year_closed"]) == ("calendar", False)
 
 
-async def test_me_closed_year(db_session, calendar):
+async def test_me_4_jan_2027_is_week_53_of_2027(db_session, calendar):
+    """P53 (R53-1, R53-6): no closed year; the served week line goes on."""
+
     override_current_principal(make_principal(RoleName.PORTFOLIO_MANAGER))
     with plan_clock.override_now(_athens(2027, 1, 4, 8)):
         async with _client(db_session) as client:
             body = (await client.get("/me")).json()
     assert (body["current_week"], body["weeks_left_in_year"], body["plan_year_closed"]) == (
-        52, 0, True
+        53, 51, False
     )
+    assert (body["plan_year"], body["week_base_year"]) == (2027, 2026)
+    assert (body["plan_year_start_week"], body["plan_year_end_week"]) == (53, 104)
+    assert (body["horizon_years"], body["horizon_weeks"]) == (5, 53 + 260)
 
 
 async def test_me_plan_week_status(db_session, monkeypatch):
@@ -355,19 +383,22 @@ async def test_r37_1_reduces_to_the_old_rule_when_weeks_match(db_session):
     assert [(s.step_id, s.due_since_week) for s in stages] == [("PDD-E", TEST_WEEK)]
 
 
-async def test_r37_10_check_in_refused_while_the_year_is_closed(db_session, calendar):
+async def test_p53_check_in_in_2027_is_never_refused_as_closed(db_session, calendar):
+    """P53 (R53-1): `PLAN_YEAR_CLOSED` is retired; on 4 Jan 2027 the
+    calendar week is 53 and check-ins stamp it."""
+
     hub = await make_hub(db_session, name=HubName.RD_GREECE, lab_region=LabRegion.GREECE)
-    project = await stepped_project(db_session, hub, name="Closed")
+    project = await stepped_project(db_session, hub, name="Next year")
     await act_as(db_session, RoleName.PORTFOLIO_MANAGER)
     entry = {"project_id": str(project.id), "step_id": "PDD-A", "status": "In Progress",
              "percent_complete": 10}
     with plan_clock.override_now(_athens(2027, 1, 4, 10)):
         async with _client(db_session) as client:
-            refused = await client.post("/check-ins", json={"entries": [entry]})
+            submitted = await client.post("/check-ins", json={"entries": [entry]})
             due = await client.get("/check-ins/due")
-    assert refused.status_code == 409, refused.text
-    assert refused.json()["code"] == "PLAN_YEAR_CLOSED"
-    assert due.status_code == 200 and due.json()["week"] == 52  # reads stay available
+    assert submitted.status_code != 409, submitted.text
+    assert "PLAN_YEAR_CLOSED" not in submitted.text
+    assert due.status_code == 200 and due.json()["week"] == 53
 
 
 # --- runs: R37-2, I38, R37-4 -----------------------------------------------------------
@@ -431,10 +462,11 @@ def test_bad_pin_stops_a_celery_worker_at_init(monkeypatch, module):
     assert any(r is mod._validate_plan_clock_env for r in receivers)
 
 
-@pytest.mark.parametrize("week", [0, 53])
+@pytest.mark.parametrize("week", [0, 5201])
 async def test_builder_and_queued_row_reject_a_non_plan_week(db_session, week):
-    """I41 via `scheduling.require_plan_week`: the live builder and a QUEUED
-    row never accept a week outside 1..52."""
+    """I41 (amended at P53) via `scheduling.require_plan_week`: the live
+    builder and a QUEUED row never accept a week outside 1..5200 (53 is
+    2027 W1 and is valid)."""
 
     from services.schedule_persistence import build_schedule_input_from_db
 

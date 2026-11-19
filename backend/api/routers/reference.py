@@ -24,6 +24,7 @@ from models.enums import ProjectPriority, ProjectType
 from models.hub import Hub
 from models.project import workflow_id_for_hub
 from models.workflow import WorkflowStepTemplate
+from scheduling.weeks import queue_tier
 from schemas.category import CategoryRead
 from schemas.reference import (
     HubRead,
@@ -130,7 +131,9 @@ async def list_priorities() -> list[PriorityBandRead]:
             label=dc.PRIORITY_LABELS[code],
             short_label=code,
             not_scheduled=code in dc.NOT_SCHEDULED_PRIORITIES,
-            queued_when_in_queue=not dc.counts_toward_year(code, dc.QUEUED_STATUS),
+            # P53 (R53-2): the scheduling tier (Board "Queued" badge), not
+            # counting: a queued P3 counts since P53.
+            queued_when_in_queue=queue_tier(code, dc.QUEUED_STATUS),
         )
         for code in dc.PRIORITY_ORDER
     ]

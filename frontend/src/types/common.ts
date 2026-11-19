@@ -4,9 +4,9 @@
 /** UUID string, as the backend uses `uuid.uuid4()` PKs (backend/models/base.py). */
 export type Id = string;
 
-/** 1-indexed absolute week number (DOMAIN_RULES.md). The UI presents the 52-week plan
- *  year (W1–W52, `DISPLAY_HORIZON_WEEKS`); a served week past 52 is spillover and is
- *  shown as the week of its own year — 57 → "W5 '27", "Week 5 of 2027" on hover
+/** 1-indexed ABSOLUTE week number from the served `week_base_year` W1 (P53, ADR
+ *  0063: 2027 W1 = 53, never re-based). It is shown as the week of its own year —
+ *  57 → "W5" in plan year 2027, "W5 '27" otherwise, "Week 5 of 2027" on hover
  *  (`formatWeek` / `formatWeekTitle`, owner rule 2026-11-18), never as W53+. */
 export type WeekNumber = number;
 

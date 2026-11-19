@@ -52,6 +52,8 @@ export interface RunProvenanceRun {
   version: number;
   solver_type: string | null;
   created_at: string | null;
+  /** P53 (R53-7): "Computed under the earlier rules …" on a pre-P53 run. */
+  rules_label?: string | null | undefined;
 }
 
 export interface RunProvenanceChipsProps {
@@ -139,6 +141,12 @@ export function RunProvenanceChips({
         <span className={CHIP}>
           <Clock3 className="size-3" aria-hidden="true" />
           {computedAt}
+        </span>
+      ) : null}
+
+      {activeRun?.rules_label ? (
+        <span className={cn(CHIP, 'italic')} data-testid="run-rules-label" title={activeRun.rules_label}>
+          {activeRun.rules_label}
         </span>
       ) : null}
 

@@ -111,7 +111,8 @@ What is assertable at the pure-function level (2026-09-27 revision):
         `current_week` equals the input's `current_week`, and that week is in
         the I41 domain. The solvers read the week only from the input (no
         import-bound default exists since P37-T03), so the outcomes are at it.
-    I41 (P37) week domain: `check_i41_week_domain` — `1 <= week <= 52`. Run
+    I41 (P37; amended by R53-1) week domain: `check_i41_week_domain` —
+        `1 <= week <= MAX_ABSOLUTE_WEEK`, an absolute week. Run
         on `run_week` when given and on the input week under `live_state`
         (an engine-only input may solve from a week past 52, e.g. the horizon-
         overflow golden scenarios, so it is not run on every input).
@@ -135,15 +136,16 @@ What is assertable at the pure-function level (2026-09-27 revision):
         `not_scheduled_priority`, no rows, null weeks, never counted) and is
         absent from `scheduling_order`; no other outcome carries the flag; a
         status-excluded project keeps `counts_toward_year = true`
-    I50 (P42, R42-4) year basis: `counts_toward_year` equals
-        `domain_constants.counts_toward_year` on the input; I9 is re-derived
+    I50 (P42, R42-4; amended by R53-2) year basis: `counts_toward_year`
+        equals `weeks.counts_toward_year` (queued P3 counts); a Commercialized
+        project's `within_year` follows R53-2b (I61); I9 is re-derived
         with it (`_check_i9_within_year_derivation`, tagged I50 on a
         non-counting project)
-    I51 (P42, R42-5) the (frozen, counts_toward_year) tier never decreases
-        over `scheduling_order`; I30 / I37a heads gain key 1a
-    I52 (P42, R42-5) `check_band_neutrality(schedule_input, solver)`: the
-        outcomes of counting work are identical with and without the
-        non-frozen non-counting projects (run with I8 for greedy)
+    I51 (P42, R42-5; amended by R53-2) the (frozen, queue_tier) tier never
+        decreases over `scheduling_order`; I30 / I37a heads key 1a = queue_tier
+    I52 (P42, R42-5; amended by R53-2) `check_band_neutrality(schedule_input,
+        solver)`: the outcomes of non-queue-tier work are identical with and
+        without the non-frozen queue-tier projects (run with I8 for greedy)
     I54 (P49, ADR 0061 R49-7..R49-11) plan-import "Plan from" week:
         `check_plan_from_floor(baseline, request, result)` — every file
         project's In Progress anchor starts at f and no placed step of a file
@@ -153,8 +155,8 @@ What is assertable at the pure-function level (2026-09-27 revision):
         f = cw gives the pre-R49 input exactly; `current_week = cw`,
         `plan_from_week = f`
     I56 (P49, ADR 0061 amendment R49-15..R49-17) plan window:
-        `check_plan_window(baseline, request, result)` — `cw <= f <= u <= 104`;
-        the import run input has `horizon_weeks = u + 26` and
+        `check_plan_window(baseline, request, result)` — `cw <= f <= u <= H`
+        (R53-4); the import run input has `horizon_weeks = H` and
         `within_year_week = u`; every served outcome (and merge-mode before
         outcome) is within / spillover by its finish against u; capacity weekly
         series is `cw..u` and windows are calendar years clipped to u; served
@@ -206,6 +208,7 @@ from scheduling.greedy import (
     category_maps_for,
     is_not_scheduled_priority,
     project_counts_toward_year,
+    project_queue_tier,
     run_greedy_sgs,
 )
 from scheduling.types import (
@@ -218,6 +221,14 @@ from scheduling.types import (
     ScheduleOutput,
     StepSchedule,
     StepTimingInput,
+)
+from scheduling.weeks import (
+    commercialized_within_year,
+    cp_sat_window,
+    horizon_for,
+    year_end,
+    year_of,
+    year_windows,
 )
 from scheduling.workflow import (
     STATUS_BLOCKED,
@@ -238,6 +249,8 @@ from scheduling.workflow import (
 )
 
 if TYPE_CHECKING:  # annotations only: plan_import is imported lazily below
+    from scheduling.cp_sat import CpSatSolveInfo
+    from scheduling.delivery import DeliveryByYear, DeliveryRow
     from scheduling.plan_import import PlanImportRequest, PlanImportResult
     from scheduling.whatif import WhatIfBaseline
 
@@ -469,7 +482,8 @@ def validate_invariants(
     added or re-banded projects are legitimately unranked), and I41 on the
     input week (P37). `run_week` (P37, I38) is the stored
     `ScheduleRun.current_week` of the run this output was persisted as; when
-    given, I38 (it equals the input week) and I41 (it is in 1..52) run."""
+    given, I38 (it equals the input week) and I41 (it is an absolute week >=
+    1) run."""
 
     violations_pre: list[InvariantViolation] = []
     if run_week is not None:
@@ -511,6 +525,7 @@ def validate_invariants(
     violations.extend(_check_i47a_manual_overlap(ctx))
     violations.extend(_check_i49_band_exclusion(ctx))
     violations.extend(_check_i51_tier_order(ctx))
+    violations.extend(_check_i58_rows_within_horizon(ctx))
     return tuple(violations)
 
 
@@ -518,7 +533,8 @@ def validate_invariants(
 
 
 def check_i41_week_domain(week: object) -> list[InvariantViolation]:
-    """I41: `1 <= week <= 52` (`PLAN_WEEK_MIN..PLAN_WEEK_MAX`), an int and
+    """I41 (R53-1): `1 <= week <= PLAN_WEEK_MAX` (an absolute week; the upper
+    bound is the 100-year sanity bound), an int and
     not a bool. Returns the violation instead of raising (validator style);
     `scheduling.types.require_plan_week` is the raising form."""
 
@@ -1441,11 +1457,12 @@ def check_scheduler_determinism(
 
 
 def _check_i9_within_year_derivation(ctx: _Ctx) -> list[InvariantViolation]:
-    """I9 as amended by I50 (ADR 0056, R42-4 / R42-9): `counts_toward_year`
-    equals `domain_constants.counts_toward_year(priority, status)` on the run
+    """I9 as amended by I50 (ADR 0056, R42-4 / R42-9; R53-2): `counts_toward_year`
+    equals `weeks.counts_toward_year(priority, status)` on the run
     input (I50), and `within_year` / `spillover` are re-derived from the
     outcome's own fields:
-    - status-excluded -> `within_year = status == Commercialized` (unchanged);
+    - status-excluded -> `within_year = status == Commercialized ∧
+      commercialized_within_year(actual_end_week, cw)` (R53-2b / I61);
     - `not_scheduled_priority` -> False / False (I49 owns the rest);
     - otherwise `within_year = counts ∧ scheduled ∧ end_week + delay_weeks <=
       within_year_week` and `spillover = counts ∧ scheduled ∧ ¬within_year`,
@@ -1476,7 +1493,10 @@ def _check_i9_within_year_derivation(ctx: _Ctx) -> list[InvariantViolation]:
         if outcome.not_scheduled_priority:
             continue  # I49 asserts its flags
         if outcome.excluded:
-            expected = project.status == "Commercialized"
+            # R53-2b / I61: the delivered year of a Commercialized project.
+            expected = project.status == "Commercialized" and commercialized_within_year(
+                project.actual_end_week, ctx.schedule_input.current_week
+            )
         elif not ctx.is_scheduled(outcome):
             expected = False
         else:
@@ -2301,7 +2321,7 @@ def _check_i30_category_order(ctx: _Ctx) -> list[InvariantViolation]:
         # band_rank None and every project counting it is the P33 head.
         head = (
             0 if p.frozen else 1,
-            0 if project_counts_toward_year(p) else 1,
+            1 if project_queue_tier(p) else 0,
             0 if p.is_vip else 1,
             dc.PRIORITY_ORDER.index(p.priority),
             _band_rank_key(p.band_rank),
@@ -2403,7 +2423,7 @@ def _check_i37a_band_rank_order(ctx: _Ctx) -> list[InvariantViolation]:
         # R42-9: keys 1, 1a, 2, 3, 3a.
         return (
             0 if p.frozen else 1,
-            0 if project_counts_toward_year(p) else 1,
+            1 if project_queue_tier(p) else 0,
             0 if p.is_vip else 1,
             dc.PRIORITY_ORDER.index(p.priority),
             _band_rank_key(r),
@@ -2815,16 +2835,17 @@ def _check_i49_band_exclusion(ctx: _Ctx) -> list[InvariantViolation]:
 
 
 def _check_i51_tier_order(ctx: _Ctx) -> list[InvariantViolation]:
-    """I51: over consecutive ids `a, b` of `scheduling_order`, the pair
-    (frozen key, `counts_toward_year` key) never decreases: frozen projects
-    first, then every counting project, then the queued ones. Unknown ids
-    are skipped (I15 / input validation own them)."""
+    """I51 (amended by R53-2): over consecutive ids `a, b` of
+    `scheduling_order`, the pair (frozen key, `queue_tier` key) never
+    decreases: frozen projects first, then every non-queue-tier project, then
+    the queue-tier ones (queued P3, frozen P4/Q). Unknown ids are skipped
+    (I15 / input validation own them)."""
 
     def tier(pid: str) -> tuple[int, int] | None:
         p = ctx.projects.get(pid)
         if p is None:
             return None
-        return (0 if p.frozen else 1, 0 if project_counts_toward_year(p) else 1)
+        return (0 if p.frozen else 1, 1 if project_queue_tier(p) else 0)
 
     violations: list[InvariantViolation] = []
     order = ctx.schedule_output.scheduling_order
@@ -2837,7 +2858,7 @@ def _check_i51_tier_order(ctx: _Ctx) -> list[InvariantViolation]:
                 invariant="I51",
                 description=(
                     f"scheduling_order has {a!r} (frozen/counts tier {ta}) before {b!r} "
-                    f"(tier {tb}): the (frozen, counts_toward_year) tier must not decrease"
+                    f"(tier {tb}): the (frozen, queue_tier) tier must not decrease"
                 ),
                 project_id=b,
             )
@@ -2858,14 +2879,12 @@ def _has_anchored_or_pinned_step(project: ProjectInput) -> bool:
 
 
 def without_spare_capacity_projects(schedule_input: ScheduleInput) -> ScheduleInput:
-    """I52's X⁻: `schedule_input` without its non-frozen projects whose
-    `counts_toward_year` is False (queued P3 and non-frozen P4/Q)."""
+    """I52's X⁻ (amended by R53-2): `schedule_input` without its non-frozen
+    queue-tier projects (queued P3 and non-frozen P4/Q)."""
 
     return replace(
         schedule_input,
-        projects=tuple(
-            p for p in schedule_input.projects if p.frozen or project_counts_toward_year(p)
-        ),
+        projects=tuple(p for p in schedule_input.projects if p.frozen or not project_queue_tier(p)),
     )
 
 
@@ -2894,7 +2913,7 @@ def check_band_neutrality(
     removed = [
         p
         for p in sorted(schedule_input.projects, key=lambda p: p.project_id)
-        if not p.frozen and not project_counts_toward_year(p)
+        if not p.frozen and project_queue_tier(p)
     ]
     if not removed:
         return ()
@@ -3044,14 +3063,16 @@ def check_plan_window(
     """I56 (plan window). Pure; rebuilds the run input once, never runs a solver.
 
     With u = the resolved `plan_until_week` (default `plan_year_end_week`)
-    and f the resolved `plan_from_week`: `cw <= f <= u <= 104`; served
-    `plan_until_week == u` and `horizon_weeks == u + 26`; the import run
-    input has `horizon_weeks = u + 26` and `within_year_week = u`; every
+    and f the resolved `plan_from_week`, H the baseline input's
+    `horizon_weeks` (I56 amended by R53-4): `cw <= f <= u <= H`; served
+    `plan_until_week == u` and `horizon_weeks == H`; the import run input has
+    `horizon_weeks = H` and `within_year_week = u`; every
     served outcome and merge-mode before outcome classed `within_year` /
     `spillover` finishes by u / after u respectively (the baseline run's
     cut-off is u too, so before and after compare like with like); the weekly
-    capacity series covers exactly `cw..u` and the windows are y0 =
-    `cw..min(52, u)` plus y1 = `53..u` iff `u >= 53`. The byte identity with
+    capacity series covers exactly `cw..u` and the windows are one per
+    calendar year `y0, y1, ...` from `year_of(cw)` to `year_of(u)`, the first
+    starting at cw and the last clipped to u. The byte identity with
     u unset is asserted by the test suite (it needs the pre-amendment code)."""
 
     from scheduling import plan_import as pi  # local: plan_import imports this module's peers
@@ -3064,16 +3085,17 @@ def check_plan_window(
     def bad(description: str, **where: object) -> None:
         out.append(InvariantViolation(invariant="I56", description=description, **where))  # type: ignore[arg-type]
 
-    if not cw <= f <= u <= pi.PLAN_UNTIL_MAX_WEEK:
-        bad(f"plan window violates cw <= f <= u <= 104 (cw {cw}, f {f}, u {u})")
+    h = baseline.schedule.horizon_weeks
+    if not cw <= f <= u <= h:
+        bad(f"plan window violates cw <= f <= u <= H (cw {cw}, f {f}, u {u}, H {h})")
         return tuple(out)
     if result.plan_until_week != u:
         bad(f"served plan_until_week {result.plan_until_week} is not the resolved week {u}")
-    if result.horizon_weeks != u + pi.SPILLOVER_MARGIN_WEEKS:
-        bad(f"served horizon_weeks {result.horizon_weeks} is not u + 26 = {u + 26}")
+    if result.horizon_weeks != h:
+        bad(f"served horizon_weeks {result.horizon_weeks} is not the search limit H = {h}")
     run_si = pi.build_plan_import_input(baseline, request)
-    if run_si.horizon_weeks != u + pi.SPILLOVER_MARGIN_WEEKS:
-        bad(f"run input horizon_weeks {run_si.horizon_weeks} is not u + 26 = {u + 26}")
+    if run_si.horizon_weeks != h:
+        bad(f"run input horizon_weeks {run_si.horizon_weeks} is not the search limit H = {h}")
     if run_si.within_year_week != u:
         bad(f"run input within_year_week {run_si.within_year_week} is not u = {u}")
 
@@ -3098,10 +3120,291 @@ def check_plan_window(
     for key, series in sorted([*cap.weekly.hubs.items(), *cap.weekly.lab_regions.items()]):
         if len(series.load) != n or len(series.capacity) != n:
             bad(f"weekly series {key!r} does not have {n} weeks")
-    want = [("y0", cw, min(dc.WITHIN_YEAR_WEEK, u))]
-    if u > dc.WITHIN_YEAR_WEEK:
-        want.append(("y1", dc.WITHIN_YEAR_WEEK + 1, u))
+    want = [(f"y{i}", a, b) for i, (_, a, b) in enumerate(year_windows(cw, u))]
     got = [(w.key, w.from_week, w.to_week) for w in cap.windows]
     if got != want:
         bad(f"capacity windows {got} are not the calendar years clipped to u: {want}")
+    return tuple(out)
+
+
+# --- P53 (ADR 0063, R53-1..R53-9): I57-I63 -----------------------------------------------
+
+
+def check_i57_run_weeks(
+    schedule_input: ScheduleInput, *, live: bool = True
+) -> tuple[InvariantViolation, ...]:
+    """I57 (one absolute week line), engine part: `current_week <=
+    within_year_week <= horizon_weeks`; for a live / What-if / scenario run
+    (`live=True`) `within_year_week = year_end(year_of(current_week))` (so
+    `within_year_week mod 52 = 0`). A plan import passes `live=False` (its
+    cut-off is u). The single-implementation and migration-checksum parts
+    are test-suite / service-side."""
+
+    cw, wy, h = (
+        schedule_input.current_week,
+        schedule_input.within_year_week,
+        schedule_input.horizon_weeks,
+    )
+    out: list[InvariantViolation] = []
+    if not cw <= wy <= h:
+        out.append(
+            InvariantViolation(
+                "I57", f"run weeks violate cw <= within_year_week <= H ({cw}, {wy}, {h})", week=cw
+            )
+        )
+    if live and wy != year_end(year_of(cw)):
+        out.append(
+            InvariantViolation(
+                "I57",
+                f"live run within_year_week {wy} is not the plan-year end "
+                f"{year_end(year_of(cw))} of week {cw}",
+                week=cw,
+            )
+        )
+    return tuple(out)
+
+
+def check_i58_horizon(
+    schedule_input: ScheduleInput, horizon_years: int
+) -> tuple[InvariantViolation, ...]:
+    """I58 (open horizon), run-row part: a P53 run's `horizon_weeks =
+    current_week + 52 x N` for the N read when the row was created."""
+
+    want = horizon_for(schedule_input.current_week, horizon_years)
+    if schedule_input.horizon_weeks != want:
+        return (
+            InvariantViolation(
+                "I58",
+                f"horizon_weeks {schedule_input.horizon_weeks} is not cw + 52 x "
+                f"{horizon_years} = {want}",
+                week=schedule_input.current_week,
+            ),
+        )
+    return ()
+
+
+def _check_i58_rows_within_horizon(ctx: _Ctx) -> list[InvariantViolation]:
+    """I58: no step row of a non-frozen project ends after `horizon_weeks`
+    (a frozen project's locked dates are fixed, I10, and never searched), and
+    a counting LEFT_OUT project in a schedulable status always has a served
+    reason (`delivery.left_out_reason`; `beyond_horizon` when none of the
+    three diagnostics)."""
+
+    from scheduling.delivery import outcome_left_out_reason  # local: delivery imports types
+
+    h = ctx.schedule_input.horizon_weeks
+    out: list[InvariantViolation] = []
+    for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
+        project = ctx.projects.get(outcome.project_id)
+        if project is None or project.frozen:
+            continue
+        for row in outcome.steps:
+            if not row.skipped and row.end_week > h:
+                out.append(
+                    InvariantViolation(
+                        "I58",
+                        f"row ends in week {row.end_week}, after the search limit H = {h}",
+                        project_id=outcome.project_id,
+                        step_id=row.step_id,
+                        week=row.end_week,
+                    )
+                )
+        if outcome.left_out and outcome_left_out_reason(outcome) is None:
+            out.append(
+                InvariantViolation(
+                    "I58", "LEFT_OUT outcome has no served reason", project_id=outcome.project_id
+                )
+            )
+    return out
+
+
+def check_i59_delivery(
+    rows: Sequence[DeliveryRow],
+    table: DeliveryByYear,
+    *,
+    run_week: int,
+    within_year_week: int,
+) -> tuple[InvariantViolation, ...]:
+    """I59 (delivery by year reconciles) over one run's rows and the served
+    table: when `within_year_week = year_end(Y0)` the Y0 total equals the
+    WITHIN_YEAR bucket count and Σ over later years equals the SPILLOVER
+    bucket count; "not placed" equals the counting LEFT_OUT bucket; in every
+    row `p1 + p2 + p3 + other = total`; cumulative columns never decrease;
+    every listed project appears in exactly one row; the table equals a fresh
+    `delivery_by_year` over the same rows (one function, byte-equal)."""
+
+    from scheduling.delivery import delivery_by_year  # local: delivery imports types
+
+    out: list[InvariantViolation] = []
+
+    def bad(msg: str, **where: object) -> None:
+        out.append(InvariantViolation("I59", msg, **where))  # type: ignore[arg-type]
+
+    if table != delivery_by_year(rows, run_week=run_week):
+        bad("served table differs from delivery_by_year over the same rows")
+    counting = [r for r in rows if r.counts_toward_year and not r.not_scheduled_priority]
+    within = [r for r in counting if not r.blocked and r.within_year]
+    spill = [r for r in counting if not r.blocked and not r.within_year and r.spillover]
+    left = [
+        r
+        for r in counting
+        if not r.blocked and not r.within_year and not r.spillover and r.left_out
+    ]
+    y0 = year_of(run_week)
+    if table.years and within_year_week == year_end(y0):
+        if table.years[0].counts.total != len(within):
+            bad(f"Y0 total {table.years[0].counts.total} != within-year count {len(within)}")
+        later = sum(y.counts.total for y in table.years[1:])
+        if later != len(spill):
+            bad(f"later years total {later} != spillover count {len(spill)}")
+    if table.not_placed.total != len(left):
+        bad(f"not placed {table.not_placed.total} != left-out count {len(left)}")
+    seen: dict[str, int] = {}
+    lines = [
+        *(y.counts for y in table.years),
+        table.not_placed,
+        table.blocked,
+    ]
+    for line in lines:
+        if line.p1 + line.p2 + line.p3 + line.other != line.total:
+            bad("a row's band columns do not sum to its total")
+        for ids in line.project_ids.values():
+            for pid in ids:
+                seen[pid] = seen.get(pid, 0) + 1
+    for pid, n in sorted(seen.items()):
+        if n != 1:
+            bad(f"project listed in {n} rows", project_id=pid)
+    prev = None
+    for y in table.years:
+        c = y.cumulative
+        cur = (c.p1, c.p2, c.p3, c.other, c.total)
+        if prev is not None and any(a < b for a, b in zip(cur, prev, strict=True)):
+            bad(f"cumulative columns decrease at {y.year}")
+        prev = cur
+    return tuple(out)
+
+
+def check_i60_cp_sat_tail(
+    schedule_input: ScheduleInput, output: ScheduleOutput, info: CpSatSolveInfo
+) -> tuple[InvariantViolation, ...]:
+    """I60 (CP-SAT tail) on one `run_cp_sat` result: every searched project
+    the model placed (not in the tail) has every searched row inside `W_cp =
+    min(within_year_week + 26, H)`; the tail walked exactly the model's absent
+    counting projects plus the queue-tier ones, in `scheduling_order` (=
+    `ctx.ordered`) order; every row ends <= H. The "tail never moves a model
+    placement" and "deterministic given the model output" halves are the
+    determinism / differential tests (`_selftest_cp_sat`). Projects resolved
+    before the model (frozen, needs-greedy) are walked by the shared greedy
+    routine to H, as since P2-T06.
+
+    P53-R01 (ruling (b)): the pre-model walk is a named placement source. Its
+    set (`info.pre_model_project_ids`) must be exactly frozen ∪ needs-greedy ∪
+    no_leader ∪ data_error: disjoint from the model, it is every scheduled
+    (`scheduling_order`) project that is neither in the model nor a non-frozen
+    queue-tier project; it holds every
+    frozen project and every non-frozen counting no_leader / data_error one;
+    no pre-model project is walked again by the tail."""
+
+    w_cp = cp_sat_window(schedule_input.within_year_week, schedule_input.horizon_weeks)
+    by_id = {o.project_id: o for o in output.project_outcomes}
+    tail = set(info.tail_project_ids)
+    out: list[InvariantViolation] = []
+    for pid in info.model_project_ids:
+        o = by_id.get(pid)
+        if o is None or pid in tail:
+            continue
+        if o.left_out:
+            out.append(
+                InvariantViolation(
+                    "I60", "model left a project absent but the tail skipped it", project_id=pid
+                )
+            )
+            continue
+        for row in o.steps:
+            if not row.skipped and row.end_week > w_cp:
+                out.append(
+                    InvariantViolation(
+                        "I60",
+                        f"model placement ends in week {row.end_week} > W_cp {w_cp}",
+                        project_id=pid,
+                        step_id=row.step_id,
+                    )
+                )
+    order = {pid: i for i, pid in enumerate(output.scheduling_order)}
+    idx = [order.get(pid, -1) for pid in info.tail_project_ids]
+    if idx != sorted(idx) or -1 in idx:
+        out.append(InvariantViolation("I60", "tail walk is not in ctx.ordered order"))
+
+    pre = set(info.pre_model_project_ids)
+    model = set(info.model_project_ids)
+    if len(pre) != len(info.pre_model_project_ids):
+        out.append(InvariantViolation("I60", "pre-model walk lists a project twice"))
+    projects = {p.project_id: p for p in schedule_input.projects}
+    for pid in sorted(order):  # the scheduled (`ctx.ordered`) projects only
+        p = projects.get(pid)
+        if p is None:
+            continue
+        queued = not p.frozen and project_queue_tier(p)
+        expected = pid not in model and not queued
+        if (pid in pre) != expected:
+            out.append(
+                InvariantViolation(
+                    "I60",
+                    "pre-model walk set is not frozen ∪ needs-greedy ∪ no_leader ∪ data_error",
+                    project_id=pid,
+                )
+            )
+            continue
+        o = by_id.get(pid)
+        diag = o is not None and (o.no_leader or o.data_error is not None)
+        if (p.frozen or (diag and not queued)) and pid not in pre:
+            out.append(
+                InvariantViolation(
+                    "I60",
+                    "frozen / no_leader / data_error project not walked pre-model",
+                    project_id=pid,
+                )
+            )
+        if pid in pre and pid in tail:
+            out.append(
+                InvariantViolation(
+                    "I60", "pre-model project walked again by the tail", project_id=pid
+                )
+            )
+    return tuple(out)
+
+
+def check_i63_tail_flags(
+    schedule_input: ScheduleInput, output: ScheduleOutput
+) -> tuple[InvariantViolation, ...]:
+    """I63 (tail flags never change placement): computing `far_finish` /
+    `leader_tails` leaves the run input and output unchanged, `far_finish`
+    holds only on placed projects finishing after Y0 + 1, and a leader is
+    `overloaded` iff `leader_tail_week > year_end(Y0 + 1)`."""
+
+    from scheduling.delivery import tail_flags  # local: delivery imports types
+
+    before = (repr(schedule_input), repr(output))
+    far, tails = tail_flags(schedule_input, output)
+    out: list[InvariantViolation] = []
+    if (repr(schedule_input), repr(output)) != before:
+        out.append(InvariantViolation("I63", "computing the tail flags changed the run"))
+    y0 = year_of(schedule_input.current_week)
+    by_id = {o.project_id: o for o in output.project_outcomes}
+    for pid in sorted(far):
+        o = by_id[pid]
+        if o.projected_end_week is None or year_of(o.projected_end_week) <= y0 + 1:
+            out.append(
+                InvariantViolation("I63", "far_finish on a project not past Y0 + 1", project_id=pid)
+            )
+    limit = year_end(y0 + 1)
+    for t in tails:
+        if t.overloaded != (t.leader_tail_week > limit):
+            out.append(
+                InvariantViolation(
+                    "I63",
+                    "leader_overloaded disagrees with its tail week",
+                    engineer_id=t.engineer_id,
+                )
+            )
     return tuple(out)

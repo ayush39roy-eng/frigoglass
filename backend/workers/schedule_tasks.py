@@ -381,8 +381,11 @@ async def _run_schedule_body(
 
             # P37-T04 (ADR 0052 R37-2, I38): the week was fixed when the
             # QUEUED row was created; never re-read the clock at execution.
+            # P53 (R53-2, I58): so was the search limit (N read then).
             schedule_input = await build_schedule_input_from_db(
-                db, current_week=run.current_week
+                db,
+                current_week=run.current_week,
+                horizon_weeks=run.horizon_weeks if run.rules_epoch is not None else None,
             )
             objective_value: float | None = None
             # Ruling 6: "OPTIMAL"/"FEASIBLE" for CP-SAT, None for greedy

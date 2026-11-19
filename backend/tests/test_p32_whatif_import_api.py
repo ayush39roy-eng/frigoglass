@@ -46,6 +46,7 @@ from schemas.whatif_import import ImportSimulateRequest
 from services import plan_clock
 from services.rate_limit import TokenBucketLimiter
 from services.whatif_baseline import load_context
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
@@ -323,11 +324,13 @@ async def test_simulate_merge_replaces_matched_projects(db_session):
     before = await table_counts(db_session)
     async with client_for(db_session) as c:
         rows = await _parsed_rows(c)
-        resp = await c.post("/whatif/import/simulate", json=sim_body(rows))
+        resp = await c.post("/whatif/import/simulate", json=sim_body(rows, plan_year_end_week=104))
     assert resp.status_code == 200, resp.text
     body = resp.json()
+    # P53 (R53-4): a two-year preset given explicitly; the import run
+    # searches to H = cw + 52 × N (N = 5).
     assert body["mode"] == "merge" and body["plan_year_end_week"] == 104
-    assert body["horizon_weeks"] == 130 and body["base_year"] == 2026
+    assert body["horizon_weeks"] == TEST_WEEK + 260 and body["base_year"] == 2026
     projects = body["projects"]
     refs = [p["ref"] for p in projects]
     assert refs[:5] == [r["key"] for r in rows]  # file rows first, in file order
@@ -408,7 +411,7 @@ async def test_simulate_file_only(db_session):
         )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["mode"] == "file_only" and body["horizon_weeks"] == 78
+    assert body["mode"] == "file_only" and body["horizon_weeks"] == TEST_WEEK + 260
     assert all(p["source"] == "file" for p in body["projects"])
     assert all(p["before_outcome"] is None for p in body["projects"])
     k = body["kpis"]

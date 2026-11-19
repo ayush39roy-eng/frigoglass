@@ -27,6 +27,13 @@ if TYPE_CHECKING:
     from models.project import Project
 
 
+#: P53 (ADR 0063 R53-7): `ScheduleRun.rules_epoch` of every run created from
+#: P53 on. NULL = a run computed under the earlier rules (78-week search,
+#: queued P3 not counted); such a run is history and is never recomputed (I62).
+RULES_EPOCH_P53 = "p53"
+PRE_P53_RULES_LABEL = "Computed under the earlier rules (78-week search; queued P3 not counted)"
+
+
 class ScheduleRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """One full run of the scheduler (greedy SGS or CP-SAT) over the whole
     portfolio, per docs/PROJECT_AND_STACK.md §2's "every schedule run ... is
@@ -103,6 +110,9 @@ class ScheduleRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: unknown (runs before migration c41f7e9a2b58, or a solver that reports
     #: none).
     solver_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    #: P53 (R53-7, migration p53a_week_line): `'p53'` for every run created
+    #: from P53 on, NULL for older runs ("computed under the earlier rules").
+    rules_epoch: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     project_steps: Mapped[list[ScheduleRunProjectStep]] = relationship(
         back_populates="schedule_run"
@@ -256,6 +266,16 @@ class ScheduleRunProjectOutcome(Base):
     not_scheduled_priority: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    #: P53 (R53-3, migration p53a_week_line): the priority band in the run
+    #: input ("P1".."P4", "Q" or NULL). NULL on every pre-P53 row; the
+    #: delivery table is then not served (`pre_p53_run`), never filled from
+    #: the live band.
+    priority_at_run: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    #: P53 (R53-2, migration p53a_week_line): `no_leader` / `no_chamber` /
+    #: `data_error` / `beyond_horizon` as the scheduler's diagnostics gave it
+    #: (`scheduling.delivery.outcome_left_out_reason`); NULL when placed and on
+    #: every pre-P53 row.
+    left_out_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     schedule_run: Mapped[ScheduleRun] = relationship(back_populates="project_outcomes")
     project: Mapped[Project] = relationship(back_populates="schedule_run_outcomes")

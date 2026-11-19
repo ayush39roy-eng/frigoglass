@@ -33,9 +33,8 @@ import { apiErrorMessage } from '@/lib/api/error-messages';
 import { useCategoriesForHub, type Hub } from '@/lib/api/reference';
 import { useCategoryCatalogSnapshot } from '@/lib/category-catalog';
 import { hubPickerLabel } from '@/lib/hub-labels';
-import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
-import { formatDecimal, formatPlanWeek } from '@/lib/format';
-import { useCurrentWeek } from '@/lib/plan-clock';
+import { formatDecimal, formatPlanWeek, formatWeekWithYear } from '@/lib/format';
+import { useCurrentWeek, usePlanClock } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
 import { usePermission } from '@/stores/session';
 import {
@@ -229,11 +228,18 @@ export function ProjectForm({
   rankMoveHost?: PriorityMoveApi | null | undefined;
 }): React.JSX.Element {
   const withRegister = registerSection !== undefined;
+  // P53 (R53-1): weeks are absolute; name the served plan year's first week so
+  // a typed number can be read ("53 = W1 '27"). No client bound (server 422).
+  const clock = usePlanClock();
   const currentWeek = useCurrentWeek();
   const startWeekRequired = startWeekRequiredFor(progressStatus);
   const contextMoveHost = usePriorityMoveHost();
   const moveHost = rankMoveHost ?? contextMoveHost;
   const canMovePriority = usePermission('project_registration').write;
+  const planWeekHint =
+    clock?.planYearStartWeek != null
+      ? `Plan week, counted from the first plan year (${String(clock.planYearStartWeek)} = ${formatWeekWithYear(clock.planYearStartWeek)}). `
+      : '';
   const radix = variant !== 'inline';
   const sheet = variant === 'sheet';
   const Header = radix ? DialogHeader : InlineHeader;
@@ -670,7 +676,6 @@ export function ProjectForm({
                 id="reg-start-week"
                 type="number"
                 min={1}
-                max={DISPLAY_HORIZON_WEEKS}
                 inputMode="numeric"
                 className="tnum"
                 placeholder={START_WEEK_PLACEHOLDER}
@@ -732,13 +737,12 @@ export function ProjectForm({
               label="Expected completion (week)"
               htmlFor="reg-target-end-week"
               error={errors.target_end_week?.message}
-              hint={`Week 1–${String(DISPLAY_HORIZON_WEEKS)}. Drawn as the "Expected completion" line on the timeline; leave empty to use the process-derived finish.`}
+              hint={`${planWeekHint}Drawn as the "Expected completion" line on the timeline; leave empty to use the process-derived finish.`}
             >
               <Input
                 id="reg-target-end-week"
                 type="number"
                 min={1}
-                max={DISPLAY_HORIZON_WEEKS}
                 inputMode="numeric"
                 className="tnum"
                 aria-invalid={errors.target_end_week ? true : undefined}

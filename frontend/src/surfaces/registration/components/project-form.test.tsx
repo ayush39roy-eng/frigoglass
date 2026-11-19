@@ -609,7 +609,7 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
     expect(screen.queryByLabelText(/Estimated design weeks/)).toBeNull();
   });
 
-  it('rejects an expected-completion week outside the 52-week plan year (ADR 0024)', async () => {
+  it('P53 (R53-8): rejects an expected-completion week below 1; the upper bound is the server\'s (absolute weeks)', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     renderWithProviders(

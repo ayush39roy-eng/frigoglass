@@ -53,7 +53,7 @@ from scheduling.whatif import (
     simulate,
     to_jsonable,
 )
-from tests.scheduling._whatif_fixtures import portfolio_baseline
+from tests.scheduling._whatif_fixtures import portfolio_baseline, without_p53_r01_fields
 
 PLAN_YEAR = 2026
 HUB = "PD-Romania"
@@ -231,6 +231,20 @@ def test_inactive_period_validation(kwargs: dict[str, object], exc: type[Excepti
         InactivePeriod(**kwargs)  # type: ignore[arg-type]
 
 
+def test_covered_weeks_are_absolute_past_104() -> None:
+    # P53 (R53-1): a plan year 2027 window, and a run horizon past 104.
+    assert EngineerActiveWeeks("x", HUB, 1.0, (105, 300)).covered_weeks == (105, 300)
+    assert covered_plan_weeks((InactivePeriod(2027, 50),), 2027) == tuple(range(103, 157))
+    assert covered_plan_weeks((InactivePeriod(2026, 50),), 2027) == tuple(range(53, 157))
+    assert covered_plan_weeks((InactivePeriod(2026, 50),), 2026, last_week=60) == tuple(
+        range(51, 61)
+    )
+    assert covered_plan_weeks((InactivePeriod(2028, 1, 2028, 3),), 2026, last_week=400) == (
+        106,
+        107,
+    )
+
+
 @pytest.mark.parametrize(
     ("fte", "weeks", "exc"),
     [
@@ -240,7 +254,9 @@ def test_inactive_period_validation(kwargs: dict[str, object], exc: type[Excepti
         (1.0, (3, 2), ValueError),
         (1.0, (2, 2), ValueError),
         (1.0, (0,), ValueError),
-        (1.0, (105,), ValueError),
+        # P53 (R53-1): covered weeks are absolute; the bound is the 100-year
+        # sanity bound, not week 104.
+        (1.0, (5201,), ValueError),
         (1.0, (1.0,), TypeError),
     ],
 )
@@ -267,15 +283,21 @@ def test_baseline_rejects_duplicate_entries() -> None:
 # `counts_toward_year` / `not_scheduled_priority` / `queued` (R42-6). With those
 # bands neutralised, every figure is byte-identical to pre-P42
 # (`test_p42_band_meaning.test_neutral_inputs_are_byte_identical_to_pre_p42`).
+# P53-T02 (ADR 0063) re-pin: values recomputed under the P53 rules. Every
+# changed field was attributed by an old/new differential (MEMORY P53-T02):
+# (a) a project LEFT_OUT at the 78-week search now placed within H = cw + 260
+# (portfolio p017 / p024; seed 26-00205 ...), (c) a queued P3 now counted
+# (R53-2: p003 / p009 / p023, import rows "In Queue" P3), and for plan import
+# R53-4 (`horizon_weeks` = H not u + 26; the QUEUED issue no longer raised).
 _PRE_P38_HASHES = {
-    "analytic_add_remaining": "5064bdfe4059020600851720f7dbb0a6f14dd648a43f0db797018fb55dea1c7a",
-    "analytic_add_year": "7065e65163908055fd13736ad432d9523c48343e5a27ede52aba574ea990ecbb",
-    "analytic_remove_remaining": "e8ba5423058ccc11fe5c576c67d33b7a0e794df8e698e896a1c5828d681829ac",
-    "analytic_remove_year": "681eb8002f5870d1bc773d93ff69fec056dff8fd9c4d592c806c84eb262bddcd",
-    "plan_import_104": "3a134c3d1e776114f39e69c5904204af793c483f5dea9fe76146d1c17e755b0e",
-    "plan_import_52": "17183c0cba70c1131986e387e4c56219011e8346ea8b01a79b5f65e4512b73fd",
-    "simulate_add": "c6f756f7eb551480c32fec95fd43739b6042c7faa1e664a4143068423cf8f01b",
-    "simulate_remove": "4adad30ab52b8b55c96a1fc5bef2d86c9723e070266cc0ac3c6a1aafb6e62ce1",
+    "analytic_add_remaining": "4283936ae5f4448c6fbab40f6b5708c81f0bad0c340d188e1365c4ce41b0b723",
+    "analytic_add_year": "c8a0fd7f1274b7a66b5a107981e8269ed9fe1df50538081cfe03e7b968bd400b",
+    "analytic_remove_remaining": "d1934de38eb0ef2b8edc05267b9b053ebd5b9fe6e46ea090152f2a14c7f21fc2",
+    "analytic_remove_year": "6b24333427a483193550beef27da8cc9228681d8f0ae057f6c2dceec6901704c",
+    "plan_import_104": "15e0bcf58b7e3c77a543e0c6061c36d8e454526677d1282cf1314545d0f8a0a8",
+    "plan_import_52": "0342c66859a355ded8eccb2d90602e5c69bc5ae0a7fb8cf29a997e5391356ea5",
+    "simulate_add": "33888296a3d0f9b55875247735373ac4ba18f4f015e38952f41b4990bc536588",
+    "simulate_remove": "91c187929d8f9a494befeca83f24f5cfbd00d545f21172204283b216c0fc91d8",
 }
 
 
@@ -309,7 +331,7 @@ def test_empty_field_is_byte_identical_to_pre_p38() -> None:
     for k, sc in scens.items():
         for basis in ("year", "remaining"):
             got[f"analytic_{k}_{basis}"] = _h(analytic_requirements(b, sc, basis=basis))
-        got[f"simulate_{k}"] = _h(simulate(b, sc))
+        got[f"simulate_{k}"] = _h(without_p53_r01_fields(simulate(b, sc)))
     rows = tuple(
         ImportProject(
             key=f"r{i}",

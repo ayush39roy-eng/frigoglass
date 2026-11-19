@@ -13,6 +13,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from schemas.delivery import DeliveryByYearOut, DeliveryUnavailable
 from schemas.whatif import (
     BookingStatusLiteral,
     CategoryLiteral,
@@ -173,6 +174,15 @@ class PlanWeekChoiceOut(BaseModel):
     label: str
 
 
+class PlanUntilPresetOut(BaseModel):
+    """P53 (R53-4): a "Plan until" preset, the end of one calendar year
+    within the search limit."""
+
+    year: int
+    week: int
+    label: str
+
+
 class ImportParseResponse(BaseModel):
     file_name: str
     projects_sheet: str
@@ -190,6 +200,8 @@ class ImportParseResponse(BaseModel):
     #: labelled by the server (the browser derives no dates, I40).
     plan_from_min_week: int
     plan_week_choices: list[PlanWeekChoiceOut]
+    #: P53 (R53-4): year-end presets within the search limit.
+    plan_until_presets: list[PlanUntilPresetOut] = Field(default_factory=list)
 
 
 # --- simulate ---------------------------------------------------------------------------------
@@ -200,13 +212,16 @@ class StepEditIn(_Strict):
     project_ref: _Id
     step_id: _StepId
     duration_weeks: int | None = Field(default=None, ge=1, le=104)
-    start_not_before_week: int | None = Field(default=None, ge=1, le=130)
+    #: P53 (R53-4, R53-8): an absolute week; `<= H` is checked by the service.
+    start_not_before_week: int | None = Field(default=None, ge=1, le=5200)
     overlap_weeks: int | None = Field(default=None, ge=1, le=104)
 
 
 class ImportSimulateRequest(_Strict):
     mode: Literal["merge", "file_only"] = "merge"
-    plan_year_end_week: Literal[52, 104] = 104
+    #: P53 (R53-4): a year end (a multiple of 52) within `cw..H`; null =
+    #: `year_end(year_of(cw))`. Checked by the service (422 `INVALID_IMPORT`).
+    plan_year_end_week: int | None = Field(default=None, ge=52, le=5200)
     #: Owner rule 2026-11-04: `Num of Projects` n >= 2 is n projects by
     #: default; `false` keeps one project per row.
     expand_multi: bool = True
@@ -220,10 +235,10 @@ class ImportSimulateRequest(_Strict):
     #: ADR 0061 (R49-7): the week the file projects start from (absolute; 53 =
     #: W1 of the next year). None = the calendar week. Valid
     #: `current_week <= f <= plan_until_week`, else 422 `INVALID_IMPORT`.
-    plan_from_week: int | None = Field(default=None, ge=1, le=104)
+    plan_from_week: int | None = Field(default=None, ge=1, le=5200)
     #: ADR 0061 amendment (R49-15): the plan window's last week u. None = the
-    #: `plan_year_end_week` preset. Valid `f <= u <= 104`, else 422.
-    plan_until_week: int | None = Field(default=None, ge=1, le=104)
+    #: `plan_year_end_week` preset. Valid `f <= u <= H` (P53 R53-4), else 422.
+    plan_until_week: int | None = Field(default=None, ge=1, le=5200)
     #: R49-13 / R49-19 "Re-run on today's plan": raise a stored f below
     #: today's week to it (`PLAN_FROM_RAISED`), then u to f when below it
     #: (`PLAN_UNTIL_RAISED`), instead of answering 422.
@@ -508,5 +523,11 @@ class ImportSimulateResponse(BaseModel):
     #: "W48 2026 – W20 2027" when the request set `plan_until_week`, else None
     #: (the plan-year wording stays, R49-18).
     plan_window_label: str | None = None
-    #: The weeks the pickers may offer (`current_week`..104), labelled.
+    #: The weeks the pickers may offer (`current_week`..H), labelled.
     plan_week_choices: list[PlanWeekChoiceOut] = Field(default_factory=list)
+    #: P53 (R53-4): year-end presets within the search limit.
+    plan_until_presets: list[PlanUntilPresetOut] = Field(default_factory=list)
+    #: P53 (R53-3, I59): the delivery table over exactly `projects`; null on a
+    #: scenario saved before P53 (`delivery_by_year_unavailable`).
+    delivery_by_year: DeliveryByYearOut | None = None
+    delivery_by_year_unavailable: DeliveryUnavailable | None = None

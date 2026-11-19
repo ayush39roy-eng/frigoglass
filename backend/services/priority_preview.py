@@ -78,6 +78,7 @@ from models.schedule import ScheduleRun
 from scheduling.band_rank import BandRankError, move_band_inputs, place, place_inputs
 from scheduling.greedy import run_greedy_sgs
 from scheduling.types import ScheduleInput, ScheduleOutput
+from scheduling.weeks import queue_tier
 from scheduling.workflow import canonical_schedule_input_asdict
 from schemas.project import (
     PriorityMoveResponse,
@@ -394,6 +395,8 @@ def _moved(
     project_id: uuid.UUID,
     before: dict[uuid.UUID, Compared],
     after: dict[uuid.UUID, Compared],
+    *,
+    joins_plan: bool = False,
 ) -> PriorityPreviewMoved:
     b = before.get(project_id)
     a = after.get(project_id)
@@ -404,10 +407,12 @@ def _moved(
     effect: Literal["leaves_plan", "joins_queue"] | None = None
     if nsp_after and not nsp_before:
         effect = "leaves_plan"
-    elif (
-        nsp_after is False
-        and counts_after is False
-        and (b is None or nsp_before or b.counts_toward_year)
+    elif nsp_after is False and (
+        # P53 (R53-2, amends R42-8): out of P4/Q into the queue tier (P3
+        # while In Queue) now counts: "joins the plan — scheduled after P1/P2
+        # and started P3". `joins_plan` is that target, from the caller.
+        (bool(nsp_before) and joins_plan)
+        or (counts_after is False and (b is None or b.counts_toward_year))
     ):
         # Out of P4/Q into P3 while In Queue, or a counting In Queue project
         # moved to P3: it is queued now.
@@ -431,7 +436,8 @@ def _moved(
 #: R42-8 copy.
 _EFFECT_LABELS: dict[str, str] = {
     "leaves_plan": "leaves the plan",
-    "joins_queue": "joins the queue — not counted this year",
+    # P53 (R53-2, amends R42-8): a queued P3 now counts; the key is kept.
+    "joins_queue": "joins the plan — scheduled after P1/P2 and started P3",
 }
 
 
@@ -510,7 +516,10 @@ async def preview_priority_move(
     )
     return PriorityPreviewResponse(
         result="preview", baseline_run_id=active_id, preview_token=snap.token,
-        moved=_moved(project.id, before, after), summary=summary, changes=changes,
+        moved=_moved(
+            project.id, before, after,
+            joins_plan=queue_tier(target.value, project.status.value),
+        ), summary=summary, changes=changes,
         hidden_count=hidden, elapsed_ms=elapsed_ms,
         note=NO_ACTIVE_RUN_NOTE if active_id is None else None, **common,
     )
@@ -629,7 +638,9 @@ async def confirm_priority_move(
     before = outcomes_from_output(base_output)
     after = await stored_outcomes(db, run.id)
     changes, summary, hidden = await _diff(db, principal, project, before, after, output)
-    moved = _moved(project.id, before, after)
+    moved = _moved(
+        project.id, before, after, joins_plan=queue_tier(target.value, project.status.value)
+    )
 
     await db.commit()
     try:

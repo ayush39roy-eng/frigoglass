@@ -353,6 +353,9 @@ async def test_builder_passes_the_table_and_default_inputs_stay_byte_identical(
     for project in pre_p33["projects"]:
         # P40 (R40-12): `step_pins` is omitted from the canonical form when empty.
         project.pop("step_pins", None)
+        # P53 (R53-2b): `actual_end_week` is omitted from the canonical form at None.
+        if project.get("actual_end_week") is None:
+            project.pop("actual_end_week", None)
         for row in project["step_timing"]:
             del row["wait_weeks"], row["lead_weeks"]
     assert priority_preview._canonical(si) == {

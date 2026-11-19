@@ -2060,3 +2060,9 @@ clock / closed year, ADR 0056 queued P3, ADR 0061 bounds, ADR 0024/0062 display)
 - CP-SAT window = plan-year end + 26, then a greedy tail to the search limit (I60).
 - Stored runs are history, never rewritten (I57, I62); warnings `far_finish` / `leader_overloaded`
   never affect placement (I63).
+- *(2026-11-19, P53-T05 rulings.)* **I59 amended:** P1 + P2 + P3 + Other = Total (Other = counting rows with
+  band P4 / none, e.g. a Commercialized P4). **I60 amended:** placement sources are (1) the pre-model greedy
+  walk of frozen / needs-greedy projects (unchanged since P2-T06), (2) the CP-SAT model, (3) the greedy tail;
+  a project the tail cannot finish keeps its partial greedy rows (the greedy LEFT_OUT shape). Runs computed
+  before P53 serve `left_out_reason = null`. What-if and plan import serve the same not-placed reasons as the
+  live run (I58).

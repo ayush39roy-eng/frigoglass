@@ -67,6 +67,7 @@ from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.enums import NON_SCHEDULABLE_STATUSES, ProjectPriority
 from models.project import Project
+from scheduling.weeks import year_end, year_of, year_start
 from schemas.vip import (
     VipCurrentStage,
     VipHub,
@@ -98,10 +99,13 @@ VIP_LIMIT_MIN = 10
 VIP_LIMIT_MAX = 15
 VIP_LIMIT_DEFAULT = 15
 
-YEAR_RANGES: dict[str, tuple[int, int]] = {
-    "plan": (1, dc.WITHIN_YEAR_WEEK),
-    "next": (dc.WITHIN_YEAR_WEEK + 1, dc.HORIZON_WEEKS),
-}
+def year_range(year: str, run_week: int) -> tuple[int, int]:
+    """P53 (R53-6): "plan" = the plan year of `run_week`, "next" = the
+    following year (1..52 and 53..104 for every 2026 run)."""
+
+    y0 = year_of(run_week)
+    y = y0 if year == "plan" else y0 + 1
+    return year_start(y), year_end(y)
 
 _PRIORITY_RANK = {
     ProjectPriority.P1: 0,
@@ -112,12 +116,12 @@ _PRIORITY_RANK = {
 }
 
 
-def in_year(card: ProjectCard, year: str) -> bool:
+def in_year(card: ProjectCard, year: str, run_week: int) -> bool:
     """ADR 0022 §2 (see module docstring)."""
 
     if not card.run_step_ranges:
         return year == "plan"
-    lo, hi = YEAR_RANGES[year]
+    lo, hi = year_range(year, run_week)
     return any(start <= hi and end >= lo for start, end in card.run_step_ranges)
 
 
@@ -199,9 +203,10 @@ async def get_vip_projects(
     active_run = await get_active_run(db)
     cards = await build_project_cards(db, projects, active_run, current_week=clock.week)
 
+    run_week = active_run.current_week if active_run is not None else clock.week
     by_hub: dict[uuid.UUID, list[Project]] = defaultdict(list)
     for project in projects:
-        if in_year(cards[project.id], year):
+        if in_year(cards[project.id], year, run_week):
             by_hub[project.hub_id].append(project)
 
     hubs: list[VipHub] = []
@@ -252,7 +257,7 @@ async def get_vip_projects(
             )
         )
 
-    lo, hi = YEAR_RANGES[year]
+    lo, hi = year_range(year, run_week)
     return VipProjectsResponse(
         run_id=active_run.id if active_run is not None else None,
         year=year,

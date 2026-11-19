@@ -19,8 +19,9 @@ Purity contract:
   - Deterministic (Invariant I8): identical input always produces
     byte-identical output. No dependence on dict/set iteration order.
 
-This package imports `backend/domain_constants.py` (pure data) for
-`HORIZON_WEEKS`, `WITHIN_YEAR_WEEK`, `PRIORITY_ORDER`,
+Weeks, the search limit and the counting split live in `scheduling.weeks`
+(ADR 0063, R53; no dependency on anything). This package imports
+`backend/domain_constants.py` (pure data) for `PRIORITY_ORDER`,
 `SCHEDULABLE_STATUS_ORDER`, `HUB_LAB_REGION` and `OEM_HUBS` only (the last two
 through `scheduling.hubs`, which accepts both spellings of the renamed
 `OEM-Seltek` / `OEM-Seitek` hub, ADR 0041 §4). The workflow
@@ -38,6 +39,21 @@ from scheduling.active_weeks import (
     covered_plan_weeks,
 )
 from scheduling.cp_sat import CpSatSolveInfo, run_cp_sat
+from scheduling.delivery import (
+    BandCounts,
+    DeliveryByYear,
+    DeliveryRow,
+    DeliveryYear,
+    LeaderTail,
+    delivery_by_year,
+    delivery_row_of,
+    delivery_rows,
+    far_finish,
+    leader_tails,
+    left_out_reason,
+    outcome_left_out_reason,
+    tail_flags,
+)
 from scheduling.demand import (
     DemandLoad,
     LiveProjectRow,
@@ -64,6 +80,7 @@ from scheduling.greedy import (
     is_not_scheduled_priority,
     not_scheduled_priority_outcome,
     project_counts_toward_year,
+    project_queue_tier,
     run_greedy_sgs,
     year_flags,
 )
@@ -74,6 +91,11 @@ from scheduling.invariants import (
     check_band_neutrality,
     check_i38_run_week,
     check_i41_week_domain,
+    check_i57_run_weeks,
+    check_i58_horizon,
+    check_i59_delivery,
+    check_i60_cp_sat_tail,
+    check_i63_tail_flags,
     check_pin_load_neutrality,
     check_scheduler_determinism,
     check_wait_invariance,
@@ -133,6 +155,14 @@ from scheduling.types import (
     default_workflow_templates,
     require_plan_week,
     validate_current_week,
+)
+from scheduling.weeks import (
+    horizon_for,
+    plan_year_end_week,
+    week_of_year,
+    year_end,
+    year_of,
+    year_start,
 )
 from scheduling.whatif import (
     MAX_ADDED_CHAMBERS_TOTAL,
@@ -350,6 +380,31 @@ __all__ = [
     "is_not_scheduled_priority",
     "not_scheduled_priority_outcome",
     "project_counts_toward_year",
+    "project_queue_tier",
+    "BandCounts",
+    "DeliveryByYear",
+    "DeliveryRow",
+    "DeliveryYear",
+    "LeaderTail",
+    "delivery_by_year",
+    "delivery_row_of",
+    "delivery_rows",
+    "far_finish",
+    "leader_tails",
+    "left_out_reason",
+    "outcome_left_out_reason",
+    "tail_flags",
+    "check_i57_run_weeks",
+    "check_i58_horizon",
+    "check_i59_delivery",
+    "check_i60_cp_sat_tail",
+    "check_i63_tail_flags",
+    "horizon_for",
+    "year_of",
+    "week_of_year",
+    "year_start",
+    "year_end",
+    "plan_year_end_week",
     "without_spare_capacity_projects",
     "year_flags",
 ]

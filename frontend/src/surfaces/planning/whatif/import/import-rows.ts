@@ -274,7 +274,7 @@ function windowFields(
   const u = options.planUntilWeek ?? null;
   return {
     ...(f !== null ? { plan_from_week: f } : {}),
-    ...(u !== null && u !== options.planYearEndWeek ? { plan_until_week: u } : {}),
+    ...(u !== null && (options.planYearEndWeek === null || u !== options.planYearEndWeek) ? { plan_until_week: u } : {}),
     ...(options.planWindowRerun === true ? { plan_window_rerun: true } : {}),
   };
 }

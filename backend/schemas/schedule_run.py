@@ -9,9 +9,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from models.enums import HubName, ProjectPriority, ScheduleRunStatus, SolverType
+from models.schedule import PRE_P53_RULES_LABEL
+from scheduling.weeks import plan_year_end_week
 
 
 class ScheduleRunSummary(BaseModel):
@@ -29,6 +31,28 @@ class ScheduleRunSummary(BaseModel):
     #: null for greedy runs (`solver_type` records the solver) and for older runs.
     solver_status: str | None = None
     created_at: datetime
+    #: P53 (R53-7, API_CONTRACT_P53 §3): `"p53"`, or null for a run computed
+    #: under the earlier rules.
+    rules_epoch: str | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def within_year_week(self) -> int:
+        """`year_end(year_of(current_week))` (52 for every 2026 run)."""
+
+        return plan_year_end_week(self.current_week)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def pre_p53(self) -> bool:
+        return self.rules_epoch is None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def rules_label(self) -> str | None:
+        """Shown wherever a pre-P53 run is shown (R53-7)."""
+
+        return PRE_P53_RULES_LABEL if self.rules_epoch is None else None
 
 
 class GreedyRecalcResponse(BaseModel):
@@ -155,3 +179,6 @@ class ScheduleRunChanges(BaseModel):
     run_week: int
     hidden_count: int
     rows: list[ScheduleRunChangeRow]
+    #: P53 (R53-7): the baseline is a pre-P53 run and this run is a P53 run;
+    #: the UI labels the list "includes the scheduling-rule change (P53)".
+    includes_rule_change: bool = False

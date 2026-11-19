@@ -286,17 +286,6 @@ describe('CheckInPage — form validation and batch submit', () => {
     expect(document.body).not.toHaveTextContent(/commenting/i);
   });
 
-  it('P37 R37-10: 409 PLAN_YEAR_CLOSED shows the closed-year copy and keeps the drafts', async () => {
-    client.apiSend.mockRejectedValue(new ApiError(409, 'Conflict', 'closed', 'PLAN_YEAR_CLOSED'));
-    const { user } = await renderPage();
-    await user.click(within(stageEl('Design Detailing')).getByRole('button', { name: 'Confirm Design Detailing unchanged' }));
-    await user.click(screen.getByTestId('check-in-submit'));
-
-    const panel = await screen.findByTestId('check-in-result');
-    expect(within(panel).getByTestId('check-in-result-body')).toHaveTextContent('The planning year is closed');
-    expect(within(stageEl('Design Detailing')).getByTestId('confirm-unchanged')).toHaveAttribute('aria-pressed', 'true');
-  });
-
   it('deferred (ADR 0023): says the timeline updates automatically and starts the follow-up watcher', async () => {
     client.apiSend.mockResolvedValue(submitResponse({ recalc_status: 'deferred' }));
     const { user } = await renderPage();
@@ -335,11 +324,12 @@ describe('CheckInPage — form validation and batch submit', () => {
 });
 
 describe('CheckInPage — plan clock (P37)', () => {
-  it('closed planning year: notice, and no submit', async () => {
-    renderWithProviders(<CheckInPage />, { session: { current_week: 52, weeks_left_in_year: 0, plan_year_closed: true } });
+  it('P53 (R53-1): no closed planning year — 4 Jan 2027 (week 53) still accepts check-ins', async () => {
+    renderWithProviders(<CheckInPage />, {
+      session: { current_week: 53, weeks_left_in_year: 51, plan_year: 2027, plan_year_start_week: 53, plan_year_end_week: 104 },
+    });
     await screen.findByRole('heading', { name: 'Design Detailing', level: 4 });
-    expect(screen.getByTestId('plan-year-closed-notice')).toHaveTextContent('Planning year 2026 closed');
-    expect(screen.getByTestId('check-in-submit')).toBeDisabled();
+    expect(screen.queryByTestId('plan-year-closed-notice')).not.toBeInTheDocument();
   });
 
   it('R37-3: the plan-behind notice shows on the check-in page', async () => {

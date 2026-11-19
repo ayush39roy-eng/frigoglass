@@ -3,8 +3,8 @@ import { CircleSlash, Hourglass } from 'lucide-react';
 
 import { BAND_OUTCOME_META } from '@/components/shared/schedule-outcome-meta';
 import { Badge } from '@/components/ui/badge';
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { useCurrentWeek, usePlanYearLabels } from '@/lib/plan-clock';
+import { formatWeek } from '@/lib/format';
+import { useCurrentWeek, usePlanYearLabels, useYearEndWeek, yearEndText } from '@/lib/plan-clock';
 
 import type { GanttProjectRow } from '../api/types';
 import { STEP_COLORS, STEP_LETTERS, stepTint, type StepCode } from '../lib/step-colors';
@@ -74,6 +74,7 @@ export function StepColorLegend({ rows }: { rows: readonly GanttProjectRow[] }):
  */
 export function GanttLegend({ rows = [] }: { rows?: readonly GanttProjectRow[] }): React.JSX.Element {
   const years = usePlanYearLabels();
+  const yearEnd = useYearEndWeek();
   // P37: the served calendar week (ADR 0052 §4: "now" markers use it).
   const currentWeek = useCurrentWeek();
   const sample = STEP_COLORS['PDD-A'];
@@ -135,7 +136,7 @@ export function GanttLegend({ rows = [] }: { rows?: readonly GanttProjectRow[] }
           className="h-3 w-0.5 border-l-2 border-dashed border-gantt-marker-year"
           aria-hidden="true"
         />
-        <dt>Week {WITHIN_YEAR_WEEK} — year-end of {years.planYear}</dt>
+        <dt>{yearEndText(yearEnd, formatWeek)} — year-end of {years.planYear}</dt>
       </div>
       <div className="flex items-center gap-1.5">
         <span
@@ -143,7 +144,7 @@ export function GanttLegend({ rows = [] }: { rows?: readonly GanttProjectRow[] }
           aria-hidden="true"
         />
         <dt>
-          {years.spilloverYear} and later (shaded) — work past week {WITHIN_YEAR_WEEK} is spillover, flagged in the
+          {years.spilloverYear} and later (shaded) — work past {yearEndText(yearEnd, formatWeek)} is spillover, flagged in the
           Status column
         </dt>
       </div>

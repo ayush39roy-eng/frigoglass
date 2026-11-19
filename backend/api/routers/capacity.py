@@ -91,6 +91,7 @@ from models.enums import (
 from models.hub import Hub, HubWorkCalendar
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
+from scheduling.weeks import PLAN_YEAR_WEEKS, year_end, year_of, year_start
 from schemas.capacity import (
     CapacityArea,
     CapacityChamberRow,
@@ -144,6 +145,7 @@ from services.capacity_supply import (
     to_days,
 )
 from services.categories import load_catalog
+from services.delivery_serving import run_leader_tails
 from services.demand_load import load_demand
 from services.hub_scope import (
     hub_id_list,
@@ -938,10 +940,21 @@ async def engineer_utilization(
             return round2(booked_weeks / capacity_weeks * 100)
         return 100.0 if booked_weeks > 0 else 0.0
 
+    # P53 (R53-6): the plan-year window of the run (of the clock without
+    # one); 1..52 for every 2026 run.
+    window_year = year_of(active_run.current_week if active_run is not None else clock.week)
+    first_week, last_week = year_start(window_year), year_end(window_year)
+    # R53-9 (I63, OQ #8): the leader tail, served only here, beside the
+    # engineer utilisation this caller may already see.
+    tails = (
+        (await run_leader_tails(db, active_run))[0]
+        if active_run is not None and active_run.rules_epoch is not None and engineers
+        else {}
+    )
     rows: list[EngineerUtilizationRow] = []
     for e in engineers:
         cal = calendar_figures(calendar_by_hub.get(e.hub_id), clock.week)
-        weekly_cap = cal.working_weeks_per_engineer * float(e.fte) / dc.WITHIN_YEAR_WEEK
+        weekly_cap = cal.working_weeks_per_engineer * float(e.fte) / PLAN_YEAR_WEEKS
         mine = booked.get(e.id, {})
         weeks = [
             EngineerWeekUtilization(
@@ -950,9 +963,10 @@ async def engineer_utilization(
                 capacity=round2(weekly_cap),
                 utilization_pct=_pct(mine.get(w, 0.0), weekly_cap),
             )
-            for w in range(1, dc.WITHIN_YEAR_WEEK + 1)
+            for w in range(first_week, last_week + 1)
         ]
-        year_cap = weekly_cap * dc.WITHIN_YEAR_WEEK
+        year_cap = weekly_cap * PLAN_YEAR_WEEKS
+        tail = tails.get(e.id)
         # Σ effort (`duration_weeks`), exact; the cells are its weekly spread.
         total_booked = float(totals.get(e.id, 0))
         rows.append(
@@ -966,6 +980,9 @@ async def engineer_utilization(
                 total_capacity=round2(year_cap),
                 utilization_pct=_pct(total_booked, year_cap),
                 weeks=weeks,
+                leader_tail_week=tail.leader_tail_week if tail is not None else None,
+                leader_overloaded=tail.overloaded if tail is not None else False,
+                far_finish_count=tail.far_finish_projects if tail is not None else 0,
             )
         )
 
@@ -1021,7 +1038,7 @@ async def engineer_utilization(
         )
     await db.commit()
     return EngineerUtilizationResponse(
-        week_range=(1, dc.WITHIN_YEAR_WEEK),
+        week_range=(first_week, last_week),
         # P37-T04 (API_CONTRACT_P37 §2): the "now" column is the calendar
         # week; the booked cells are the active run's, at `run_week`.
         current_week=clock.week,

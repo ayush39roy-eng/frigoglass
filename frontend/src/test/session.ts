@@ -54,7 +54,12 @@ export function makeMe(overrides: Partial<MeResponse> = {}): MeResponse {
     // P37 (API_CONTRACT_P37 §1): the served plan clock. Monday of 2026-W31.
     as_of_date: '2026-07-27',
     plan_year: TEST_PLAN_YEAR,
-    plan_year_closed: false,
+    // P53 (R53-6): served week line + search limit (N = 5 → 31 + 260).
+    week_base_year: TEST_PLAN_YEAR,
+    plan_year_start_week: 1,
+    plan_year_end_week: 52,
+    horizon_years: 5,
+    horizon_weeks: TEST_CURRENT_WEEK + 260,
     week_source: 'pinned',
     week_ends_at: '2026-08-03T00:00:00+03:00',
     plan_week: null,

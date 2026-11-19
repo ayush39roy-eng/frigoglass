@@ -56,7 +56,6 @@ from sqlalchemy import any_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import domain_constants as dc
 from api.db import get_db
 from api.deps import (
     get_current_principal,
@@ -75,6 +74,7 @@ from models.user import User
 from models.workflow import Workflow, WorkflowLeadTime, WorkflowStepTemplate
 from scheduling.effort_split import EffortSplitRejected
 from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
+from scheduling.weeks import plan_year_end_week
 from scheduling.workflow import build_workflows
 from schemas.workflow_settings import (
     BEquivalentRow,
@@ -116,6 +116,7 @@ from services.project_effort import (
     split_rejected_error,
 )
 from services.schedule_stale import mark_all_schedulable_stale
+from services.scheduling_settings import horizon_weeks_for
 from services.template_editor import category_timelines, load_categories
 from services.workflow_previews import REFERENCE_CATEGORY, load_category_previews, ratio
 
@@ -292,8 +293,9 @@ async def build_settings_payload(
         chambers=chambers,
         # P37-T04 (API_CONTRACT_P37 §2): the request's calendar week.
         current_week=clock.week,
-        horizon_weeks=dc.HORIZON_WEEKS,
-        within_year_week=dc.WITHIN_YEAR_WEEK,
+        # P53 (R53-2): the search limit and plan-year end of the next run.
+        horizon_weeks=await horizon_weeks_for(db, clock.week),
+        within_year_week=plan_year_end_week(clock.week),
         updated_at=updated_at,
         updated_by=updated_by,
     )

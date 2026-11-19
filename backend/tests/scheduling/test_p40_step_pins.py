@@ -123,7 +123,8 @@ def test_new_fields_default_to_empty_and_false() -> None:
     # Field order: the new fields come last, so every positional caller and the
     # asdict order of every pre-P40 field are unchanged.
     names = [f.name for f in dataclasses.fields(ProjectInput)]
-    assert names[-1] == "step_pins"
+    # P53 (R53-2b): `actual_end_week` follows, last.
+    assert names[-2:] == ["step_pins", "actual_end_week"]
     assert [f.name for f in dataclasses.fields(StepSchedule)][-2:] == ["pinned", "manual_overlap"]
     # P42 (ADR 0056): `not_scheduled_priority` / `counts_toward_year` follow.
     assert [f.name for f in dataclasses.fields(ProjectScheduleOutcome)][-4:-2] == [
@@ -143,6 +144,7 @@ def test_canonical_input_omits_empty_step_pins_and_keeps_a_set_one() -> None:
     del raw["categories"]
     for proj in raw["projects"]:
         proj.pop("band_rank")
+        proj.pop("actual_end_week")  # P53 (R53-2b): omitted at None
     del raw["projects"][0]["step_pins"]
     assert data == raw
 
@@ -188,7 +190,7 @@ def test_explicit_empty_pins_are_byte_identical_to_the_default() -> None:
         ((_pin("PDD-E", 40, 41), _pin("PDD-E", 42, 43)), "more than once"),
         ((_pin("PDD-E", 41, 40),), "outside"),
         ((_pin("PDD-E", 0, 3),), "outside"),
-        ((_pin("PDD-E", 70, 79),), "outside"),
+        ((_pin("PDD-E", 70, 292),), "outside"),  # P53: past H = cw + 260 = 291
         ((StepPinInput("PDD-E", True, 3),), "outside"),  # type: ignore[arg-type]
         ((StepPinInput("PDD-E", 3, 4.0),), "outside"),  # type: ignore[arg-type]
     ],
@@ -341,7 +343,9 @@ def test_lapsed_pin_past_the_horizon_leaves_the_project_out_and_keeps_other_pins
     its row is kept (Gate ruling 2)."""
 
     p = _project(step_pins=(_pin("PDD-E", 1, 50), _pin("PDD-H", 60, 65)))
-    si = _si(p)
+    si = dataclasses.replace(
+        _si(p), horizon_weeks=78
+    )  # P53: overflow golden, pinned at the pre-P53 78-week search
     _out, by = _run(si)
     o = by["p"]
     assert o.left_out and o.pin_lapsed and o.projected_end_week is None
@@ -687,6 +691,9 @@ def test_greedy_and_cp_sat_emit_identical_pinned_rows_and_pin_lapsed() -> None:
         ),
     )
     si = _si(*projects, engineers=(ENG_A, ENG_B), chambers=(CH_GR, CH_GR2))
+    si = dataclasses.replace(
+        si, horizon_weeks=78
+    )  # P53: overflow golden, pinned at the pre-P53 78-week search
     g_out, g = _run(si)
     _c_out, c = _cp(si)
     for pid in sorted(g):
@@ -766,8 +773,8 @@ def test_i45_lapsed_pin_placed_in_the_past() -> None:
 
 
 def test_i45_past_horizon_pin_must_leave_the_project_out() -> None:
-    si = _si(_project(step_pins=(_pin("PDD-E", 1, 50),)))
-    out = run_greedy_sgs(si)
+    si = dataclasses.replace(_si(_project(step_pins=(_pin("PDD-E", 1, 50),))), horizon_weeks=78)
+    out = run_greedy_sgs(si)  # P53: overflow golden, pinned at the pre-P53 78-week search
     bad = _with_outcome(out, "p", left_out=False)
     assert "I45" in _ids(validate_invariants(si, bad, check_determinism=False))
 

@@ -5,9 +5,11 @@ import { LayoutGroup, motion } from 'framer-motion';
 import { ArrowUpRight, ChevronRight, Info, Snowflake } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { formatPlanWeek, formatWeekTitle } from '@/lib/format';
-import { usePlanYear, usePlanYearLabels } from '@/lib/plan-clock';
+import { useHorizonYears, usePlanYear, usePlanYearLabels } from '@/lib/plan-clock';
+import { beyondHorizonText } from '@/lib/left-out-reason';
+import { useBaseYear } from '@/lib/week-line';
+import { useSessionStore } from '@/stores/session';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
@@ -17,7 +19,7 @@ import {
   clampZoomPx,
   isPastScaleEnd,
   makeWeekScale,
-  TIMELINE_HORIZON_WEEKS,
+  timelineAxisRange,
   WEEK_WIDTH_PX,
   type WeekScale,
   plannedSpan,
@@ -103,6 +105,17 @@ export interface GanttChartProps {
   scrollToProjectId?: string | null;
   /** P32-R04: the project ids whose rows are currently rendered (virtualized). */
   onVisibleProjectsChange?: (projectIds: readonly string[]) => void;
+  /**
+   * P53 (R53-6): the Timeline axis — the run's served plan-year window and
+   * `last_finish_week`. The axis runs from the plan year's W1 to the last
+   * finish rounded up to a year end (never to the search limit). Omitted =
+   * the served `/me` plan year alone.
+   */
+  timeline?: {
+    planYearStartWeek: number | null | undefined;
+    planYearEndWeek: number | null | undefined;
+    lastFinishWeek: number | null | undefined;
+  };
 }
 
 export function GanttChart({
@@ -122,6 +135,7 @@ export function GanttChart({
   markUnplaced = false,
   scrollToProjectId = null,
   onVisibleProjectsChange,
+  timeline,
 }: GanttChartProps): React.JSX.Element {
   const compact = density === 'forest';
   const stats = showStats && weeklyCounts !== undefined;
@@ -171,17 +185,29 @@ export function GanttChart({
   }, []);
   const detailsProject = detailsId === null ? null : (rows.find((r) => r.project_id === detailsId) ?? null);
 
+  const servedStart = useSessionStore((s) => s.me?.plan_year_start_week ?? null);
+  const servedEnd = useSessionStore((s) => s.me?.plan_year_end_week ?? null);
+  const axisStart = timeline?.planYearStartWeek ?? servedStart ?? 1;
+  const axisYearEnd = timeline?.planYearEndWeek ?? servedEnd ?? axisStart + 51;
+  const lastFinish = timeline?.lastFinishWeek ?? null;
   const scale = React.useMemo(() => {
-    // P51 (ADR 0062): the Timeline runs to the scheduler horizon (W26 of the next year).
-    if (!axis) return makeWeekScale(zoom, TIMELINE_HORIZON_WEEKS);
+    // P53 (R53-6, amends ADR 0062): the Timeline runs from the plan year's W1
+    // to the run's last finish, rounded up to a year end.
+    if (!axis) {
+      const r = timelineAxisRange(axisStart, axisYearEnd, lastFinish);
+      return makeWeekScale(zoom, r.horizonWeeks, r.originWeek);
+    }
     const minPx = typeof zoom === 'number' ? clampZoomPx(zoom) : WEEK_WIDTH_PX[zoom];
     const min = axis.scaleFor(minPx);
     // The visible width minus both sticky columns and the 1.5 px borders.
     const available = boxWidth - LEFT_COL_WIDTH - BADGE_COL_WIDTH - 3;
     return axis.fill && available > min.totalWidthPx ? axis.scaleFor(available / min.horizonWeeks) : min;
-  }, [axis, zoom, boxWidth, LEFT_COL_WIDTH, BADGE_COL_WIDTH]);
+  }, [axis, zoom, boxWidth, LEFT_COL_WIDTH, BADGE_COL_WIDTH, axisStart, axisYearEnd, lastFinish]);
   const weekText = axis?.weekLabel;
   const planYear = usePlanYear();
+  const baseYear = useBaseYear();
+  const planYearOffset = planYear !== null && baseYear !== null ? planYear - baseYear : 0;
+  const yearEndWeek = axis ? undefined : axisYearEnd;
   // P40-T01: Forest view never shows step rows (one line per project).
   const visualRows = React.useMemo(
     () => buildVisualRows(rows, compact ? NO_EXPANDED : expandedIds),
@@ -274,7 +300,12 @@ export function GanttChart({
                 aria-hidden="true"
               />
               <div style={{ width: scale.totalWidthPx }} className="shrink-0">
-                <GanttYearRow scale={scale} baseYear={planYear} stickyLeft={LEFT_COL_WIDTH} />
+                <GanttYearRow
+                  scale={scale}
+                  baseYear={baseYear ?? planYear}
+                  planYearOffset={baseYear === null ? 0 : planYearOffset}
+                  stickyLeft={LEFT_COL_WIDTH}
+                />
               </div>
               {hasStatusCol ? (
                 <div
@@ -296,7 +327,7 @@ export function GanttChart({
                 {narrow || compact ? 'Project' : 'Project / step'}
               </div>
               <div style={{ width: scale.totalWidthPx }} className="shrink-0">
-                <GanttWeekAxis scale={scale} weekLabel={weekText} />
+                <GanttWeekAxis scale={scale} weekLabel={weekText} yearEndWeek={yearEndWeek} />
               </div>
               {hasStatusCol ? (
                 <div
@@ -351,7 +382,7 @@ export function GanttChart({
               className="pointer-events-none absolute top-0"
               style={{ left: LEFT_COL_WIDTH, width: scale.totalWidthPx, height: offsets.total }}
             >
-              <GanttGridLines scale={scale} height={offsets.total} />
+              <GanttGridLines scale={scale} height={offsets.total} yearEndWeek={yearEndWeek} />
             </div>
 
             <LayoutGroup>
@@ -479,6 +510,7 @@ function BarLayer({
   animate: boolean;
 }): React.JSX.Element {
   const years = usePlanYearLabels();
+  const horizonYears = useHorizonYears();
   let group: React.ReactNode;
   // P51 (ADR 0062): the axis runs past W52, so bars after the year-end are
   // drawn in full and the server's spillover / left-out verdict is the badge in
@@ -525,10 +557,10 @@ function BarLayer({
           variant={compact ? 'chevron' : 'label'}
           title={
             p.left_out
-              ? `${p.project_name}: not done by W52 — no slot found yet, spills over to ${years.spilloverYear} unscheduled`
-              : p.projected_end_week != null && p.projected_end_week > WITHIN_YEAR_WEEK
-                ? `${p.project_name}: not done by W52 — finishes ${fmt(p.projected_end_week)} (${formatWeekTitle(p.projected_end_week)}), spillover to ${years.spilloverYear}`
-                : `${p.project_name}: not done by W52 — spillover to ${years.spilloverYear}`
+              ? `${p.project_name}: not placed — ${beyondHorizonText(horizonYears)}`
+              : p.projected_end_week != null
+                ? `${p.project_name}: finishes ${fmt(p.projected_end_week)} (${formatWeekTitle(p.projected_end_week)}), spillover to ${years.spilloverYear}`
+                : `${p.project_name}: spillover to ${years.spilloverYear}`
           }
         />
       );

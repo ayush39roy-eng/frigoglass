@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.engineer import EngineerInactivePeriod
 from models.hub import HubWorkCalendar
 from scheduling import InactivePeriod, active_week_count, covered_plan_weeks
+from scheduling.weeks import year_of, year_start
 from services.capacity_supply import calendar_figures, design_capacity, fte_sum
 
 WEEKS = 52
@@ -94,6 +95,10 @@ def hub_design_supply(
     if all(m.covered_weeks is None for m in members):
         return design_capacity(calendar, fte_sum(m.fte for m in members), current_week)
     cal = calendar_figures(calendar, current_week)
+    # P53 (R53-1): `covered_plan_weeks` answers ABSOLUTE weeks; the year is
+    # the plan year of the absolute `current_week` (1..52 in 2026).
+    first = year_start(year_of(current_week))
+    last = first + WEEKS - 1
     fte_year = Fraction(0)
     fte_remaining = Fraction(0)
     for m in members:
@@ -102,11 +107,11 @@ def hub_design_supply(
             fte_year += fte
             fte_remaining += fte
             continue
-        fte_year += fte * Fraction(active_week_count(m.covered_weeks, 1, WEEKS), WEEKS)
-        if current_week < WEEKS:
+        fte_year += fte * Fraction(active_week_count(m.covered_weeks, first, last), WEEKS)
+        if current_week < last:
             fte_remaining += fte * Fraction(
-                active_week_count(m.covered_weeks, current_week + 1, WEEKS),
-                WEEKS - current_week,
+                active_week_count(m.covered_weeks, current_week + 1, last),
+                last - current_week,
             )
     return (
         cal.working_weeks_per_engineer * float(fte_year),

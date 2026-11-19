@@ -366,17 +366,8 @@ async def submit_check_ins(
     current_user: Principal = Depends(get_current_principal),
     clock: PlanClock = Depends(get_plan_clock),
 ) -> CheckInResponse:
-    # R37-10 (ADR 0052 §7a, OQ #88 (a)): while the planning year is closed
-    # (the ISO week-year is past `plan_year`), a check-in would be stamped 52
-    # forever; refuse it. Reads (`/due`, `/history`) stay available. Checked
-    # before the rate limiter so a refused batch costs no token.
-    if clock.plan_year_closed:
-        raise CodedHTTPException(
-            status.HTTP_409_CONFLICT,
-            "PLAN_YEAR_CLOSED",
-            f"Planning year {clock.plan_year} is closed. Check-ins reopen when an Admin "
-            "opens the next planning year.",
-        )
+    # P53 (ADR 0063 R53-1): there is no closed year; the R37-10 409
+    # `PLAN_YEAR_CLOSED` is retired. Check-ins stamp the absolute week.
     allowed, retry_after = CHECKIN_RATE_LIMIT.allow(f"checkin:{current_user.user_id}")
     if not allowed:
         raise CodedHTTPException(

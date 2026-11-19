@@ -42,6 +42,7 @@ import domain_constants as dc
 from api.errors import CodedHTTPException
 from api.routers.capacity import hub_load_vs_capacity
 from core.principal import Principal
+from scheduling.weeks import plan_year_end_week
 from schemas.whatif import (
     AskRequest,
     AskResponse,
@@ -171,7 +172,7 @@ def tool_definitions() -> list[dict[str, Any]]:
 def _reference(current_week: int) -> dict[str, Any]:
     return {
         "current_week": current_week,
-        "year_end_week": dc.WITHIN_YEAR_WEEK,
+        "year_end_week": plan_year_end_week(current_week),
         "near_full_threshold_pct": dc.BOOKING_NEAR_FULL_PCT,
         "full_threshold_pct": dc.BOOKING_FULL_PCT,
     }
@@ -376,7 +377,7 @@ async def capacity_snapshot(
     return CapacitySnapshotResponse(
         scope=scope_info(ctx.scope),
         current_week=ctx.clock.week,
-        year_end_week=dc.WITHIN_YEAR_WEEK,
+        year_end_week=plan_year_end_week(ctx.clock.week),
         near_full_threshold_pct=float(summary.near_full_threshold_pct),
         full_threshold_pct=float(summary.full_threshold_pct),
         has_active_schedule_run=summary.has_active_schedule_run,
@@ -577,10 +578,22 @@ def _category_list(ctx: WhatIfContext, workflow_id: str) -> str:
     return ", ".join(c.code for c in cats) or "none"
 
 
+def _year_end(ctx: WhatIfContext) -> int:
+    """The plan-year end of the input week (P53, R53-1): the baseline's
+    `within_year_week`, else the clock's plan-year end."""
+
+    schedule = getattr(getattr(ctx, "baseline", None), "schedule", None)
+    week = getattr(schedule, "within_year_week", 0)
+    if isinstance(week, int) and week > 0:
+        return week
+    clock = getattr(ctx, "clock", None)
+    return plan_year_end_week(clock.week) if clock is not None else 52
+
+
 def _system_prompt(ctx: WhatIfContext) -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(
         sentinel=OUT_OF_SCOPE_SENTINEL,
-        year_end=dc.WITHIN_YEAR_WEEK,
+        year_end=_year_end(ctx),
         hubs=", ".join(sorted(ctx.scope.hubs)) or "none",
         regions=", ".join(sorted(ctx.scope.lab_regions)) or "none",
         pdd_categories=_category_list(ctx, dc.WORKFLOW_ID_FOR_NON_OEM_HUB),

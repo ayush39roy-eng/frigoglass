@@ -154,3 +154,7 @@ and engineer mostly blank, and carries budget lines among the projects. Both for
    three words before `CAPEX` and two after) is excluded (`include = false`, info `NOT_A_PROJECT`);
    the planner can include it on Review. The CAPEX rule is narrower than a bare `\bcapex\b`
    because a real feasibility project in the file mentions CAPEX mid-sentence.
+
+> **Amended 2026-11-19 by ADR 0063 (R53-4).** §7's import default plan year of 2027 (W104) is replaced: the
+> default "plan until" is the end of the current plan year (W52 in 2026); 2027+ year ends are offered as
+> presets up to the search limit. Open question #121.

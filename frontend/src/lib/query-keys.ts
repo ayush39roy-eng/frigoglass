@@ -148,6 +148,12 @@ export const queryKeys = {
     withHub(['dashboard', 'hub-type-pipeline'], hub, selection),
   dashboardCompletingWithinYear: (hub?: HubKeyInput, selection?: DashSel) =>
     withHub(['dashboard', 'completing-within-year'], hub, selection),
+  // P53 (API_CONTRACT_P53 §4.2): the projects behind one delivery-by-year figure.
+  dashboardDeliveryByYearProjects: (
+    q: { kind: string; year: number | null; band: string | null },
+    hub?: HubKeyInput,
+    selection?: DashSel,
+  ) => [...withHub(['dashboard', 'delivery-by-year-projects'], hub, selection), q.kind, q.year, q.band] as const,
   // P13 (API_CONTRACT_P13 §2/§3): per-country summary and the register's facets.
   dashboardRegionSummary: (hub?: HubKeyInput, selection?: DashSel) =>
     withHub(['dashboard', 'region-summary'], hub, selection),

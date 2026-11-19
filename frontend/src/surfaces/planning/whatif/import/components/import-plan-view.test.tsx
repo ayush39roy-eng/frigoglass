@@ -117,7 +117,8 @@ describe('Import plan (Excel)', () => {
     await screen.findByTestId('import-results');
     const first = simulateBodies()[0];
     expect(first?.mode).toBe('merge');
-    expect(first?.plan_year_end_week).toBe(104);
+    // P53 (R53-4): the default plan year is the server's (sent as null).
+    expect(first?.plan_year_end_week).toBeNull();
     expect(first?.expand_multi).toBe(true); // P32-R03: on by default
     expect(first?.rows.map((r) => r.leader)).toEqual([
       { kind: 'existing', engineer_id: 'eng-1', name: 'Nikos' },
@@ -140,7 +141,7 @@ describe('Import plan (Excel)', () => {
     await user.click(screen.getByRole('tab', { name: 'Gantt' }));
     const axis = await screen.findByTestId('import-gantt-axis');
     // P51 (ADR 0062): ticks are week-of-year (the year is in the header row), hover "Week 1 of 2027".
-    expect(axis).toHaveTextContent('W42');
+    expect(axis).toHaveTextContent('Week 45 of 2026W45') // P53: axis from 2026 W1;
     expect(axis).toHaveTextContent('Week 1 of 2027W1');
     expect(axis).toHaveTextContent('End of 2027');
     const years = within(screen.getByTestId('import-gantt-year-row')).getAllByTestId('gantt-year-band');

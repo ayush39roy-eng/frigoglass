@@ -66,6 +66,12 @@ Explained divergence buckets (per P2-T07 brief — do NOT triage these as anomal
    Every field divergence for a project whose `left_out` flag itself differs is
    attributed here.
 
+5. ``CP_SAT_TAIL_WALKED_BY_GREEDY`` (P53, R53-5 / I60) — the project was walked
+   by the shared greedy routine after the CP-SAT solve (the model left it absent
+   inside `W_cp = min(within_year_week + 26, H)`, or it is in the queue tier).
+   It is placed on CP-SAT's residual capacity, which differs from greedy's, so
+   every non-pinned field may differ. Explained.
+
 4. ``UNEXPLAINED_FROZEN_DIVERGENCE`` — **any** divergence on a `frozen` project.
    Both solvers schedule frozen projects via `run_greedy_sgs` (CP-SAT pre-resolves
    them outside the model), so frozen outcomes must be byte-identical. A frozen
@@ -79,7 +85,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from scheduling.cp_sat import CpSatSolveInfo, objective_weights, run_cp_sat
-from scheduling.greedy import project_counts_toward_year, run_greedy_sgs
+from scheduling.greedy import project_queue_tier, run_greedy_sgs
 from scheduling.invariants import InvariantViolation, validate_invariants
 from scheduling.types import (
     ProjectInput,
@@ -96,6 +102,7 @@ BUCKET_OPEN_CHOICE_WEEK_CHAMBER = "OPEN_CHOICE_WEEK_OR_CHAMBER"
 BUCKET_OPEN_CHOICE_COMPLETION = "OPEN_CHOICE_COMPLETION_WEEK"
 BUCKET_DIFFERENT_PROJECT_SET = "DIFFERENT_PROJECT_SET_ADR0005"
 BUCKET_UNEXPLAINED_FROZEN = "UNEXPLAINED_FROZEN_DIVERGENCE"
+BUCKET_CP_SAT_TAIL = "CP_SAT_TAIL_WALKED_BY_GREEDY"
 BUCKET_UNEXPLAINED = "UNEXPLAINED"
 
 #: The buckets that P2-T07's brief pre-classifies as INTENTIONAL. A divergence
@@ -106,6 +113,7 @@ EXPLAINED_BUCKETS: frozenset[str] = frozenset(
         BUCKET_OPEN_CHOICE_WEEK_CHAMBER,
         BUCKET_OPEN_CHOICE_COMPLETION,
         BUCKET_DIFFERENT_PROJECT_SET,
+        BUCKET_CP_SAT_TAIL,
     }
 )
 
@@ -279,6 +287,7 @@ def _classify(
     cp_sat_o: ProjectScheduleOutcome,
     location: str,
     field_name: str,
+    tail_walked: bool = False,
 ) -> str:
     """Assign one field divergence to a bucket. See the module docstring for the
     bucket definitions and their sources."""
@@ -299,6 +308,10 @@ def _classify(
         return BUCKET_UNEXPLAINED
     if is_step and _pinned_on_either_side(greedy_o, cp_sat_o, location[len("step:") :]):
         return BUCKET_UNEXPLAINED
+
+    # Bucket 5 (R53-5): walked by the greedy tail on CP-SAT's residual capacity.
+    if tail_walked:
+        return BUCKET_CP_SAT_TAIL
 
     # Bucket 3: the two solvers disagree on whether this project is LEFT_OUT at
     # all -> every field divergence for it traces to ADR 0005's objective.
@@ -341,6 +354,7 @@ def _compare_project(
     project: ProjectInput,
     greedy_o: ProjectScheduleOutcome,
     cp_sat_o: ProjectScheduleOutcome,
+    tail_walked: bool = False,
 ) -> tuple[FieldDivergence, ...]:
     divergences: list[FieldDivergence] = []
 
@@ -355,7 +369,9 @@ def _compare_project(
                     field=field_name,
                     greedy_value=g_val,
                     cp_sat_value=c_val,
-                    bucket=_classify(project, greedy_o, cp_sat_o, "outcome", field_name),
+                    bucket=_classify(
+                        project, greedy_o, cp_sat_o, "outcome", field_name, tail_walked
+                    ),
                 )
             )
 
@@ -377,7 +393,7 @@ def _compare_project(
                     field="present",
                     greedy_value=g_step is not None,
                     cp_sat_value=c_step is not None,
-                    bucket=_classify(project, greedy_o, cp_sat_o, location, "present"),
+                    bucket=_classify(project, greedy_o, cp_sat_o, location, "present", tail_walked),
                 )
             )
             continue
@@ -392,7 +408,9 @@ def _compare_project(
                         field=field_name,
                         greedy_value=g_val,
                         cp_sat_value=c_val,
-                        bucket=_classify(project, greedy_o, cp_sat_o, location, field_name),
+                        bucket=_classify(
+                            project, greedy_o, cp_sat_o, location, field_name, tail_walked
+                        ),
                     )
                 )
 
@@ -425,13 +443,14 @@ def compare_solvers(
     cp_sat_output, cp_sat_info = run_cp_sat(schedule_input, **cp_sat_kwargs)  # type: ignore[arg-type]
 
     projects_by_id: dict[str, ProjectInput] = {p.project_id: p for p in schedule_input.projects}
-    # R42-5: the metric weighs the projects CP-SAT optimises over, i.e. the
-    # counting ones (a non-counting project is never within year, I50, and
-    # is not in the model, so it must not inflate the ADR 0040 VIP bonus).
-    # With no P4/Q and no queued P3 this is every project, as before P42.
+    # R42-5 / R53-2: the metric weighs the projects CP-SAT optimises over,
+    # i.e. the non-queue-tier ones (a queue-tier project is not in the model,
+    # so it must not inflate the ADR 0040 VIP bonus). With no P4/Q and no
+    # queued P3 this is every project, as before P42.
     weight_by_id = objective_weights(
-        p for p in schedule_input.projects if project_counts_toward_year(p)
+        p for p in schedule_input.projects if not project_queue_tier(p)
     )
+    tail_ids = frozenset(cp_sat_info.tail_project_ids)
 
     greedy_violations = validate_invariants(schedule_input, greedy_output)
     # I8 (determinism) re-runs the greedy scheduler internally and is not a
@@ -447,7 +466,9 @@ def compare_solvers(
         project = projects_by_id[project_id]
         g_out = greedy_by_id[project_id]
         c_out = cp_sat_by_id[project_id]
-        field_divergences = _compare_project(project, g_out, c_out)
+        field_divergences = _compare_project(
+            project, g_out, c_out, tail_walked=project_id in tail_ids
+        )
         if not field_divergences:
             continue
         project_divergences.append(

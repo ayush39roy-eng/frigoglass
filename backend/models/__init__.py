@@ -22,6 +22,7 @@ from models.export import ExportJob
 from models.hub import Hub, HubWorkCalendar
 from models.import_scenario import ImportFormatSettings, WhatifImportScenario
 from models.notification import Notification
+from models.plan_week_rollover import PlanWeekRollover
 from models.priority import (
     PriorityApplicationResult,
     PriorityApplicationRun,
@@ -31,6 +32,7 @@ from models.project import Project
 from models.project_access import ProjectAccessGrant
 from models.scenario import ScenarioApplyChange, ScenarioApplyRun
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
+from models.scheduling_settings import SchedulingSettings
 from models.scoring_rubric import PriorityDimensionScore, RubricVersion, ScoringDimension
 from models.user import Role, User, UserHubScope, UserRole
 from models.vip import VipItem, vip_item_projects
@@ -72,7 +74,9 @@ __all__ = [
     "ScoringDimension",
     "RubricVersion",
     "PriorityDimensionScore",
+    "PlanWeekRollover",
     "ScheduleRun",
+    "SchedulingSettings",
     "ScheduleRunProjectStep",
     "ScheduleRunProjectOutcome",
     "AuditLogEntry",

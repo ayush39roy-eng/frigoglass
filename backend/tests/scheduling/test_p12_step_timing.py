@@ -256,7 +256,9 @@ def test_floor_waits_for_capacity_never_lands_earlier() -> None:
 
 
 def test_floor_beyond_reach_leaves_project_out() -> None:
-    _, by = _run(_si(_project(step_timing=(_t("PDD-H", not_before=75),))))
+    _, by = _run(
+        _si(_project(step_timing=(_t("PDD-H", not_before=75),)), horizon_weeks=78)
+    )  # P53: overflow golden, pinned at the pre-P53 78-week search
     o = by["p"]
     assert o.left_out and not o.within_year
     assert o.projected_end_week is None
@@ -380,8 +382,9 @@ def test_chamber_freed_by_shorter_lab_override() -> None:
         # R5), so 0 is valid now (tests/scheduling/test_p30_effort.py) and -1 is not.
         ((_t("PDD-E", -1),), "outside 0..104"),
         ((_t("PDD-E", 105),), "outside 0..104"),
-        ((_t("PDD-E", None, 0),), "outside 1..78"),
-        ((_t("PDD-E", None, 79),), "outside 1..78"),
+        # P53 (R53-2): the floor domain is 1..H, H = cw + 260 = 291 by default.
+        ((_t("PDD-E", None, 0),), "outside 1..291"),
+        ((_t("PDD-E", None, 292),), "outside 1..291"),
         ((_t("PDD-E", 2), _t("PDD-E", None, 40)), "more than once"),
     ],
 )

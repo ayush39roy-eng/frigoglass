@@ -16,6 +16,7 @@ from scheduling import (
     ProjectInput,
     ScheduleInput,
     ScheduleOutput,
+    check_i60_cp_sat_tail,
     project_progress_pct,
     run_cp_sat,
     run_greedy_sgs,
@@ -217,14 +218,21 @@ def test_f2_cp_sat_left_out_progress_project_keeps_its_anchored_rows():
     assert q.left_out and not q.within_year and q.projected_end_week is None
     # E: remaining = ceil(4 * 0.5) = 2 -> tail [31, 32], shown from actual_start 29.
     rows = {s.step_id: (s.start_week, s.end_week, s.assigned_engineer_id) for s in q.steps}
-    assert rows == {
+    # P53 (R53-5 / I60): the model left q absent inside W_cp, so the greedy
+    # tail re-walked it to H (50 here). It is still LEFT_OUT, keeps its
+    # anchored rows, and (the shared greedy LEFT_OUT convention) the rows the
+    # walk booked before it ran out of room.
+    assert info.tail_project_ids == ("q-inflight",) and info.num_tail_walked == 1
+    assert {k: rows[k] for k in ("PDD-A", "PDD-D", "PDD-E")} == {
         "PDD-A": (20, 20, "eng-gr2"),
         "PDD-D": (21, 21, "eng-gr2"),
         "PDD-E": (29, 32, "eng-gr2"),
     }
-    assert (q.start_week, q.end_week) == (20, 32)
+    assert all(s.end_week <= si.horizon_weeks for s in q.steps)
+    assert q.start_week == 20
     assert q.progress_pct == round((100 * 1 + 100 * 1 + 50 * 4) / 18)  # 22
     assert validate_invariants(si, out) == ()
+    assert check_i60_cp_sat_tail(si, out, info) == ()
 
 
 def test_f2_validator_flags_erased_anchored_rows():

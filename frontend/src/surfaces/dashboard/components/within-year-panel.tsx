@@ -4,8 +4,7 @@ import { CalendarCheck, CirclePause, Clock } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/shared/empty-state';
 import { formatInteger, formatWeek } from '@/lib/format';
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { usePlanYearLabels } from '@/lib/plan-clock';
+import { usePlanYearLabels, useYearEndWeek, yearEndText } from '@/lib/plan-clock';
 import { outcomeTotal, sharePct, spilloverPastYearCount, withinYearSharePct } from '../lib/outcome';
 
 import type { CompletingWithinYear, ScheduleRunSummary } from '../api/types';
@@ -48,6 +47,8 @@ export function WithinYearKpis({
   compact = false,
 }: WithinYearKpisProps & ScheduledCountFigures & { compact?: boolean }): React.JSX.Element {
   const years = usePlanYearLabels();
+  // P53: the run's served within-year week (else the served plan-year end).
+  const yearEnd = useYearEndWeek(activeRun?.within_year_week ?? data.delivery_by_year?.within_year_week ?? null);
   const size = compact ? 'compact' : 'default';
   // Owner ask 2026-11-13: each outcome card lists the run rows behind it
   // (the Executive view's dialog; selection by served flags, I9).
@@ -117,13 +118,13 @@ export function WithinYearKpis({
             value={data.within_year_count}
             icon={CalendarCheck}
             badge={{ label: `${String(withinYearSharePct(data))}% of run`, tone: 'pop' }}
-            caption={`Complete by ${formatWeek(WITHIN_YEAR_WEEK)}`}
+            caption={`Complete by ${yearEndText(yearEnd, formatWeek)}`}
             {...open('within_year', data.within_year_count, 'Within year')}
           />
           {/* ADR 0024 (client ask 2026-10-13): a 52-week year only. Everything not
               done by W52 is spillover — the served spillover count plus the served
-              left-out count (no slot found yet), summed for display; never framed
-              as "beyond the 78-week horizon". */}
+              left-out count (no slot found yet), summed for display. P53: the
+              year end is the run's served `within_year_week`. */}
           <StatCard
             size={size}
             label="Spillover (past W52)"
@@ -133,8 +134,8 @@ export function WithinYearKpis({
             badge={{ label: shareLabel(spilloverPastYearCount(data), data), tone: 'neutral' }}
             caption={
               data.left_out_count > 0
-                ? `Not done by ${formatWeek(WITHIN_YEAR_WEEK)} → ${years.spilloverYear} · ${String(data.left_out_count)} not yet placed`
-                : `Not done by ${formatWeek(WITHIN_YEAR_WEEK)} → ${years.spilloverYear}`
+                ? `Not done by ${yearEndText(yearEnd, formatWeek)} → ${years.spilloverYear} · ${String(data.left_out_count)} not yet placed`
+                : `Not done by ${yearEndText(yearEnd, formatWeek)} → ${years.spilloverYear}`
             }
             {...open('past_year', spilloverPastYearCount(data), 'Spillover (past W52)')}
           />

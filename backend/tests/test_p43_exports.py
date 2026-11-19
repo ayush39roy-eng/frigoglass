@@ -259,7 +259,8 @@ def test_drawn_gantt_round_trip() -> None:
     assert _week_cell(ws, CHART_HEADER_ROW, 1).value == 1
     assert _week_cell(ws, CHART_HEADER_ROW, 78).value == 78  # W1..horizon
     assert _week_cell(ws, CHART_HEADER_ROW - 1, 1).value == "2026 (from W1)"
-    assert _week_cell(ws, CHART_HEADER_ROW - 1, 53).value == "2027 (from W53)"
+    # P53 (owner rule: no label >= W53): the year band reads the week of its year.
+    assert _week_cell(ws, CHART_HEADER_ROW - 1, 53).value == "2027 (from W1)"
     # Current week and W52 boundary.
     assert _fill_rgb(_week_cell(ws, CHART_HEADER_ROW, 10)) == "F59E0B"
     assert _fill_rgb(_week_cell(ws, CHART_HEADER_ROW, 53)) == "CBD5E1"
@@ -701,7 +702,8 @@ async def test_dashboard_summary_is_the_served_delivery_read(db_session: Any) ->
         resp = await c.get("/exports/dashboard", params={"format": "xlsx"})
         csv_resp = await c.get("/exports/dashboard", params={"format": "csv"})
     wb = _wb(resp.content)
-    assert wb.sheetnames == ["Summary", "Dashboard"]
+    # P53 (R53-3): the served delivery-by-year table gets its own sheet.
+    assert wb.sheetnames == ["Summary", "Delivery by year", "Dashboard"]
     values = {
         r[0]: r[1] for r in wb["Summary"].iter_rows(values_only=True) if r and r[0] is not None
     }

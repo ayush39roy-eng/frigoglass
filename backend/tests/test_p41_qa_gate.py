@@ -364,7 +364,8 @@ async def test_saved_equals_fresh_simulate_with_active_run_options_and_edits(db_
             assert s["simulated_week"] == fresh.json()["current_week"]
             assert s["plan_version"] == run.version
             assert s["mode"] == req.get("mode", "merge")
-            assert s["plan_year_end_week"] == req.get("plan_year_end_week", 104)
+            # P53 (I56): an unset preset is year_end(year_of(cw)).
+            assert s["plan_year_end_week"] == req.get("plan_year_end_week", 52)
             # Re-run on today's plan: the stored request reproduces the stored result.
             again = await c.post("/whatif/import/simulate", json=s["request"])
             assert again.json() == s["result"]

@@ -37,9 +37,14 @@ export const MOVE_COPY = {
  */
 export const BAND_EFFECT_COPY = {
   leaves_plan: 'leaves the plan',
+  /** Pre-P53 runs only: a queued P3 did not count then (ADR 0056). P53 runs
+   *  never produce it (R53-2: a queued P3 counts). */
   joins_queue: 'joins the queue — not counted this year',
   /** Out of P4 / Q into a counting band (P1 / P2, or a started P3). */
   enters_plan: 'is back in the plan',
+  /** P53 (R53-2, amends R42-8): P4 → P3 while In Queue. The served preview
+   *  `effect_label` carries it; the words are kept here for reference. */
+  joins_plan_queued: 'joins the plan — scheduled after P1/P2 and started P3',
 } as const;
 
 export type BandEffect = keyof typeof BAND_EFFECT_COPY;

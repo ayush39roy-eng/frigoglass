@@ -40,20 +40,31 @@ export interface MeResponse {
    *  route guard OR (`routes.tsx`) for a manager-delegate who holds no
    *  `user_role_admin` surface permission at all. */
   is_delegate_manager: boolean;
-  /** P13-T15, source changed at P37 (API_CONTRACT_P37 §1, ADR 0052): the
-   *  CALENDAR week (Europe/Athens, or the `RPD_CURRENT_WEEK` pin), 1..52. */
+  /** P13-T15; P53 (ADR 0063, R53-1): the ABSOLUTE calendar week from
+   *  `week_base_year` W1 (2027 W1 = 53), Europe/Athens or the
+   *  `RPD_CURRENT_WEEK` pin. Never re-based. */
   current_week: number;
-  /** P13-T15: weeks left in the 52-week year (`52 − current_week`),
-   *  served — the header never subtracts. */
+  /** `plan_year_end_week − current_week`, served — the header never subtracts. */
   weeks_left_in_year: number;
   /** P37: today's date in Europe/Athens (`YYYY-MM-DD`). The header shows this,
    *  never the browser's date. */
   as_of_date: string;
-  /** P37: the planning year (`RPD_PLAN_YEAR`). Every year label derives from it. */
+  /** P53 (R53-1): the year of `current_week`. Every year label derives from it. */
   plan_year: number;
-  /** P37: the ISO year is past `plan_year`; the week stays 52 and
-   *  `POST /check-ins` answers 409 `PLAN_YEAR_CLOSED` (R37-10). */
-  plan_year_closed: boolean;
+  /** P53 (R53-6): the year absolute week 1 belongs to (2026). Week labels use
+   *  it; the browser holds no year constant (I40). Optional only so pre-P53
+   *  fixtures still type-check; the server always sends it. */
+  week_base_year: number;
+  /** P53: first / last absolute week of `plan_year` (served, I40). */
+  plan_year_start_week: number;
+  plan_year_end_week: number;
+  /** P53 (R53-2): the Admin setting N (1..10) and the search limit
+   *  `current_week + 52 × N` the next run will use. */
+  horizon_years: number;
+  horizon_weeks: number;
+  /** Deprecated at P53 (R53-1: there is no closed year); served `false` for one
+   *  release. The UI no longer reads it. */
+  plan_year_closed?: boolean;
   /** P37: `"pinned"` when the server runs with `RPD_CURRENT_WEEK` set. */
   week_source: 'calendar' | 'pinned';
   /** P37: the next Monday 00:00 Europe/Athens (ISO-8601 with offset). The

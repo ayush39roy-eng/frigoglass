@@ -27,10 +27,12 @@ from typing import Any
 
 from scheduling.greedy import run_greedy_sgs
 from scheduling.types import ScheduleOutput
+from scheduling.weeks import WEEK_BASE_YEAR
 from scheduling.whatif import AppliedScenario, apply_scenario, classify_outcome
 from schemas.whatif import SimulateExportIn, SimulateResponse
 from services.export_builder import xlsx_bytes
 from services.outcome_buckets import outcome_label, priority_label
+from services.week_labels import week_label
 from services.whatif import (
     WHATIF_TIME_CAP_SECONDS,
     do_simulate,
@@ -200,7 +202,7 @@ def planner_book(
     scope_text = "all hubs" if scope.all_hubs else ", ".join(sorted(scope.hubs)) or "no hubs"
     context = [
         f"Scenario: {name}",
-        f"Simulated at W{si.current_week} of {ctx.clock.plan_year}",
+        f"Simulated at {week_label(si.current_week)}",
         f"Scope: {scope_text}",
         f"{len(kept)} project(s)",
     ]
@@ -208,7 +210,7 @@ def planner_book(
         title=f"What-if — {name} — Gantt",
         projects=bars,
         current_week=si.current_week,
-        base_year=ctx.clock.plan_year,
+        base_year=WEEK_BASE_YEAR,
         horizon_weeks=si.horizon_weeks,
         within_year_week=si.within_year_week,
         context=context,

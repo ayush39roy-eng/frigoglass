@@ -4,7 +4,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Snowflake, TriangleAlert } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import {
   Dialog,
   DialogContent,
@@ -143,7 +142,6 @@ function FreezeForm({
           id="freeze-actual-start-week"
           type="number"
           min={1}
-          max={DISPLAY_HORIZON_WEEKS}
           step={1}
           inputMode="numeric"
           className="h-8 w-24 tnum"
@@ -156,7 +154,8 @@ function FreezeForm({
           </p>
         ) : (
           <p className="text-2xs text-text-muted">
-            Required to freeze — the week (1–{DISPLAY_HORIZON_WEEKS}) the project actually started.
+            Required to freeze — the plan week the project actually started (counted from week 1 of the first
+            plan year, so 2027 W1 is week 53).
           </p>
         )}
       </div>

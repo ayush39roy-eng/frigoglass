@@ -179,6 +179,10 @@ export interface GanttProjectRow {
   /** P42: the served non-counting text ("Queued — fits by W40", "Not
    *  scheduled (P4)"); null for a counting project. */
   outcome_label?: string | null;
+  /** P53 (R53-9, API_CONTRACT_P53 §4.3): scheduled and finishing after the
+   *  year after the plan year — "Finishes {year} — check leader load".
+   *  Display only; never a scheduler input (I63). */
+  far_finish?: boolean;
   steps: GanttStepRow[];
 }
 
@@ -219,6 +223,13 @@ export interface GanttResponse {
   /** P40-T01: the plan week `current_step_counts` was taken at; null without
    *  an active run. */
   current_week: number | null;
+  /** P53 (R53-6, API_CONTRACT_P53 §7): the run's plan-year window and the
+   *  largest end week of a non-skipped row (never below the plan-year end;
+   *  null without a run). The axis runs to `last_finish_week`, never to the
+   *  search limit. Optional only for pre-P53 fixtures. */
+  plan_year_start_week?: number | null;
+  plan_year_end_week?: number | null;
+  last_finish_week?: number | null;
 }
 
 /** P40 (docs/API_CONTRACT_P40.md §1): one item of `PUT /gantt/step-pins`.

@@ -9,8 +9,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { MultiSelectDropdown, type MultiSelectOption } from '@/components/shared/multi-select-dropdown';
 import { useCategories } from '@/lib/api/categories';
 import { useMultiSearchParam } from '@/lib/multi-select-filter';
-import { DISPLAY_HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { planYearLabels, usePlanYear } from '@/lib/plan-clock';
+import { planYearLabels, usePlanYear, usePlanYearWindow, yearEndText } from '@/lib/plan-clock';
 import { formatInteger, formatWeek } from '@/lib/format';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
 import { cn } from '@/lib/utils';
@@ -255,7 +254,12 @@ function ProfileFilterDropdown({
 export function CompletionProfileCard({ data }: CompletionProfileCardProps): React.JSX.Element {
   const reducedMotion = usePrefersReducedMotion();
   const [chartRef, revealed] = useRevealOnce<HTMLDivElement>();
-  const horizon = DISPLAY_HORIZON_WEEKS;
+  // P53 (R53-1 / R53-6): the plan-year window is served; the card plots the
+  // week OF the plan year (absolute − (plan_year_start_week − 1)), 1..52.
+  const window = usePlanYearWindow();
+  const offset = window ? window.start - 1 : 0;
+  const horizon = window ? window.end - window.start + 1 : 52;
+  const yearEnd = window?.end ?? null;
   // P37: the served plan year places a week in its month (ISO-Thursday rule).
   const planYear = usePlanYear();
   const yearLabels = planYearLabels(planYear);
@@ -271,11 +275,11 @@ export function CompletionProfileCard({ data }: CompletionProfileCardProps): Rea
       // only positions it on the W1–W52 axis.
       if (outcomeOf(row) !== 'within_year') continue;
       if (row.last_step_end_week === null) continue;
-      const w = Math.min(Math.max(row.last_step_end_week, 1), horizon);
+      const w = Math.min(Math.max(row.last_step_end_week - offset, 1), horizon);
       out.push({ row, week: w, month: planWeekMonth(w, planYear) });
     }
     return out.sort((a, b) => a.week - b.week || a.row.project_name.localeCompare(b.row.project_name));
-  }, [data.rows, horizon, planYear]);
+  }, [data.rows, horizon, planYear, offset]);
 
   // Options: only values present among the plotted rows (already scoped to the
   // header hub / country filter), in canonical / served rank order.
@@ -328,10 +332,10 @@ export function CompletionProfileCard({ data }: CompletionProfileCardProps): Rea
     const out: BarPoint[] = [];
     for (let w = 1; w <= horizon; w += 1) {
       if (planWeekMonth(w, planYear) !== month) continue;
-      out.push({ key: w, label: formatWeek(w), completed: finishes.filter((f) => f.week === w).length });
+      out.push({ key: w, label: formatWeek(w + offset), completed: finishes.filter((f) => f.week === w).length });
     }
     return out;
-  }, [finishes, month, horizon, planYear]);
+  }, [finishes, month, horizon, planYear, offset]);
 
   const listed = finishes.filter((f) => (week !== null ? f.week === week : f.month === month));
 
@@ -366,7 +370,7 @@ export function CompletionProfileCard({ data }: CompletionProfileCardProps): Rea
             across runs. No sample or illustrative data appears on this card.
           </p>
           <p>
-            Spillover projects are not done by {formatWeek(WITHIN_YEAR_WEEK)} (they carry into{' '}
+            Spillover projects are not done by {yearEndText(yearEnd, formatWeek)} (they carry into{' '}
             {yearLabels.spilloverYear}, including any not yet placed), and on-hold projects have no finish week, so
             neither is plotted; their counts are on the cards below.
           </p>
@@ -487,7 +491,7 @@ export function CompletionProfileCard({ data }: CompletionProfileCardProps): Rea
                 {MONTH_NAMES[month]} {planYear ?? ''}
                 <span className="ml-s2 font-medium text-text-muted">
                   {plural(months[month]?.completed ?? 0)}
-                  {week !== null ? ` · ${formatWeek(week)}: ${plural(listed.length)}` : ''}
+                  {week !== null ? ` · ${formatWeek(week + offset)}: ${plural(listed.length)}` : ''}
                 </span>
               </h4>
             </div>
@@ -516,11 +520,11 @@ export function CompletionProfileCard({ data }: CompletionProfileCardProps): Rea
                 {listed.length === 0 ? (
                   <p className="py-s2 text-xs text-text-muted" data-testid="completion-profile-list-empty">
                     No project {filterActive ? 'matching these filters ' : ''}finishes in{' '}
-                    {week !== null ? formatWeek(week) : (MONTH_NAMES[month] ?? '')}.
+                    {week !== null ? formatWeek(week + offset) : (MONTH_NAMES[month] ?? '')}.
                   </p>
                 ) : null}
                 <ul
-                  aria-label={`Projects completing in ${week !== null ? formatWeek(week) : (MONTH_NAMES[month] ?? '')}`}
+                  aria-label={`Projects completing in ${week !== null ? formatWeek(week + offset) : (MONTH_NAMES[month] ?? '')}`}
                   className="max-h-[272px] divide-y divide-dash-hairline overflow-y-auto pr-s1"
                 >
                   {listed.map(({ row, week: w }) => (

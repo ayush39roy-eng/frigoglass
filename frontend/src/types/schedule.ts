@@ -43,4 +43,10 @@ export interface ScheduleRunSummary {
   within_year_count: number;
   spillover_count: number;
   left_out_count: number;
+  /** P53 (API_CONTRACT_P53 §3): rules epoch, the run's within-year week and
+   *  the pre-P53 label (shown wherever the run is shown). */
+  rules_epoch?: 'p53' | null;
+  within_year_week: number;
+  pre_p53: boolean;
+  rules_label: string | null;
 }

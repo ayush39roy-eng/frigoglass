@@ -1,15 +1,15 @@
 import * as React from 'react';
 
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { formatWeekTitle, weekOfYear } from '@/lib/format';
-import { useCurrentWeek } from '@/lib/plan-clock';
+import { formatWeek, formatWeekTitle, weekOfYear } from '@/lib/format';
+import { useCurrentWeek, usePlanYearEndWeek } from '@/lib/plan-clock';
 
 import { lastScaleWeek, weekToX, weekEndToX, yearBands, type WeekScale } from '../lib/gantt-coordinates';
 
 /**
  * Week ruler + the two marker lines. "Now" is the SERVED calendar week
  * (`/me.current_week`, P37 / ADR 0052 §4: "now" markers use the calendar
- * week); year-end is the DOMAIN_RULES constant `WITHIN_YEAR_WEEK`. Positions,
+ * week); year-end is the run's served within-year week (`yearEndWeek`, P53;
+ * default the served `/me.plan_year_end_week`). Positions,
  * not calculations. The per-project "completing within year" verdict is still the
  * server's `row.spillover` / `row.left_out` flag.
  *
@@ -51,9 +51,18 @@ export interface GanttWeekAxisProps {
   weekLabel?: ((week: number) => string) | undefined;
   /** P32-R04: the axis' accessible name (default: "Week axis, Week 1 of 2026 to Week 26 of 2027"). */
   ariaLabel?: string;
+  /** P53 (R53-6): the plan-year-end line — the run's served `within_year_week`
+   *  (or u on an import). Default: the served `/me.plan_year_end_week`. */
+  yearEndWeek?: number | null | undefined;
 }
 
-export function GanttWeekAxis({ scale, weekLabel, ariaLabel }: GanttWeekAxisProps): React.JSX.Element {
+/** The served plan-year end, or off-axis (not drawn) before `/me` resolves. */
+function useYearEndWeek(override: number | null | undefined): number | null {
+  const served = usePlanYearEndWeek();
+  return override ?? served;
+}
+
+export function GanttWeekAxis({ scale, weekLabel, ariaLabel, yearEndWeek }: GanttWeekAxisProps): React.JSX.Element {
   const stride = labelStride(scale.weekWidthPx);
   const first = scale.originWeek;
   const last = lastScaleWeek(scale);
@@ -63,7 +72,8 @@ export function GanttWeekAxis({ scale, weekLabel, ariaLabel }: GanttWeekAxisProp
   const currentWeek = useCurrentWeek();
   // Off-axis (not drawn) until `/me` has resolved.
   const nowX = currentWeek === null ? -1 : weekToX(currentWeek, scale);
-  const yearX = weekEndToX(WITHIN_YEAR_WEEK, scale);
+  const yearEnd = useYearEndWeek(yearEndWeek);
+  const yearX = yearEnd === null ? -1 : weekEndToX(yearEnd, scale);
 
   return (
     <svg
@@ -128,7 +138,7 @@ export function GanttWeekAxis({ scale, weekLabel, ariaLabel }: GanttWeekAxisProp
             textAnchor="middle"
             dominantBaseline="central"
           >
-            W{currentWeek} now
+            {currentWeek === null ? '' : `W${String(weekOfYear(currentWeek).week)} now`}
           </text>
         </>
       ) : null}
@@ -154,7 +164,7 @@ export function GanttWeekAxis({ scale, weekLabel, ariaLabel }: GanttWeekAxisProp
             textAnchor="end"
             data-testid="gantt-year-end-label"
           >
-            W{WITHIN_YEAR_WEEK} year-end
+            {yearEnd === null ? '' : `${formatWeek(yearEnd)} year-end`}
           </text>
         </>
       ) : null}
@@ -165,11 +175,13 @@ export function GanttWeekAxis({ scale, weekLabel, ariaLabel }: GanttWeekAxisProp
 export interface GanttGridLinesProps {
   scale: WeekScale;
   height: number;
+  /** P53: as {@link GanttWeekAxisProps.yearEndWeek}. */
+  yearEndWeek?: number | null | undefined;
 }
 
 /** Background vertical gridlines + the two marker lines, sized to the full
  *  virtualized content height so they stay aligned during scroll. */
-export function GanttGridLines({ scale, height }: GanttGridLinesProps): React.JSX.Element {
+export function GanttGridLines({ scale, height, yearEndWeek }: GanttGridLinesProps): React.JSX.Element {
   const stride = labelStride(scale.weekWidthPx);
   const first = scale.originWeek;
   const lines: number[] = [];
@@ -178,7 +190,9 @@ export function GanttGridLines({ scale, height }: GanttGridLinesProps): React.JS
   const currentWeek = useCurrentWeek();
   // Off-axis (not drawn) until `/me` has resolved.
   const nowX = currentWeek === null ? -1 : weekToX(currentWeek, scale);
-  const yearX = weekEndToX(WITHIN_YEAR_WEEK, scale);
+  const yearEnd = useYearEndWeek(yearEndWeek);
+  // Off the right edge (nothing shaded) until the year end is known.
+  const yearX = yearEnd === null ? scale.totalWidthPx + 1 : weekEndToX(yearEnd, scale);
 
   return (
     <svg
@@ -250,12 +264,12 @@ export function GanttGridLines({ scale, height }: GanttGridLinesProps): React.JS
 
 export interface GanttYearRowProps {
   scale: WeekScale;
-  /** The calendar year of absolute weeks 1..52: the served `/me.plan_year` on
-   *  the Timeline, the served `base_year` on the What-if import. `null` before
+  /** The calendar year of absolute weeks 1..52: the served
+   *  `/me.week_base_year` (P53; the week line is never re-based). `null` before
    *  `/me` resolves — the bands then read "Plan year" / "Next year". */
   baseYear: number | null;
-  /** Bands with a year offset above this are shaded as "after the plan year"
-   *  (default 0: every year after the base year). */
+  /** Bands with a year index (from the base year) above this are shaded as
+   *  "after the plan year" (P53: `plan_year − week_base_year`; default 0). */
   planYearOffset?: number;
   /** Where the label sticks while the timeline scrolls (the sticky left
    *  column's width), so a long band keeps its year in view. */

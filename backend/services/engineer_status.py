@@ -304,7 +304,7 @@ async def record_leader_change(
         new_engineer_id=new_leader_id,
         plan_year=clock.plan_year,
         from_week=from_week,
-        to_week=clock.week,
+        to_week=clock.week_of_year,
         cause=cause,
         changed_by_user_id=actor_user_id,
     )
@@ -543,7 +543,7 @@ async def supply_effect(
     calendar = (
         await db.execute(select(HubWorkCalendar).where(HubWorkCalendar.hub_id == engineer.hub_id))
     ).scalar_one_or_none()
-    new_period = InactivePeriod(from_plan_year=clock.plan_year, from_week=clock.week)
+    new_period = InactivePeriod(from_plan_year=clock.plan_year, from_week=clock.week_of_year)
 
     def _members(with_new: bool) -> list[SupplyMember]:
         out: list[SupplyMember] = []

@@ -547,7 +547,9 @@ def test_outcome_classes_and_counts():
         "queued",
     }
     assert res.outcome_counts_after["not_scheduled_priority"] > 0
-    assert res.outcome_counts_after["queued"] > 0
+    # P53 (R53-2): a queued P3 now counts; only a frozen P4/Q is "queued", and
+    # the portfolio has none.
+    assert res.outcome_counts_after["queued"] == 0
 
 
 def test_utilization_rows_follow_the_booked_rule():
@@ -1054,7 +1056,8 @@ def _grid_minimum(base, sc, hub, region, target, d_max=9, c_max=5):
     for d in range(d_max + 1):
         for c in range(c_max + 1):
             res = _simulate_with(base, _apply_units(sc, dims, (d, c), 1.0), br, 1)
-            if not _violators(target, res, br)[0]:
+            wy, hz = base.schedule.within_year_week, base.schedule.horizon_weeks
+            if not _violators(target, res, br, within_year_week=wy, horizon_weeks=hz)[0]:
                 key = (d + c, c, d)
                 if best is None or key < best:
                     best = key

@@ -5,10 +5,11 @@ import { WeekText } from '@/components/shared/week-text';
 import { Checkbox } from '@/components/ui/checkbox';
 import { isStatusOptionLocked, statusOptionLabel, useIsSuperAdmin } from '@/lib/auth/super-admin';
 import type { Hub } from '@/lib/api/reference';
-import { SCHEDULER_HORIZON_WEEKS } from '@/lib/domain-constants';
-import { formatPlanWeek, formatWeek, weekTitleIfNextYear } from '@/lib/format';
+import { formatPlanWeek, formatWeekWithYear, weekTitleIfNextYear } from '@/lib/format';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { usePlanYear } from '@/lib/plan-clock';
+import { useBaseYear } from '@/lib/week-line';
+import { useSessionStore } from '@/stores/session';
 import { cn } from '@/lib/utils';
 import { UI_PROJECT_STATUSES, type ProjectStatus } from '@/types/enums';
 
@@ -348,13 +349,14 @@ export function UnassignedFlag({ leftOut = false }: { leftOut?: boolean }): Reac
 /** Read mode: a served actual week. */
 export function WeekValue({ week }: { week: number | null }): React.JSX.Element {
   const planYear = usePlanYear();
+  const baseYear = useBaseYear();
   return week === null ? (
     <span className="text-text-subtle">—</span>
   ) : (
     <span
       className="text-xs font-semibold tabular-nums text-text"
       data-numeric=""
-      title={[weekTitleIfNextYear(week, planYear), planYear === null ? '' : planWeekToDateInput(week, planYear)].filter(Boolean).join(' · ') || undefined}
+      title={[weekTitleIfNextYear(week, planYear), baseYear === null ? '' : planWeekToDateInput(week, baseYear)].filter(Boolean).join(' · ') || undefined}
     >
       {formatPlanWeek(week, planYear)}
     </span>
@@ -384,9 +386,11 @@ export function WeekDateInput({
 }): React.JSX.Element {
   const [error, setError] = React.useState<string | null>(null);
   const warnId = React.useId();
-  // The served plan year (P37); every cell renders under the session gate.
-  const planYear = usePlanYear() ?? Number.NaN;
-  const bounds = planDateBounds(planYear);
+  // P53 (R53-6): the served base year and search limit H; every cell renders
+  // under the session gate. Generic for any year (no W78 cap).
+  const baseYear = useBaseYear() ?? Number.NaN;
+  const maxWeek = useSessionStore((s) => s.me?.horizon_weeks ?? null);
+  const bounds = planDateBounds(baseYear, maxWeek);
   const message = error ?? warning;
   return (
     <span className={cn('flex min-w-0 flex-col gap-0.5 p-0.5', changed && CHANGED)}>
@@ -395,7 +399,7 @@ export function WeekDateInput({
           id={id}
           type="date"
           className={cn(EDIT_INPUT, 'w-[8.5rem] cursor-pointer')}
-          value={planWeekToDateInput(week, planYear)}
+          value={planWeekToDateInput(week, baseYear)}
           min={bounds.min}
           max={bounds.max}
           aria-label={`${label} (date, stored as a plan week)`}
@@ -404,9 +408,13 @@ export function WeekDateInput({
           data-changed={changed ? 'true' : undefined}
           data-testid="week-date-input"
           onChange={(e) => {
-            const next = dateInputToPlanWeek(e.currentTarget.value, planYear);
+            const next = dateInputToPlanWeek(e.currentTarget.value, baseYear, maxWeek);
             if (next === undefined) {
-              setError(`No plan week for this date (${String(planYear)} W1 to ${formatWeek(SCHEDULER_HORIZON_WEEKS, planYear)})`);
+              setError(
+                maxWeek === null
+                  ? `No plan week for this date (from ${formatWeekWithYear(1)})`
+                  : `No plan week for this date (${formatWeekWithYear(1)} to ${formatWeekWithYear(maxWeek)})`,
+              );
               return;
             }
             setError(null);

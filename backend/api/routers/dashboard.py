@@ -62,6 +62,7 @@ from sqlalchemy.orm import selectinload
 
 from api.db import get_db
 from api.deps import require_permission
+from api.errors import HTTP_422, CodedHTTPException
 from api.query_params import (
     CurrentStepListQuery,
     DashboardCategoryListQuery,
@@ -86,8 +87,9 @@ from models.enums import (
 )
 from models.hub import Hub
 from models.project import Project
-from models.schedule import ScheduleRun, ScheduleRunProjectOutcome
+from models.schedule import PRE_P53_RULES_LABEL, ScheduleRun, ScheduleRunProjectOutcome
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
+from scheduling.weeks import year_of
 from schemas.dashboard import (
     AnalyticsBucket,
     CompletingByHubRow,
@@ -110,11 +112,20 @@ from schemas.dashboard import (
     StatusOverview,
     StepFacet,
 )
+from schemas.delivery import DeliveryDrillResponse, DeliveryDrillRow, DeliveryRowKind
 from services.active_run import get_active_run
 from services.band_rank import band_sizes
 from services.capacity_supply import round2
 from services.categories import load_catalog
 from services.category_type_filter import any_of, category_type_filter
+from services.delivery_serving import (
+    delivery_year_of,
+    is_p53_run,
+    stored_delivery,
+    stored_far_finish,
+    stored_left_out_reason,
+    tail_warning_counts,
+)
 from services.expected_status import expected_status_for, status_mismatch
 from services.hub_scope import HubIdsArg, RegionsArg, narrowed_hub_filter
 from services.outcome_buckets import (
@@ -460,6 +471,7 @@ async def completing_within_year(
                 db, None, current_user, hub_id, region, category, type_
             ),
             regions=_delivery_regions({}),
+            delivery_by_year_unavailable="no_active_run",
         )
 
     stmt = (
@@ -483,7 +495,10 @@ async def completing_within_year(
     # Owner request 2026-11-16: the same buckets per lab region (the hub's
     # `lab_region`, as ADR 0025's country filter and /region-summary use).
     by_region: dict[LabRegion, dict[str, int]] = {}
+    kept_outcomes: list[ScheduleRunProjectOutcome] = []
+    run_week = active_run.current_week
     for outcome, project, has_progress in result.all():
+        kept_outcomes.append(outcome)
         row_bucket = outcome_bucket(outcome)
         if row_bucket is None:
             excluded_count += 1
@@ -513,6 +528,10 @@ async def completing_within_year(
                 outcome=row_bucket,
                 priority_label=priority_label(project.priority),
                 projected_end_week=outcome.projected_end_week,
+                priority_at_run=outcome.priority_at_run,
+                delivery_year=delivery_year_of(outcome, run_week),
+                left_out_reason=stored_left_out_reason(outcome, active_run),
+                far_finish=stored_far_finish(outcome, run_week),
             )
         )
 
@@ -539,6 +558,92 @@ async def completing_within_year(
             db, active_run.id, current_user, hub_id, region, category, type_
         ),
         regions=_delivery_regions(by_region),
+        # P53 (R53-3, I59): over exactly the rows above.
+        delivery_by_year=stored_delivery(active_run, kept_outcomes),
+        delivery_by_year_unavailable=None if is_p53_run(active_run) else "pre_p53_run",
+        rules_epoch=active_run.rules_epoch,
+        rules_label=None if is_p53_run(active_run) else PRE_P53_RULES_LABEL,
+        tail_warnings=await tail_warning_counts(db, active_run, kept_outcomes),
+    )
+
+
+@router.get("/delivery-by-year/projects", response_model=DeliveryDrillResponse)
+async def delivery_by_year_projects(
+    kind: DeliveryRowKind,
+    year: int | None = Query(default=None, ge=2026, le=2126),
+    band: Literal["P1", "P2", "P3"] | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
+    category: DashboardCategoryListQuery = None,
+    type_: DashboardTypeListQuery = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> DeliveryDrillResponse:
+    """P53 (R53-3) drill-in: the projects of one delivery-table cell, over the
+    same hub scope and filters as `/completing-within-year`. 404
+    `NO_ACTIVE_RUN` without an active run; empty for a pre-P53 run."""
+
+    if kind in ("by_end_of_year", "year") and year is None:
+        raise CodedHTTPException(HTTP_422, "YEAR_REQUIRED", "year is required for a by-year row.")
+    active_run = await get_active_run(db)
+    if active_run is None:
+        raise CodedHTTPException(404, "NO_ACTIVE_RUN", "There is no active schedule run.")
+    if not is_p53_run(active_run):
+        return DeliveryDrillResponse(
+            schedule_run_version=active_run.version,
+            kind=kind,
+            year=year,
+            band=band,
+            delivery_by_year_unavailable="pre_p53_run",
+            rows=[],
+        )
+    stmt = (
+        select(ScheduleRunProjectOutcome, Project)
+        .join(Project, ScheduleRunProjectOutcome.project_id == Project.id)
+        .options(selectinload(Project.hub))
+        .where(ScheduleRunProjectOutcome.schedule_run_id == active_run.id)
+    )
+    hub_filter = _dashboard_filter(current_user, hub_id, region, category, type_)
+    if hub_filter is not None:
+        stmt = stmt.where(hub_filter)
+    run_week = active_run.current_week
+    y0 = year_of(run_week)
+    rows: list[DeliveryDrillRow] = []
+    for outcome, project in (await db.execute(stmt.order_by(Project.name, Project.id))).all():
+        if outcome.not_scheduled_priority or not outcome.counts_toward_year:
+            continue
+        band_key = outcome.priority_at_run
+        if band is not None and band_key != band:
+            continue
+        d_year = delivery_year_of(outcome, run_week)
+        if kind == "blocked":
+            keep = outcome.blocked
+        elif kind == "not_placed":
+            keep = outcome.left_out and not outcome.blocked
+        elif kind == "by_end_of_year":
+            keep = d_year is not None and d_year == y0 and year == y0
+        else:
+            keep = d_year is not None and d_year == year and d_year != y0
+        if not keep:
+            continue
+        rows.append(
+            DeliveryDrillRow(
+                project_id=project.id,
+                project_name=project.name,
+                hub=project.hub.name.value,
+                band=band_key,
+                completion_week=outcome.projected_end_week,
+                delivery_year=d_year,
+                far_finish=stored_far_finish(outcome, run_week),
+                left_out_reason=stored_left_out_reason(outcome, active_run),
+            )
+        )
+    return DeliveryDrillResponse(
+        schedule_run_version=active_run.version,
+        kind=kind,
+        year=year,
+        band=band,
+        rows=rows,
     )
 
 

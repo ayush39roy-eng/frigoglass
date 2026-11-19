@@ -500,8 +500,17 @@ class EngineerUtilizationRow(BaseModel):
     total_capacity: float
     #: `total_booked / total_capacity * 100` (same zero-capacity rule as a week).
     utilization_pct: float
-    #: Exactly W1..W52, in order.
+    #: The plan-year window of the active run (`week_range`), in order;
+    #: W1..W52 for every 2026 run (P53 R53-6).
     weeks: list[EngineerWeekUtilization]
+    # --- P53 (R53-9, I63; engineer-level, OQ #8: only here) ----------------
+    #: Last week of this engineer's booked design rows when they lead a
+    #: project of the run; null otherwise or on a pre-P53 run.
+    leader_tail_week: int | None = None
+    #: `leader_tail_week > year_end(Y0 + 1)`.
+    leader_overloaded: bool = False
+    #: `far_finish` projects this engineer leads.
+    far_finish_count: int = 0
 
 
 class EngineerUtilizationResponse(BaseModel):

@@ -1108,24 +1108,27 @@ async def test_user_link_to_inactive_engineer_is_422(db_session, dispatch):
 # --- plan clock (R38-7) ---------------------------------------------------------------------
 
 
-async def test_closed_plan_year_records_week_52(db_session, dispatch, monkeypatch):
+async def test_deactivation_in_2027_records_the_year_relative_week(
+    db_session, dispatch, monkeypatch
+):
+    """P53 (R53-1, F2): no closed year. On 20 Jan 2027 the calendar week is
+    absolute 55; the year-relative deactivation row stores (2027, 3)."""
+
     w = await _world(db_session)
     monkeypatch.delenv("RPD_CURRENT_WEEK", raising=False)
-    monkeypatch.setenv("RPD_PLAN_YEAR", "2026")
+    monkeypatch.delenv("RPD_PLAN_YEAR", raising=False)
     await _act_as(db_session, RoleName.SUPER_ADMIN)
     with plan_clock.override_now(datetime(2027, 1, 20, 12, 0, tzinfo=UTC)):
         async with _client(db_session) as client:
             preview = (await _preview(client, w.maria.id)).json()
             resp = await _deactivate(client, w.maria.id, preview["led_projects_token"], [])
-    assert preview["deactivation_week"] == 52
+    assert preview["deactivation_week"] == 55
     assert resp.status_code == 200, resp.text
-    assert resp.json()["engineer"]["deactivated_week"] == 52
-    assert resp.json()["engineer"]["deactivated_plan_year"] == 2026
-    # A deactivation at (Y, 52) covers no week of Y: the supply is unchanged.
-    assert (
-        preview["supply_effect"]["yearly_design_capacity"]["before"]
-        == (preview["supply_effect"]["yearly_design_capacity"]["after"])
-    )
+    assert resp.json()["engineer"]["deactivated_week"] == 3
+    assert resp.json()["engineer"]["deactivated_plan_year"] == 2027
+    # Deactivated in week 3 of 2027: the 2027 supply drops.
+    effect = preview["supply_effect"]["yearly_design_capacity"]
+    assert effect["after"] < effect["before"]
 
 
 async def test_preview_supply_follows_the_calendar_week(db_session):

@@ -399,7 +399,8 @@ export const importFormatSchema: z.ZodType<ImportFormat> = z.object({
  */
 const simulateRequestSchema: z.ZodType<ImportSimulateRequest> = z.object({
   mode: z.enum(['merge', 'file_only']),
-  plan_year_end_week: z.union([z.literal(52), z.literal(104)]),
+  // P53 (R53-4): any positive multiple of 52, or null (the server default).
+  plan_year_end_week: z.number().int().positive().nullable(),
   expand_multi: z.boolean(),
   rows: z.array(importRowSchema),
   edits: z.array(

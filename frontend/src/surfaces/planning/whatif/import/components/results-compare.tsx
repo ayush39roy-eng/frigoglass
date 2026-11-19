@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { AlertTriangle, BarChart3, Check, Download, GitCompareArrows, Gauge, Info, Layers, Pencil, Star, Trash2, X } from 'lucide-react';
+import { DeliveryByYearTable } from '@/components/shared/delivery-by-year/delivery-by-year-table';
 
 import { Badge } from '@/components/ui/badge';
 import { BarChart } from '@/components/ui/bar-chart';
@@ -528,6 +529,22 @@ export function ResultsCompare(): React.JSX.Element {
           </FeatureCard>
           <FeatureCard icon={BarChart3} title="Outcomes" hint="Within the plan year, spill over and not placed">
             <OutcomeBars picked={picked} />
+          </FeatureCard>
+          {/* P53 (ADR 0063, R53-3): each scenario's served delivery-by-year table,
+              side by side. Pre-P53 saved scenarios serve none (labelled). */}
+          <FeatureCard icon={BarChart3} title="Delivered by year" hint="Per scenario, served; later years indicative">
+            <div className="grid gap-s4 xl:grid-cols-2" data-testid="compare-delivery-by-year">
+              {picked.map((s) => (
+                <div key={s.id} className="min-w-0 space-y-1">
+                  <p className="text-xs font-semibold text-text">{s.name}</p>
+                  <DeliveryByYearTable
+                    data={s.response.delivery_by_year ?? null}
+                    unavailable={s.response.delivery_by_year ? null : 'pre_p53_run'}
+                    testId="compare-delivery-table"
+                  />
+                </div>
+              ))}
+            </div>
           </FeatureCard>
           <FeatureCard icon={Gauge} title="Design capacity booked" hint="Per hub and window, with the booking status">
             <CapacityTable picked={picked} />

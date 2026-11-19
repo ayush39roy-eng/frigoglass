@@ -22,6 +22,7 @@ from scheduling.whatif import (
     MAX_REMOVED_DESIGNERS_TOTAL,
 )
 from schemas.category import CategoryCode
+from schemas.delivery import DeliveryByYearOut
 
 HubLiteral = Literal["R&D-Greece", "R&D-India", "PD-India", "PD-Romania", "OEM-HCK", "OEM-Seitek"]
 RegionLiteral = Literal["Greece", "India", "Romania"]
@@ -316,6 +317,8 @@ class ScenarioDiffOut(BaseModel):
 
 class SimulateResponse(BaseModel):
     kind: Literal["simulation"] = "simulation"
+    #: P53 (R53-3, I59): the delivery table over exactly `projects`.
+    delivery_by_year: DeliveryByYearOut | None = None
     scope: ScopeInfo
     projects: list[ProjectResultOut]
     outcome_counts_before: dict[str, int]
@@ -393,6 +396,9 @@ class SolveResponse(BaseModel):
     searched_designer_hubs: list[str]
     searched_chamber_regions: list[str]
     achieved: SimulateResponse | None
+    #: P53 (R53-3): the delivery table of `achieved` (null when nothing was
+    #: achieved); same object as `achieved.delivery_by_year`.
+    delivery_by_year: DeliveryByYearOut | None = None
     workings: list[str]
 
 

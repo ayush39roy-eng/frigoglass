@@ -1,3 +1,4 @@
+import type { DeliveryByYear } from '@/types/delivery-by-year';
 // Hand-authored mirror of docs/API_CONTRACT_P32.md Part B (B2 `POST /whatif/import/parse`,
 // B3 `POST /whatif/import/simulate`, ADR 0044). The runtime shape is checked by the zod
 // schemas in `import-schema.ts`; these types are what the rest of the import view reads.
@@ -10,7 +11,18 @@ import type { WhatIfHub, WhatIfOutcome } from '../../api/whatif-types';
 export type ImportWorkflow = 'PDD' | 'OEM';
 export type ImportSeverity = 'info' | 'warning' | 'error';
 export type ImportMode = 'merge' | 'file_only';
-export type PlanYearEndWeek = 52 | 104;
+/** P53 (R53-4, API_CONTRACT_P53 §5): a plan-year end week — any positive
+ *  multiple of 52 with `current_week ≤ value ≤ H` — or null for the server's
+ *  default `year_end(year_of(current_week))`. */
+export type PlanYearEndWeek = number | null;
+
+/** P53 (R53-4): one served "Plan year" preset — each year from `year_of(cw)`
+ *  whose year end is within the search limit H. */
+export interface PlanUntilPreset {
+  year: number;
+  week: number;
+  label: string;
+}
 /**
  * `running` (P32-R06): PRIORITY "Running" — P1 with rank 0, scheduled before rank 1.
  * `band` (P50, ADR 0061 R49-3): a Yes in a "Must Do" / band column set the priority.
@@ -135,8 +147,11 @@ export interface ImportParseResponse {
   counts: ImportParseCounts;
   /** P50 (D1): the earliest "Plan from" week (= `current_week`, the default). */
   plan_from_min_week?: number | undefined;
-  /** P50 (D1): weeks `current_week`..104 with server labels, for both pickers. */
+  /** P50 (D1); P53: weeks `current_week`..H (the served search limit) with server
+   *  labels, for both pickers. */
   plan_week_choices?: PlanWeekChoice[] | undefined;
+  /** P53 (R53-4): the "Plan year" presets, from the data (never a fixed year). */
+  plan_until_presets?: PlanUntilPreset[] | undefined;
 }
 
 // --- B3: simulate ------------------------------------------------------------------------
@@ -382,6 +397,14 @@ export interface ImportBreakdowns {
 }
 
 export interface ImportSimulateResponse {
+  /** P53 (R53-3): the served delivery-by-year table over this simulation's
+   *  outcomes (calendar years, whatever u is). Optional for pre-P53 stored
+   *  responses. */
+  delivery_by_year?: DeliveryByYear | null | undefined;
+  /** P53 (R53-4): the served "Plan year" presets. */
+  plan_until_presets?: PlanUntilPreset[] | undefined;
+  /** P53 (R53-6): the largest end week of a non-skipped row, when served. */
+  last_finish_week?: number | null | undefined;
   base_year: number;
   current_week: number;
   plan_year_end_week: number;

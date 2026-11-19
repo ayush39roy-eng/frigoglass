@@ -158,8 +158,23 @@ _SKIP_KEYS = {
     "limit",
     "bucket_from",
     "bucket_to",
+    # P53 (API_CONTRACT_P53 §4): run metadata of the delivery table, and the
+    # leader count (one leader can lead projects of several types).
+    "run_week",
+    "base_year",
+    "within_year_week",
+    "horizon_weeks",
+    "horizon_years",
+    "year",
+    "leader_overloaded_count",
+    # Running totals stop at a slice's own last year, so they do not add up.
+    "cum_p1",
+    "cum_p2",
+    "cum_p3",
+    "cum_other",
+    "cum_total",
 }
-_ID_FIELDS = ("key", "hub", "type", "priority", "region", "band", "bucket_from")
+_ID_FIELDS = ("key", "hub", "type", "priority", "region", "band", "bucket_from", "kind", "label")
 
 
 def _flat(obj: Any, prefix: str = "") -> dict[str, int]:

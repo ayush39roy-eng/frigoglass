@@ -51,7 +51,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.properties import Outline, PageSetupProperties
 
-import domain_constants as dc
+from scheduling.weeks import PLAN_YEAR_WEEKS, week_of_year, year_end, year_of
+from services.week_labels import week_label
 
 # --------------------------------------------------------------------------
 # Formula guard (P13-F10) and value rendering
@@ -365,8 +366,10 @@ class GanttChart:
     projects: list[GanttProjectBar]
     current_week: int | None
     base_year: int | None
-    horizon_weeks: int = dc.HORIZON_WEEKS
-    within_year_week: int = dc.WITHIN_YEAR_WEEK
+    #: The run's search limit (informational since P53: the drawn axis ends
+    #: at the last finish, rounded up to a year end, never at H, R53-6).
+    horizon_weeks: int = 0
+    within_year_week: int = PLAN_YEAR_WEEKS
     context: list[str] = field(default_factory=list)
 
 
@@ -496,6 +499,14 @@ _LETTER_FONTS: dict[str, Font] = {}
 _THIN = Side(style="thin", color="CBD5E1")
 _HEADER_BORDER = Border(bottom=Side(style="medium", color="0F172A"))
 _WEEK_FORMAT = '"W"0'
+
+
+def _week_format(week: int | None) -> str:
+    """P53 (R53-8): a week cell keeps its absolute number (sortable) but
+    displays the server label "W{week_of_year} {year}", never "W53+"."""
+
+    return _WEEK_FORMAT if week is None else f'"{week_label(week)}"'
+
 
 TABLE_HEADER_ROW: Final[int] = 5
 #: The drawn Gantt: the year band (row 4) and the header (row 5).
@@ -891,18 +902,18 @@ def _write_summary(
 def _year_boundaries(chart: GanttChart, horizon: int) -> list[int]:
     """The last week of each plan year inside the chart (W52, W104, ...)."""
 
-    step = chart.within_year_week
-    return [w for w in range(step, horizon + 1, step)] if step > 0 else []
+    return list(range(PLAN_YEAR_WEEKS, horizon + 1, PLAN_YEAR_WEEKS))
 
 
 def chart_horizon(chart: GanttChart) -> int:
-    """W1..horizon: the chart's horizon, widened to the last served week so a
-    bar is never cut."""
+    """W1..horizon: the last served week (so a bar is never cut), never below
+    the plan-year end, rounded up to a year end (P53 R53-6: never H)."""
 
     ends = [
         s.end for p in chart.projects for s in p.steps if s.end is not None and not s.skipped
     ] + [p.end for p in chart.projects if p.end is not None]
-    return max([chart.horizon_weeks, *ends])
+    last = max([chart.within_year_week, *ends])
+    return year_end(year_of(max(1, last)))
 
 
 class _WeekStyler:
@@ -1011,10 +1022,10 @@ def _write_chart(wb: Workbook, name: str, chart: GanttChart, generated: str) -> 
     # Row 4: the year band over the week columns.
     band: list[Any] = [None] * (first_week_col - 1)
     for week in range(1, horizon + 1):
-        if (week - 1) % chart.within_year_week == 0:
-            year_index = (week - 1) // chart.within_year_week
+        if (week - 1) % PLAN_YEAR_WEEKS == 0:
+            year_index = (week - 1) // PLAN_YEAR_WEEKS
             if chart.base_year is not None:
-                text = f"{chart.base_year + year_index} (from W{week})"
+                text = f"{chart.base_year + year_index} (from W{week_of_year(week)})"
             else:
                 text = "Plan year" if year_index == 0 else f"Plan year +{year_index}"
             band.append(_text(ws, text, font=_BOLD))
@@ -1029,7 +1040,9 @@ def _write_chart(wb: Workbook, name: str, chart: GanttChart, generated: str) -> 
     ]
     for week in range(1, horizon + 1):
         cell = WriteOnlyCell(ws, value=week)
-        hstyle: dict[str, Any] = {"alignment": _CENTER}
+        # P53 (R53-8): the column keeps its absolute week; it displays the
+        # week of its year (the year band above names the year).
+        hstyle: dict[str, Any] = {"alignment": _CENTER, "number_format": f'"{week_of_year(week)}"'}
         if week == chart.current_week:
             hstyle.update(fill=solid(_CURRENT_WEEK), font=_WEEK_HEADER_FONT)
         elif week > chart.within_year_week:
@@ -1090,8 +1103,8 @@ def _project_line(
         _text(ws, p.hub, font=_BOLD, fill=project_fill),
         _text(ws, _priority_text(p.priority, p.priority_label), font=_BOLD, fill=project_fill),
         _text(ws, p.leader or "", font=_BODY, fill=project_fill),
-        _cell(ws, start, font=_BOLD, fill=project_fill, number_format=_WEEK_FORMAT),
-        _cell(ws, end, font=_BOLD, fill=project_fill, number_format=_WEEK_FORMAT),
+        _cell(ws, start, font=_BOLD, fill=project_fill, number_format=_week_format(start)),
+        _cell(ws, end, font=_BOLD, fill=project_fill, number_format=_week_format(end)),
         _text(ws, outcome_text, font=coloured_bold(colour), fill=project_fill),
     ]
     span = (start, end) if start is not None and end is not None else None
@@ -1118,8 +1131,18 @@ def _step_line(ws: Any, p: GanttProjectBar, st: GanttStepBar, styler: _WeekStyle
         _text(ws, p.hub, font=_MUTED),
         _text(ws, p.priority or "", font=_MUTED),
         _text(ws, st.resource or "", font=_BODY),
-        _cell(ws, None if st.skipped else st.start, font=_BODY, number_format=_WEEK_FORMAT),
-        _cell(ws, None if st.skipped else st.end, font=_BODY, number_format=_WEEK_FORMAT),
+        _cell(
+            ws,
+            None if st.skipped else st.start,
+            font=_BODY,
+            number_format=_week_format(st.start),
+        ),
+        _cell(
+            ws,
+            None if st.skipped else st.end,
+            font=_BODY,
+            number_format=_week_format(st.end),
+        ),
         _text(ws, KIND_LABELS.get(st.kind, st.kind), font=_MUTED_ITALIC),
     ]
     row.extend(
@@ -1268,11 +1291,16 @@ def _write_chart_legend(ws: Any, chart: GanttChart, styler: _WeekStyler) -> None
         ("Pinned step: outlined bar (typed start / end weeks)", "Pinned",
          _swatch(ws, solid(sample), border=pin)),
         (
-            f"Current week (W{chart.current_week})" if chart.current_week else "Current week",
+            (
+                f"Current week ({week_label(chart.current_week)})"
+                if chart.current_week
+                else "Current week"
+            ),
             "Now",
             _swatch(ws, solid(_CURRENT_WEEK_PALE), width=1),
         ),
-        (f"End of the plan year (red line after W{chart.within_year_week})", "Year end",
+        (f"End of the plan year (red line after {week_label(chart.within_year_week)})",
+         "Year end",
          _swatch(ws, None, border=year_end, width=1)),
         ("Weeks after the plan year (header shaded)", "Next year", _swatch(ws, solid(_NEXT_YEAR))),
     ]  # fmt: skip
@@ -1295,7 +1323,9 @@ def generated_line(clock_week: int | None = None, plan_year: int | None = None) 
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     parts = [f"Generated {now}"]
     if clock_week is not None:
-        parts.append(f"plan week W{clock_week}" + (f" of {plan_year}" if plan_year else ""))
+        # P53 (R53-8): the absolute week is never printed raw ("W1 2027", not
+        # "W53"); `plan_year` is implied by the label and kept for callers.
+        parts.append(f"plan week {week_label(clock_week)}")
     return " · ".join(parts)
 
 

@@ -642,13 +642,35 @@ async def get_hard_gate_status(
     return HardGateStatus(can_leave_draft=not missing, missing_fields=missing)
 
 
+#: P53 (R53-8): a target end may lie at most 520 weeks past the calendar week.
+TARGET_END_MAX_AHEAD = 520
+
+
+def _check_target_end(value: object, week: int) -> None:
+    """R53-8: `1 <= target_end_week <= current_week + 520` (replaces the fixed
+    520). 422 `TARGET_END_OUT_OF_RANGE`."""
+
+    if isinstance(value, int) and value > week + TARGET_END_MAX_AHEAD:
+        raise CodedHTTPException(
+            HTTP_422,
+            "TARGET_END_OUT_OF_RANGE",
+            [
+                field_error(
+                    "target_end_week",
+                    f"The target end must be within {TARGET_END_MAX_AHEAD} weeks of the "
+                    f"current week (at most {week + TARGET_END_MAX_AHEAD}).",
+                )
+            ],
+        )
+
+
 @router.post("", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
 async def create_project(
     body: ProjectCreateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
     clock: PlanClock = Depends(get_plan_clock),
-) -> Project:
+) -> ProjectRead:
     """Register a project (ADR 0034): it is created `In Queue`, never Draft.
 
     Order: RBAC (`_write`, 401/403) → unknown hub 422 → hub outside the
@@ -663,6 +685,7 @@ async def create_project(
     # P33-T07 (contract B3): an unknown category is the 422 the enum gave,
     # before anything else (it used to fail body validation).
     catalog = await check_category_code(db, body.category, loc=("body", "category"))
+    _check_target_end(body.target_end_week, clock.week)
     hub = (await db.execute(select(Hub).where(Hub.id == body.hub_id))).scalar_one_or_none()
     if hub is None:
         raise HTTPException(
@@ -895,6 +918,8 @@ async def stage_project_update(
     `project_leader_history` row (`leader_cause`), at `clock`'s week."""
 
     status_before = project.status
+    if "target_end_week" in updates:
+        _check_target_end(updates["target_end_week"], (clock or plan_clock_now()).week)
     # ADR 0058 D1.1: only a Super Admin sets a project to Cancelled.
     ensure_may_cancel(project, updates.get("status"), current_user)
     if updates.get("status") == ProjectStatus.DRAFT:
@@ -1032,6 +1057,17 @@ async def stage_project_update(
         await share_lock_categories(db, [target_category])
     for field_name, value in updates.items():
         setattr(project, field_name, value)
+    # P53 (R53-2b, I61): moving to Commercialized with no actual end week
+    # stamps the calendar week (new writes only; still editable; an explicit
+    # `actual_end_week` in the same write wins). Its delivered year is then
+    # the year of that week.
+    if (
+        updates.get("status") == ProjectStatus.COMMERCIALIZED
+        and status_before != ProjectStatus.COMMERCIALIZED
+        and project.actual_end_week is None
+        and "actual_end_week" not in updates
+    ):
+        project.actual_end_week = (clock or plan_clock_now()).week
     if schedule_inputs_changed:
         project.schedule_stale = True
     if band_rank_plan is not None:

@@ -394,6 +394,14 @@ export interface EngineerUtilizationRow {
   total_capacity: number;
   utilization_pct: number;
   weeks: EngineerWeekUtilization[];
+  /** P53 (R53-9, API_CONTRACT_P53 §4.3): engineer-level tail data (GDPR, OQ #8)
+   *  — served ONLY here, with the same roles and hub scope as utilisation. The
+   *  last week of this leader's booked design rows; null when none. */
+  leader_tail_week?: number | null;
+  /** Served: `leader_tail_week > year_end(Y0 + 1)`. Display only (I63). */
+  leader_overloaded?: boolean;
+  /** Served: this leader's projects finishing after next year. */
+  far_finish_count?: number;
 }
 
 /** GET /capacity/engineer-utilization?hub_id=&region= (P15-T01, ADR 0028). */
@@ -447,4 +455,10 @@ export interface ScheduleRunSummary {
    *  null for greedy runs and older runs. Always present in the payload. */
   solver_status: string | null;
   created_at: string;
+  /** P53 (API_CONTRACT_P53 §3): rules epoch, the run's within-year week and
+   *  the pre-P53 label (shown wherever the run is shown). */
+  rules_epoch?: 'p53' | null;
+  within_year_week: number;
+  pre_p53: boolean;
+  rules_label: string | null;
 }

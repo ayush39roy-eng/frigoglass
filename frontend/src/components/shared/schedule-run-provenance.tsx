@@ -25,6 +25,8 @@ export interface ProvenanceRun {
   version: number;
   solver_type: SolverType;
   created_at: string;
+  /** P53 (R53-7): the served pre-P53 label. */
+  rules_label?: string | null | undefined;
 }
 
 export interface ScheduleRunProvenanceProps {
@@ -82,6 +84,11 @@ export function ScheduleRunProvenance({
         {solverLabel ? <> ({solverLabel})</> : null}
         {activeRun?.created_at ? <> · computed {formatRunTimestamp(activeRun.created_at)}</> : null}.
       </span>
+      {activeRun?.rules_label ? (
+        <span className="italic" data-testid="run-rules-label">
+          {activeRun.rules_label}
+        </span>
+      ) : null}
       {children ? (
         <Tooltip>
           <TooltipTrigger asChild>

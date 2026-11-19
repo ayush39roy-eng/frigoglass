@@ -122,7 +122,8 @@ def test_merge_replaces_matched_project_and_keeps_the_rest() -> None:
     assert p2.source == "plan" and p2.before_outcome is not None
     assert res.kpis.before_within_plan_year is not None
     assert res.kpis.after_within_plan_year_existing is not None
-    assert res.horizon_weeks == 130 and res.plan_year_end_week == 104
+    # P53 (R53-4): the import searches to the live H (cw + 260), not u + 26.
+    assert res.horizon_weeks == CW + 260 and res.plan_year_end_week == 104
 
 
 def test_file_only_schedules_only_the_file() -> None:
@@ -464,7 +465,7 @@ def test_plan_year_verdicts_52_vs_104() -> None:
     assert p104.outcome == "within_year" and p104.within_plan_year
     assert "UNREACHABLE_IN_YEAR" in codes(y52, "row-1")
     assert "UNREACHABLE_IN_YEAR" not in codes(y104, "row-1")
-    assert (y52.horizon_weeks, y104.horizon_weeks) == (78, 130)
+    assert (y52.horizon_weeks, y104.horizon_weeks) == (CW + 260, CW + 260)  # P53 (R53-4)
     assert [w.key for w in y52.capacity.windows] == ["y0"]
     assert [(w.key, w.from_week, w.to_week) for w in y104.capacity.windows] == [
         ("y0", CW, 52),
@@ -483,8 +484,17 @@ def test_long_project_left_out_at_52_fits_at_104() -> None:
         base, PlanImportRequest(projects=(r,), mode="file_only", plan_year_end_week=52)
     )
     y104 = run_plan_import(base, PlanImportRequest(projects=(r,), mode="file_only"))
-    assert by_ref(y52, "row-1").outcome == "left_out"
+    # P53 (R53-4): both runs search to H = cw + 260, so the year preset only
+    # moves the cut-off: a spillover at 52, within at 104 (pre-P53: LEFT_OUT
+    # at 52 because its horizon was 78).
+    assert by_ref(y52, "row-1").outcome == "spillover"
     assert by_ref(y104, "row-1").outcome in ("within_year", "spillover")
+    # A search limit that cannot hold it still leaves it out (beyond_horizon).
+    short = dataclasses.replace(base, schedule=dataclasses.replace(base.schedule, horizon_weeks=78))
+    y52s = run_plan_import(
+        short, PlanImportRequest(projects=(r,), mode="file_only", plan_year_end_week=52)
+    )
+    assert by_ref(y52s, "row-1").outcome == "left_out"
 
 
 # =====================================================================================

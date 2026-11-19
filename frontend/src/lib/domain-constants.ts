@@ -1,50 +1,12 @@
-/**
- * Horizon constants from `docs/DOMAIN_RULES.md` ("Horizon constants"). The
- * server's internal 78-week search horizon is deliberately NOT exported here —
- * the UI presents a 52-week year only (see `DISPLAY_HORIZON_WEEKS`).
- *
- * These are the DOMAIN_RULES contract, mirrored verbatim from the backend
- * (`backend/scheduling/domain_constants.py` / `backend/models` week fields) — they
- * are NOT derived and must never be recomputed. A frontend surface may draw a
- * fixed marker line at `WITHIN_YEAR_WEEK` (that is a constant, not a calculation),
- * but any per-project "completing within year" / spillover verdict is the server's
- * flag, never a client comparison (Invariant I9).
+/*
+ * P53 (ADR 0063, R53-1 / R53-8, I40): there is NO week or year constant here
+ * any more. `WITHIN_YEAR_WEEK`, `DISPLAY_HORIZON_WEEKS` and
+ * `SCHEDULER_HORIZON_WEEKS` were removed: weeks are absolute from the served
+ * `/me.week_base_year` W1, the plan-year window (`plan_year_start_week`,
+ * `plan_year_end_week`) and the search limit (`horizon_weeks`) are served, and
+ * a run carries its own `within_year_week` / `horizon_weeks`. Read them through
+ * `@/lib/plan-clock` and the week-line mirror `@/lib/week-line`.
  */
-
-/* P37 (ADR 0052): there is no current-week or plan-year constant. The week
- * follows the calendar and is served by `GET /me` (`current_week`,
- * `plan_year`, …); read it through `@/lib/plan-clock` (`usePlanClock`,
- * `useCurrentWeek`, `usePlanYearLabels`). Test fixtures carry their own week
- * and year (`src/test/session.ts`). */
-
-/** A project completes "within the year" iff its last step ends (plus delay) by
- *  this week. The per-project verdict is `row.spillover` / `row.left_out` from the
- *  API — this constant only positions the year-end marker line. */
-export const WITHIN_YEAR_WEEK = 52;
-
-/**
- * The planning horizon the UI PRESENTS: one 52-week year, W1–W52 (client ask,
- * 2026-10-13: "keep the 52-week horizon only, show till week 52, and projects
- * not done by then show as spillover"). Every axis, label, tooltip and week
- * input in the app is framed on this. Work past W52 is drawn clipped at W52 and
- * labelled "Spillover → {plan_year + 1}"; it is never drawn on W53+ columns.
- *
- * NOT the scheduler's horizon: the server still searches up to its internal
- * 78-week horizon (`HORIZON_WEEKS` in `backend/scheduling/domain_constants.py`,
- * served as `ScheduleRunSummary.horizon_weeks`) so it can tell a spillover
- * project (placed, finishing after W52) from a left-out one (not placed at all).
- * The frontend never displays that 78; it only shows the server's verdicts.
- */
-export const DISPLAY_HORIZON_WEEKS = WITHIN_YEAR_WEEK;
-
-/**
- * P32-R02: the scheduler's internal search horizon (`HORIZON_WEEKS` in
- * `backend/domain_constants.py`), for labels and the Workflow page's
- * read-only per-project waterfall axis (which runs past W52 to at most this
- * week), and the Projects register's plan-week dates. The Timeline axis still
- * presents W1–W52.
- */
-export const SCHEDULER_HORIZON_WEEKS = 78;
 
 /**
  * Prioritization scoring anchors (P9 contract §8; deck slide 4 "Scoring Logic").

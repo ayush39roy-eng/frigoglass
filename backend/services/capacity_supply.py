@@ -25,7 +25,8 @@ the one DB read they share.
 DOMAIN_RULES writes the literal 52. The per-hub formulas use the calendar's
 `weeks_in_year` (seeded 52, so the results are identical), because ADR 0008
 says each hub uses its *own* remaining fraction. The chamber formulas have no
-calendar of their own and use `domain_constants.WITHIN_YEAR_WEEK` (52).
+calendar of their own and use `scheduling.weeks.PLAN_YEAR_WEEKS` (52). Since P53 the
+week is absolute; every "remaining" figure uses `week_of_year(CURRENT_WEEK)`.
 
 **Region holiday weeks (judgement call, see docs/MEMORY.md P9-T03).**
 DOMAIN_RULES defines a chamber's `holiday_weeks` as "the region's
@@ -60,6 +61,7 @@ import domain_constants as dc
 from models.chamber import Chamber
 from models.enums import LabRegion
 from models.hub import Hub, HubWorkCalendar
+from scheduling.weeks import PLAN_YEAR_WEEKS, week_of_year
 
 
 def round2(value: float) -> float:
@@ -92,7 +94,9 @@ def calendar_figures(calendar: HubWorkCalendar | None, current_week: int) -> Cal
             + float(calendar.casual_leave_days)
             + float(calendar.annual_leave_days)
         ) / weekdays
-    remaining_weeks = max(0.0, weeks_in_year - current_week)
+    # P53 (R53-8): "remaining" is within the plan year of the absolute week:
+    # `weeks_in_year − week_of_year(cw)` (identical in 2026).
+    remaining_weeks = max(0.0, weeks_in_year - week_of_year(current_week))
     remaining_fraction = remaining_weeks / weeks_in_year
     return CalendarFigures(
         deduction_weeks=deduction,
@@ -197,7 +201,7 @@ class ChamberFigures:
 
 def chamber_figures(chamber: Chamber, region_holidays: float) -> ChamberFigures:
     working = (
-        float(dc.WITHIN_YEAR_WEEK)
+        float(PLAN_YEAR_WEEKS)
         - region_holidays
         - float(chamber.maintenance_weeks)
         - float(chamber.breakdown_weeks)
@@ -210,8 +214,8 @@ def chamber_figures(chamber: Chamber, region_holidays: float) -> ChamberFigures:
 
 
 def lab_remaining_fraction(current_week: int) -> float:
-    year = float(dc.WITHIN_YEAR_WEEK)
-    return max(0.0, year - current_week) / year
+    year = float(PLAN_YEAR_WEEKS)
+    return max(0.0, year - week_of_year(current_week)) / year
 
 
 def gap_and_completion(load: float, capacity: float) -> tuple[float, float | None]:

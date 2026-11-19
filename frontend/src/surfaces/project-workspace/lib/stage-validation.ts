@@ -1,4 +1,3 @@
-import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import type { WorkflowStepStatus } from '@/types/enums';
 
 /**
@@ -29,8 +28,11 @@ export type StageErrors = Partial<Record<StageField, string>>;
 
 const needsStart: ReadonlySet<WorkflowStepStatus> = new Set(['In Progress', 'Blocked', 'Done']);
 
+/** P53 (R53-1): weeks are absolute from the base year (2027 W1 = 53), so the
+ *  client checks only that a week is a whole number ≥ 1; any upper bound is the
+ *  server's (no client week constant, I40). */
 function inHorizon(week: number): boolean {
-  return Number.isInteger(week) && week >= 1 && week <= DISPLAY_HORIZON_WEEKS;
+  return Number.isInteger(week) && week >= 1;
 }
 
 export function validateStage(d: StageDraft): StageErrors {
@@ -46,12 +48,12 @@ export function validateStage(d: StageDraft): StageErrors {
   if (needsStart.has(d.status) && d.actual_start_week === null) {
     e.actual_start_week = `Actual start week is required when the stage is ${d.status}.`;
   } else if (d.actual_start_week !== null && !inHorizon(d.actual_start_week)) {
-    e.actual_start_week = `Week must be 1–${String(DISPLAY_HORIZON_WEEKS)}.`;
+    e.actual_start_week = 'Week must be a whole number from 1.';
   }
 
   if (d.status === 'Done') {
     if (d.actual_end_week === null) e.actual_end_week = 'Actual end week is required when the stage is Done.';
-    else if (!inHorizon(d.actual_end_week)) e.actual_end_week = `Week must be 1–${String(DISPLAY_HORIZON_WEEKS)}.`;
+    else if (!inHorizon(d.actual_end_week)) e.actual_end_week = 'Week must be a whole number from 1.';
     else if (d.actual_start_week !== null && d.actual_end_week < d.actual_start_week)
       e.actual_end_week = 'Actual end week cannot be before the actual start week.';
   } else if (d.actual_end_week !== null) {

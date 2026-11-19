@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { formatTimestamp } from '@/lib/format';
+import { formatTimestamp, formatWeekWithYear } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { usePermission } from '@/stores/session';
 import { ScenarioVersionsPanel } from '@/surfaces/matrix/components/version-history-panel';
@@ -44,6 +44,9 @@ const TRIGGER_LABEL: Record<string, string> = {
   step_timing: 'Step timing change',
   check_in: 'Weekly check-in',
   follow_up: 'Follow-up run',
+  // P53 (API_CONTRACT_P53 §3): the one deploy run and the weekly rollover.
+  p53_rules: 'Scheduling-rule change (P53)',
+  week_rollover: 'Weekly rollover',
 };
 
 function triggerLabel(reason: string | null): string {
@@ -233,8 +236,13 @@ function RunItem({
           <span className="text-2xs text-text-muted">{run.solver_type === 'cp_sat' ? 'CP-SAT' : 'Greedy'}</span>
         </span>
         <span className="mt-0.5 block truncate text-2xs text-text-muted">
-          {triggerLabel(run.trigger_reason)} · week {run.current_week} · {formatTimestamp(run.created_at)}
+          {triggerLabel(run.trigger_reason)} · {formatWeekWithYear(run.current_week)} · {formatTimestamp(run.created_at)}
         </span>
+        {run.rules_label ? (
+          <span className="mt-0.5 block truncate text-2xs italic text-text-subtle" data-testid="run-rules-label" title={run.rules_label}>
+            {run.rules_label}
+          </span>
+        ) : null}
       </span>
     </button>
   );

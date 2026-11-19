@@ -23,6 +23,8 @@ import type {
   StatusOverview,
 } from './types';
 
+import type { DeliveryBand, DeliveryDrillResponse, DeliveryRowKind } from '@/types/delivery-by-year';
+
 type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
 
 /** P31: the Dashboard-wide category / type selection (repeatable params; OR
@@ -88,6 +90,32 @@ export function fetchCompletingWithinYear(
   selection?: DashboardSelection,
 ): Promise<CompletingWithinYear> {
   return apiGet<CompletingWithinYear>('/dashboard/completing-within-year', withHubQuery(ctx, hub, selection));
+}
+
+/** P53 (API_CONTRACT_P53 §4.2): the projects behind one delivery-by-year
+ *  figure (kind × year × band), hub-scoped and filtered like the Dashboard. */
+export interface DeliveryDrillQuery {
+  kind: DeliveryRowKind;
+  year: number | null;
+  band: DeliveryBand | null;
+}
+
+export function fetchDeliveryByYearProjects(
+  q: DeliveryDrillQuery,
+  ctx: FetchCtx = {},
+  hub?: HubSelection,
+  selection?: DashboardSelection,
+): Promise<DeliveryDrillResponse> {
+  const base = withHubQuery(ctx, hub, selection);
+  return apiGet<DeliveryDrillResponse>('/dashboard/delivery-by-year/projects', {
+    ...base,
+    query: {
+      ...(base.query ?? {}),
+      kind: q.kind,
+      year: q.year ?? undefined,
+      band: q.band ?? undefined,
+    },
+  });
 }
 
 /** P13 (API_CONTRACT_P13 §2): per-country counts and served shares. */

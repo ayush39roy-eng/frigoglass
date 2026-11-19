@@ -1,3 +1,4 @@
+import { PLAN_YEAR_WEEKS } from '@/lib/week-line';
 import { formatInteger } from '@/lib/format';
 import { HUB_COUNTRY } from '@/surfaces/dashboard/lib/hub-geo';
 
@@ -32,7 +33,8 @@ import { breakdownFor, NOT_PLACED_OUTCOMES, YEAR_ALL, YEAR_LATER, YEAR_NOT_PLACE
  * - a missing dimension value is the `unknown` bucket.
  */
 
-const WEEKS_PER_YEAR = 52;
+/** The structural plan-year length (the shared week-line mirror, P53). */
+const WEEKS_PER_YEAR = PLAN_YEAR_WEEKS;
 const QUARTER_WEEKS = 13;
 /** Projects that sit in a year block and quarter by `finish_week`. P42 (C1 as served):
  *  a queued project with a finish week sits there like a placed one (its block's

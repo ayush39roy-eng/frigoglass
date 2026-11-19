@@ -30,6 +30,7 @@ small recalcs only (`POST /schedule-runs/greedy-recalc`, Admin-only).
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -48,7 +49,7 @@ from core.logging_config import configure_logging
 
 configure_logging("api")
 
-from api.db import dispose_engine  # noqa: E402 - see configure_logging() call above
+from api.db import dispose_engine, get_session_factory  # noqa: E402 - see configure_logging()
 from api.errors import (  # noqa: E402
     CodedHTTPException,
     coded_http_exception_handler,
@@ -75,6 +76,9 @@ from api.routers.projects import router as projects_router  # noqa: E402
 from api.routers.reference import router as reference_router  # noqa: E402
 from api.routers.scenarios import router as scenarios_router  # noqa: E402
 from api.routers.schedule_runs import router as schedule_runs_router  # noqa: E402
+from api.routers.scheduling_settings import (  # noqa: E402
+    router as scheduling_settings_router,
+)
 from api.routers.scoring_rubric import router as scoring_rubric_router  # noqa: E402
 from api.routers.step_timing import router as step_timing_router  # noqa: E402
 from api.routers.users import router as users_router  # noqa: E402
@@ -88,20 +92,31 @@ from api.routers.workflow_templates import router as workflow_templates_router  
 from api.routers.workspace import router as workspace_router  # noqa: E402
 from core.config import is_dev_mode  # noqa: E402
 from core.observability import ObservabilityMiddleware, render_metrics  # noqa: E402
-from services import plan_clock  # noqa: E402
+from services import plan_clock, week_rollover  # noqa: E402
 from services.dev_accounts import provision_dev_accounts_at_startup  # noqa: E402
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # P37-T04 (ADR 0052 §3, API_CONTRACT_P37 §4): a bad `RPD_CURRENT_WEEK`
-    # (not 1..52) or `RPD_PLAN_YEAR` (not 2000..2100) stops the process here,
-    # before it serves a request, with a message naming the variable.
+    # P37-T04 / P53 (ADR 0063 R53-1, API_CONTRACT_P53 §7): a bad
+    # `RPD_CURRENT_WEEK` (not 1..5200) or a set `RPD_PLAN_YEAR` other than
+    # 2026 stops the process here, before it serves a request.
     plan_clock.validate_environment()
     # ADR 0058 L1: the two test logins, dev mode only (a no-op otherwise).
     await provision_dev_accounts_at_startup()
-    yield
-    await dispose_engine()
+    # P37-T05 (R37-9, built at P53-T03): the in-app weekly rollover ticker,
+    # off when `RPD_WEEK_ROLLOVER_TICKER=false` (both test suites).
+    stop = asyncio.Event()
+    ticker: asyncio.Task[None] | None = None
+    if week_rollover.ticker_enabled():
+        ticker = asyncio.create_task(week_rollover.run_rollover_ticker(get_session_factory(), stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        if ticker is not None:
+            await ticker
+        await dispose_engine()
 
 
 class ApiDocsUrls(TypedDict):
@@ -220,6 +235,7 @@ app.include_router(capacity_router)
 app.include_router(gantt_router)
 app.include_router(step_timing_router)
 app.include_router(schedule_runs_router)
+app.include_router(scheduling_settings_router)
 app.include_router(scenarios_router)
 app.include_router(exports_router)
 app.include_router(export_jobs_router)

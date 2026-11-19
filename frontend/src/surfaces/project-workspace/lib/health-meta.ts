@@ -34,7 +34,7 @@ export const HEALTH_META: Record<
   left_out: {
     label: 'Spillover · unplaced',
     tone: 'neutral',
-    description: 'Not done by week 52 — the active schedule run found no slot for it yet, so it spills over unscheduled.',
+    description: 'Not placed — the active schedule run found no slot within its search limit — check resources.',
   },
   unscheduled: {
     label: 'Not scheduled',

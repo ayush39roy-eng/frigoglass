@@ -101,7 +101,9 @@ class ProjectCreateRequest(BaseModel):
     # --- P9 (docs/API_CONTRACT_P9.md §6) ---------------------------------
     #: Charter "Project End Date - LATEST" as a week number (DOMAIN_RULES
     #: "Expected vs projected completion").
-    target_end_week: int | None = Field(default=None, ge=1, le=520)
+    #: P53 (R53-8): `1 <= t <= current_week + 520`, the upper bound checked by
+    #: the router (`TARGET_END_OUT_OF_RANGE`); 5200 is the schema sanity cap.
+    target_end_week: int | None = Field(default=None, ge=1, le=5200)
     #: When false, every lab-kind step is skipped (ADR 0007).
     certification_testing_required: bool = True
     #: Capacity "Estimated" column only; never a schedule input (OQ #12).
@@ -158,7 +160,9 @@ class ProjectUpdateRequest(BaseModel):
     gross_margin_pct: float | None = None
     capex_keur: float | None = Field(default=None, ge=0)
     rm_savings_keur: float | None = Field(default=None, ge=0)
-    target_end_week: int | None = Field(default=None, ge=1, le=520)
+    #: P53 (R53-8): `1 <= t <= current_week + 520`, the upper bound checked by
+    #: the router (`TARGET_END_OUT_OF_RANGE`); 5200 is the schema sanity cap.
+    target_end_week: int | None = Field(default=None, ge=1, le=5200)
     certification_testing_required: bool | None = None
     estimated_design_weeks: float | None = Field(default=None, ge=0, le=9999.99)
     estimated_lab_weeks: float | None = Field(default=None, ge=0, le=9999.99)

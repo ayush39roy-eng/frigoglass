@@ -354,7 +354,10 @@ async def get_schedule_run_changes(
             f"Schedule run {run.id} is {run.status.value}; its changes are available once it "
             "has completed.",
         )
-    return await compute_run_changes(db, run, baseline, current_user)
+    changes = await compute_run_changes(db, run, baseline, current_user)
+    # P53 (R53-7): a pre-P53 baseline against a P53 run.
+    changes.includes_rule_change = baseline.rules_epoch is None and run.rules_epoch is not None
+    return changes
 
 
 @router.post(

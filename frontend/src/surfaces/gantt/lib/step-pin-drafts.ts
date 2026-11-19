@@ -1,3 +1,4 @@
+import { formatWeek } from '@/lib/format';
 /**
  * P40-T03c (ADR 0054 ruling R40-1, R40-2, R40-13): the Timeline's drafted
  * manual Start / End weeks, before one batch Save.
@@ -98,7 +99,7 @@ export function pinDraftProblem(
   const s = pair.start.trim();
   const e = pair.end.trim();
   if (s === '' && e === '') return null; // Clear
-  const range = `Pick weeks between W${String(minWeek)} and W${String(maxWeek)}.`;
+  const range = `Pick weeks between ${formatWeek(minWeek)} and ${formatWeek(maxWeek)}.`;
   if (s === '' || e === '') {
     return { message: 'Enter both a start and an end week, or clear the step.', start: s === '', end: e === '' };
   }

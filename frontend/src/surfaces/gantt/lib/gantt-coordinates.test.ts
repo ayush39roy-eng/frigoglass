@@ -21,6 +21,8 @@ import {
   isPastScaleEnd,
   lastScaleWeek,
   slipBracketGeometry,
+  timelineAxisRange,
+  yearBands,
 } from './gantt-coordinates';
 
 describe('gantt-coordinates — week→pixel scale', () => {
@@ -344,6 +346,26 @@ describe('W52 clipping (ADR 0024 — 52-week display horizon)', () => {
   });
 });
 
+describe('P53 timelineAxisRange (R53-6)', () => {
+  it('starts at the plan year and ends at the served last finish rounded up to a year end', () => {
+    expect(timelineAxisRange(1, 52, null)).toEqual({ originWeek: 1, horizonWeeks: 52 });
+    expect(timelineAxisRange(1, 52, 40)).toEqual({ originWeek: 1, horizonWeeks: 52 });
+    expect(timelineAxisRange(1, 52, 70)).toEqual({ originWeek: 1, horizonWeeks: 104 });
+    expect(timelineAxisRange(1, 52, 150)).toEqual({ originWeek: 1, horizonWeeks: 156 });
+    // Plan year 2027: the axis starts at its W1 (53), never at 2026.
+    expect(timelineAxisRange(53, 104, 120)).toEqual({ originWeek: 53, horizonWeeks: 104 });
+  });
+
+  it('year bands are generated from the range, for any year', () => {
+    const s = makeWeekScale(16, 156, 53);
+    expect(yearBands(s).map((b) => [b.yearOffset, b.startWeek, b.endWeek])).toEqual([
+      [1, 53, 104],
+      [2, 105, 156],
+      [3, 157, 208],
+    ]);
+  });
+});
+
 describe('P32-R04 projectWaterfallScale (read-only since P33-T15)', () => {
   const st = (s: number | null, e: number | null) => ({
     planned_start_week: s,
@@ -352,14 +374,15 @@ describe('P32-R04 projectWaterfallScale (read-only since P33-T15)', () => {
     actual_end_week: null,
   });
 
-  it('spans 2 weeks before min(first start, the served week) to max(W52, last end) + 2, capped at W78', () => {
-    const inYear = projectWaterfallScale([st(44, 47), st(48, 50)], 24, 42);
+  it('spans 2 weeks before min(first start, the served week) to max(plan-year end, last end) + 2 (P53: no W78 cap)', () => {
+    const inYear = projectWaterfallScale([st(44, 47), st(48, 50)], 24, 42, 52);
     expect(inYear).toEqual({ originWeek: 40, horizonWeeks: 15, weekWidthPx: 24, totalWidthPx: 360 });
     expect(lastScaleWeek(inYear)).toBe(54);
-    const early = projectWaterfallScale([st(10, 20), st(21, 60)], 24, 42);
+    const early = projectWaterfallScale([st(10, 20), st(21, 60)], 24, 42, 52);
     expect(early.originWeek).toBe(8);
     expect(lastScaleWeek(early)).toBe(62);
-    expect(lastScaleWeek(projectWaterfallScale([st(44, 77)], 24, 42))).toBe(78);
+    expect(lastScaleWeek(projectWaterfallScale([st(44, 77)], 24, 42, 52))).toBe(79);
+    expect(lastScaleWeek(projectWaterfallScale([st(100, 200)], 24, 60, 104))).toBe(202);
   });
 
   it('the What-if import drag clamps a move to the axis end', () => {

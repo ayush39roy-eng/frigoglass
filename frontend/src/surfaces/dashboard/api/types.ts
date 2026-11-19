@@ -17,6 +17,8 @@ import type {
 } from '@/types/enums';
 import type { TrackingStatus } from '@/components/shared/tracking-status-meta';
 import type { Id, WeekNumber } from '@/types/common';
+import type { LeftOutReason } from '@/lib/left-out-reason';
+import type { DeliveryByYear, DeliveryUnavailable, TailWarnings } from '@/types/delivery-by-year';
 
 /** GET /dashboard/pipeline-totals — portfolio *composition* (carry_over vs new),
  *  NOT the scheduling SPILLOVER flag. See the backend PipelineTotals docstring. */
@@ -99,6 +101,14 @@ export interface CompletingWithinYearRow {
   priority_label: string | null;
   /** P42: the stored projected finish week (for the queued copy). */
   projected_end_week: WeekNumber | null;
+  /** P53 (API_CONTRACT_P53 §4.2): the band in the run input; null pre-P53. */
+  priority_at_run?: ProjectPriority | null;
+  /** P53: the calendar year this project is delivered in; null when not placed. */
+  delivery_year?: number | null;
+  /** P53: the served LEFT_OUT reason, on left-out rows. */
+  left_out_reason?: LeftOutReason | null;
+  /** P53 (R53-9): scheduled, finishing after the year after the plan year. */
+  far_finish?: boolean;
 }
 
 /** P17-R03: one priority band of "Delivery by priority", counted server-side
@@ -171,6 +181,14 @@ export interface CompletingWithinYear {
    *  top-level count. Served, never recounted from `rows` (I9). */
   regions: DeliveryRegionRow[];
   rows: CompletingWithinYearRow[];
+  /** P53 (R53-3, API_CONTRACT_P53 §4.2): the delivery-by-year table; null with
+   *  `delivery_by_year_unavailable` saying why. Optional for pre-P53 fixtures. */
+  delivery_by_year?: DeliveryByYear | null;
+  delivery_by_year_unavailable?: DeliveryUnavailable | null;
+  rules_epoch?: 'p53' | null;
+  rules_label?: string | null;
+  /** P53 (R53-9): counts only, no names (OQ #8). */
+  tail_warnings?: TailWarnings | null;
 }
 
 /** One country row of `CompletingWithinYear.regions` (owner ask 2026-11-16). */
@@ -399,4 +417,9 @@ export interface ScheduleRunSummary {
    *  null for greedy runs and older runs. Always present in the payload. */
   solver_status: string | null;
   created_at: string;
+  /** P53 (API_CONTRACT_P53 §3). */
+  rules_epoch?: 'p53' | null;
+  within_year_week: number;
+  pre_p53: boolean;
+  rules_label: string | null;
 }

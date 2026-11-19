@@ -140,3 +140,21 @@ def counting_portfolio_baseline(projects_per_engineer: int = 3) -> WhatIfBaselin
             ),
         ),
     )
+
+
+#: P53-R01 (F53-1): the not-placed diagnostics added to `ProjectResult`.
+P53_R01_FIELDS = ("left_out", "no_leader", "no_chamber_step_id", "data_error", "left_out_reason")
+
+
+def without_p53_r01_fields(sim: object) -> object:
+    """A `SimulationResult` as JSON without the P53-R01 fields on each
+    project, so a pre-R01 pinned hash still proves the rest is unchanged."""
+
+    from scheduling.whatif import to_jsonable
+
+    d = to_jsonable(sim)
+    assert isinstance(d, dict)
+    for p in d["projects"]:
+        for k in P53_R01_FIELDS:
+            p.pop(k)
+    return d

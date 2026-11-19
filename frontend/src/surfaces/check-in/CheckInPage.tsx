@@ -6,7 +6,7 @@ import { Info, Send, TriangleAlert } from 'lucide-react';
 import { SURFACES } from '@/app/nav';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/shared/empty-state';
-import { PlanWeekNotice, PlanYearClosedNotice } from '@/components/shared/plan-week-notice';
+import { PlanWeekNotice } from '@/components/shared/plan-week-notice';
 import { ErrorState } from '@/components/shared/error-state';
 import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
 import { Button } from '@/components/ui/button';
@@ -21,7 +21,6 @@ import { conflictLeafField, type EditBase } from '@/lib/api/edit-conflict';
 import { editFreshness } from '@/lib/use-edit-freshness';
 import { useAnyEditInProgress, useEditSession } from '@/stores/edit-session';
 import { formatInteger, formatWeek } from '@/lib/format';
-import { usePlanClock } from '@/lib/plan-clock';
 import { useHubSelection } from '@/stores/hub-filter';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
@@ -185,9 +184,6 @@ export default function CheckInPage(): React.JSX.Element {
   const editInProgress = useAnyEditInProgress();
   const query = useCheckInsDue(hub, true, editFreshness(editInProgress));
   const submitFlow = useCheckInSubmit();
-  // P37 R37-10: while the planning year is closed the server refuses every
-  // check-in (409 PLAN_YEAR_CLOSED); the page says so and offers no submit.
-  const yearClosed = usePlanClock()?.closed ?? false;
   const [drafts, setDrafts] = React.useState<Record<string, CheckInDraft>>({});
   /** P47 (ADR 0059): each row's stage values when the user first changed it (`base`). */
   const [reads, setReads] = React.useState<Record<string, EditBase>>({});
@@ -313,7 +309,6 @@ export default function CheckInPage(): React.JSX.Element {
         <ErrorState description="This week's check-in could not be loaded." onRetry={() => void query.refetch()} />
       ) : (
         <>
-          <PlanYearClosedNotice className="mb-3" detail="Check-ins are not accepted until then." />
           {/* R37-3: the stages are due against the active run, which may be from an earlier week. */}
           <PlanWeekNotice className="mb-3" />
           <SummaryStrip week={query.data.week} summary={query.data.summary} />
@@ -371,7 +366,7 @@ export default function CheckInPage(): React.JSX.Element {
                   )}
                   <Button
                     type="submit"
-                    disabled={submitFlow.submitting || plan.entries.length === 0 || yearClosed}
+                    disabled={submitFlow.submitting || plan.entries.length === 0}
                     data-testid="check-in-submit"
                   >
                     <Send aria-hidden="true" />

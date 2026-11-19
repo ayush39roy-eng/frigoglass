@@ -5,6 +5,8 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { WeekText } from '@/components/shared/week-text';
 import { SimulatedWeekNotice } from '@/components/shared/plan-week-notice';
+import { DeliveryByYearTable } from '@/components/shared/delivery-by-year/delivery-by-year-table';
+import { weekOfYear } from '@/lib/format';
 import { useCurrentWeek } from '@/lib/plan-clock';
 
 import type {
@@ -98,7 +100,8 @@ const NEW_COLUMNS = [
     cell: (r: ProjectResultOut) => (
       <span className="tabular-nums">
         {week(r.finish_week)}
-        {r.unconstrained_end_week !== null && r.unconstrained_end_week > 52 ? (
+        {/* P53: shown when the earliest possible finish falls after the plan year (label year only). */}
+        {r.unconstrained_end_week !== null && weekOfYear(r.unconstrained_end_week).yearOffset > 0 ? (
           <span className="block text-2xs text-text-muted">
             Earliest possible <WeekText week={r.unconstrained_end_week} />
           </span>
@@ -249,6 +252,10 @@ export function SimulateView({ data, compact = false }: { data: SimulateResponse
           </TableBody>
         </Table>
       </section>
+
+      {/* P53 (ADR 0063, R53-3): the served delivery-by-year table of this
+          scenario — calendar years; later years indicative. Nothing derived. */}
+      {data.delivery_by_year ? <DeliveryByYearTable data={data.delivery_by_year} testId="sim-delivery-by-year" /> : null}
 
       <ChangeList
         title="Newly slipping"

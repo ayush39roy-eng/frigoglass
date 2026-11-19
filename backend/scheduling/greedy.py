@@ -82,11 +82,18 @@ Priority band meaning (ADR 0056 as ruled at P42-T01, R42-2..R42-5; DOMAIN_RULES
 "Priority band meaning"): `prepare_run` checks status exclusion first, then
 sets aside every non-frozen P4/Q project in a schedulable status
 (`ctx.not_scheduled`, before validation; `not_scheduled_priority_outcome`).
-Sort key 1a (`counts_toward_year` desc) walks every queued P3 (In Queue) after
-all counting work, so it only takes spare capacity; its anchored and pinned
-steps are still pre-booked in phase 3. Every outcome carries
-`counts_toward_year` and its year flags come from `year_flags` (I50). With no
-P4/Q and no queued P3 in the input every run is byte-identical to before P42.
+Sort key 1a (`queue_tier` last; R53-2 renamed the old R42-4 negation, values
+unchanged) walks every queued P3 (In Queue) after all other work, so it only
+takes spare capacity; its anchored and pinned steps are still pre-booked in
+phase 3. Every outcome carries `counts_toward_year` (R53-2: a queued P3 now
+counts; only P4/Q in a schedulable status does not) and its year flags come
+from `year_flags` (I50). A Commercialized outcome counts only in the year of
+its actual end week (R53-2b, `_excluded_outcome`).
+
+Open horizon (ADR 0063, R53-2 / I58): every walk searches to the run's
+`horizon_weeks` = H = cw + 52 x N (`weeks.horizon_for`); no fixed calendar
+week is a search limit. A project with no placement ending <= H is LEFT_OUT
+(`delivery.left_out_reason` -> `beyond_horizon`).
 
 No DB access, no network access, no filesystem access, no randomness, no
 wall-clock dependence. Every collection this module iterates is explicitly
@@ -110,6 +117,7 @@ from scheduling.types import (
     StepSchedule,
     default_categories,
 )
+from scheduling.weeks import commercialized_within_year, counts_toward_year, queue_tier
 from scheduling.workflow import (
     STATUS_BLOCKED,
     STATUS_DONE,
@@ -190,9 +198,17 @@ def _band_rank_key(band_rank: int | None) -> tuple[int, int]:
 
 
 def project_counts_toward_year(project: ProjectInput) -> bool:
-    """R42-4 on one input project (`domain_constants.counts_toward_year`)."""
+    """R53-2 (amends R42-4) on one input project (`weeks.counts_toward_year`):
+    a queued P3 counts; a P4/Q in a schedulable status does not."""
 
-    return dc.counts_toward_year(project.priority, project.status)
+    return counts_toward_year(project.priority, project.status)
+
+
+def project_queue_tier(project: ProjectInput) -> bool:
+    """R53-2 scheduling tier (`weeks.queue_tier`, the old R42-4 negation):
+    sort key 1a, CP-SAT model membership (R42-5) and I51 / I52."""
+
+    return queue_tier(project.priority, project.status)
 
 
 def is_not_scheduled_priority(project: ProjectInput) -> bool:
@@ -251,7 +267,7 @@ def _sort_key(
     rank = _DEFAULT_CATEGORIES.rank if category_rank is None else category_rank
     return (
         0 if project.frozen else 1,
-        0 if project_counts_toward_year(project) else 1,
+        0 if not project_queue_tier(project) else 1,
         0 if project.is_vip else 1,
         dc.PRIORITY_ORDER.index(project.priority),
         _band_rank_key(project.band_rank),
@@ -507,7 +523,7 @@ def run_greedy_sgs(schedule_input: ScheduleInput) -> ScheduleOutput:
         )
 
     for project in ctx.excluded:
-        outcomes_by_id[project.project_id] = _excluded_outcome(project)
+        outcomes_by_id[project.project_id] = _excluded_outcome(project, current_week)
     for project in ctx.not_scheduled:
         outcomes_by_id[project.project_id] = not_scheduled_priority_outcome(project)
 
@@ -520,10 +536,12 @@ def run_greedy_sgs(schedule_input: ScheduleInput) -> ScheduleOutput:
     )
 
 
-def _excluded_outcome(project: ProjectInput) -> ProjectScheduleOutcome:
+def _excluded_outcome(project: ProjectInput, current_week: int) -> ProjectScheduleOutcome:
     """DOMAIN_RULES.md: excluded statuses are never scheduled. `within_year`
-    for an excluded project (P2-T01 resolution, unchanged): Commercialized is
-    trivially "done, within year"; anything else is not."""
+    for an excluded project: a Commercialized project counts only in the year
+    of its actual end week, none -> 2026 (R53-2b / I61,
+    `weeks.commercialized_within_year`; identical to the P2-T01 rule for every
+    run in 2026); anything else is not."""
 
     return ProjectScheduleOutcome(
         project_id=project.project_id,
@@ -533,7 +551,10 @@ def _excluded_outcome(project: ProjectInput) -> ProjectScheduleOutcome:
         overlap=False,
         cat_not_allowed=False,
         spillover=False,
-        within_year=(project.status == "Commercialized"),
+        within_year=(
+            project.status == "Commercialized"
+            and commercialized_within_year(project.actual_end_week, current_week)
+        ),
         no_leader=False,
         no_chamber_step_id=None,
         steps=(),

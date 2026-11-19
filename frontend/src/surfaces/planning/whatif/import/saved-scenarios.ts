@@ -14,7 +14,7 @@ export const MAX_SAVED_NAME = 120;
 export const MAX_SAVED_NOTE = 1000;
 
 export function optionsOf(request: ImportSimulateRequest): ImportOptions {
-  const planYearEndWeek = request.plan_year_end_week as PlanYearEndWeek;
+  const planYearEndWeek: PlanYearEndWeek = request.plan_year_end_week ?? null;
   const u = request.plan_until_week ?? null;
   return {
     mode: request.mode,

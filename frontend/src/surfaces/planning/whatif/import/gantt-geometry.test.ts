@@ -24,15 +24,17 @@ const stepE = project.steps.find((s) => s.step_id === 'PDD-E');
 if (!stepE) throw new Error('fixture');
 
 describe('import Gantt geometry', () => {
-  it('the axis runs from the served current week to the served horizon (P51, ADR 0062)', () => {
-    // horizon_weeks 130 (plan_until 104 + 26) = W26 2028.
-    expect(scale).toEqual({ originWeek: 42, horizonWeeks: 89, weekWidthPx: 16, totalWidthPx: 89 * 16 });
-    // Served end weeks no longer shorten or stretch the axis.
-    const early = { ...SIMULATE_RESPONSE, projects: [] };
-    expect(importScale(early).horizonWeeks).toBe(130 - 42 + 1);
-    expect(importScale({ ...SIMULATE_RESPONSE, horizon_weeks: 98 }).horizonWeeks).toBe(98 - 42 + 1);
-    // A horizon before today still draws one week.
-    expect(importScale({ ...SIMULATE_RESPONSE, horizon_weeks: 30 }).horizonWeeks).toBe(1);
+  it('P53 (R53-6): the axis runs from the year start to the last finish, rounded up to a year end — never to H', () => {
+    // Plan until 104 (fixture), cw 42: 2026 W1 .. 2027 W52 at least.
+    expect(scale.originWeek).toBe(1);
+    expect(scale.horizonWeeks % 52).toBe(0);
+    expect(scale.horizonWeeks).toBeGreaterThanOrEqual(104);
+    const early = { ...SIMULATE_RESPONSE, projects: [], horizon_weeks: 302 };
+    expect(importScale(early).horizonWeeks).toBe(104);
+    // A served last finish in 2029 → the axis ends at 2029 W52 (week 208), not at H.
+    expect(importScale({ ...early, last_finish_week: 170 }).horizonWeeks).toBe(208);
+    // Plan year 2027 (cw 57): the axis starts at 2027 W1.
+    expect(importScale({ ...early, current_week: 57, plan_year_end_week: 104, plan_until_week: null }).originWeek).toBe(53);
   });
 
   it('a later drop is a floor without overlap', () => {

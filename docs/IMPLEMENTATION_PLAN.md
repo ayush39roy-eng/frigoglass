@@ -2759,11 +2759,11 @@ Presentation over existing capabilities (ADR 0007 kinds, ADR 0045–0048 templat
 | ID | Task | Owner | Depends on | Status |
 |---|---|---|---|---|
 | P53-T01 | Fold ruling into DOMAIN_RULES, ADR 0063, OQ #117–#120 | orchestrator | — | done (MEMORY 2026-11-19) |
-| P53-T02 | Engine: week helpers, search limit, counting/queue split, Commercialized fix, CP-SAT greedy tail, MC, What-if, plan import, active_weeks, delivery table, LEFT_OUT reason, warnings, invariants, clock self-tests | algorithm-engineer | T01 | in progress |
-| P53-T03 | Backend: clock rewrite, /me, check-in 409 removed, P37-T05 weekly rollover, p53a + checksum test, Admin N setting, fixed-bound readers, delivery table + warnings served, API contract, deploy-run script | backend-builder | T01; T02 helpers | in progress |
-| P53-T04 | Frontend: constants removed, generic week labels/date conversion, Timeline axis + year row, delivery-by-year panel, copy, N setting, import pickers | frontend-builder | T03 contract | in progress |
-| P53-T05 | Audit on a disposable DB copy | workflow-auditor | T02–T04 | todo |
-| P53-T06 | Gate | — | T05 | todo |
+| P53-T02 | Engine: week helpers, search limit, counting/queue split, Commercialized fix, CP-SAT greedy tail, MC, What-if, plan import, active_weeks, delivery table, LEFT_OUT reason, warnings, invariants, clock self-tests | algorithm-engineer | T01 | done (MEMORY 2026-11-19) |
+| P53-T03 | Backend: clock rewrite, /me, check-in 409 removed, P37-T05 weekly rollover, p53a + checksum test, Admin N setting, fixed-bound readers, delivery table + warnings served, API contract, deploy-run script | backend-builder | T01; T02 helpers | done (MEMORY 2026-11-19) |
+| P53-T04 | Frontend: constants removed, generic week labels/date conversion, Timeline axis + year row, delivery-by-year panel, copy, N setting, import pickers | frontend-builder | T03 contract | done (MEMORY 2026-11-19 P53-T04) |
+| P53-T05 | Audit on a disposable DB copy | workflow-auditor | T02–T04 | done — FAIL → P53-R01 fixed → re-check PASS (MEMORY 2026-11-19) |
+| P53-T06 | Gate | — | T05 | done — gate PASS (qa re-check, workflow re-check, security; MEMORY 2026-11-19) |
 
 ## P54 — Change a project's band rank from Project Registration (register column + form), like the Priority board (ADR 0064; owner 2026-11-19)
 

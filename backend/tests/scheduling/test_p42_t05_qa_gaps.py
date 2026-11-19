@@ -76,7 +76,9 @@ def test_started_vip_q_is_not_scheduled() -> None:
         assert validate_invariants(si, out, check_determinism=False) == ()
 
 
-def test_frozen_queued_p3_books_and_never_counts() -> None:
+def test_frozen_queued_p3_books_and_counts() -> None:
+    """P53 (R53-2): a frozen queued P3 books first (key 1) and now counts."""
+
     frozen_q = base_project(
         project_id="fq",
         priority="P3",
@@ -90,8 +92,8 @@ def test_frozen_queued_p3_books_and_never_counts() -> None:
         b = _by(out)
         fq = b["fq"]
         assert not fq.excluded and not fq.not_scheduled_priority
-        assert not fq.counts_toward_year
-        assert not fq.within_year and not fq.spillover
+        assert fq.counts_toward_year
+        assert fq.within_year != fq.spillover
         assert _step(fq, "PDD-A").start_week == SELFTEST_WEEK
         assert _step(b["p1"], "PDD-A").start_week > _step(fq, "PDD-A").end_week
         # Key 1 (frozen) outranks key 1a: the frozen queued P3 walks first.

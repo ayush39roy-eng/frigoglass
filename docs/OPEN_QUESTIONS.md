@@ -1384,3 +1384,7 @@ of 2027. P37-F01 must be planned before 28 Dec 2026.
 **Assuming until answered:** yes. **Who must answer:** owner.
 
 *(#88, #115, #116 closed by ADR 0063 / R53, 2026-11-19.)*
+
+### 121
+**What-if import default "plan until"** in the last quarter: end of the current year (today, R53-4) or end
+of next year (as ADR 0044 had)? **Assuming until answered:** end of the current year. **Who must answer:** owner.

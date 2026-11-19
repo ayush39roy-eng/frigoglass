@@ -222,6 +222,7 @@ def scenario_left_out_at_horizon() -> None:
         lead_times=LEAD_TIMES,
         current_week=77,  # design step duration 2 -> 77+2=79 > horizon 78
         horizon_weeks=78,
+        within_year_week=52,  # P53: pre-P53 overflow golden (cut-off 52 pinned)
     )
     out, info = run_cp_sat(si)
     check("left_out: OPTIMAL (not INFEASIBLE)", info.status_name == "OPTIMAL")

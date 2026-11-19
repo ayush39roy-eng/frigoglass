@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { PlanWeekChip, PlanWeekNotice, SimulatedWeekNotice } from '@/components/shared/plan-week-notice';
-import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import { seriousAxeViolations } from '@/test/axe';
 import { seedSession } from '@/test/session';
 
@@ -41,8 +40,8 @@ const W47 = {
   week_ends_at: '2026-11-23T00:00:00+02:00',
 };
 
-// Client ask 2026-10-13 (ADR 0024): the header frames a 52-week year only — the
-// server's internal 78-week search horizon is never presented.
+// P53 (R53-6): "Week 5 · 2027 · 47 wks left" from the served /me; the search
+// limit is never presented in the header.
 describe('WeekPill (header planning week)', () => {
   it('P37: reads "Week 47 · 5 wks left · 16 Nov 2026" from the served /me, not the browser clock', async () => {
     // The browser clock says October; the served Athens date says 16 Nov.
@@ -51,13 +50,12 @@ describe('WeekPill (header planning week)', () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     renderPill();
     const pill = screen.getByTestId('week-indicator');
-    expect(pill).toHaveTextContent('Week 47 · 5 wks left');
+    expect(pill).toHaveTextContent('Week 47 · 2026 · 5 wks left');
     expect(screen.getByTestId('header-today')).toHaveTextContent('16 Nov 2026');
     expect(screen.getByTestId('header-today')).toHaveAttribute('dateTime', '2026-11-16');
     await user.hover(pill);
     const tip = await screen.findByRole('tooltip');
-    expect(tip).toHaveTextContent(`Planning week 47 of ${String(DISPLAY_HORIZON_WEEKS)}, 5 left in the year.`);
-    expect(tip).toHaveTextContent('spillover into 2027');
+    expect(tip).toHaveTextContent('Planning week 47 of 2026, 5 left in the year.');
     expect(tip.textContent).not.toMatch(/78/);
   });
 
@@ -66,13 +64,13 @@ describe('WeekPill (header planning week)', () => {
     const user = userEvent.setup();
     renderPill();
     await user.hover(screen.getByTestId('week-indicator'));
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('spillover into 2032');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('by the end of 2031');
   });
 
   it('uses the served values verbatim (never recomputed)', () => {
     seedSession({ current_week: 31, weeks_left_in_year: 21 });
     renderPill();
-    expect(screen.getByTestId('week-indicator')).toHaveTextContent('Week 31 · 21 wks left');
+    expect(screen.getByTestId('week-indicator')).toHaveTextContent('Week 31 · 2026 · 21 wks left');
   });
 
   it('renders nothing before /me has loaded (no constant fallback)', () => {
@@ -81,16 +79,21 @@ describe('WeekPill (header planning week)', () => {
     expect(screen.queryByTestId('week-indicator')).not.toBeInTheDocument();
   });
 
-  it('R37-10: shows the closed planning year', async () => {
-    seedSession({ current_week: 52, weeks_left_in_year: 0, as_of_date: '2027-01-04', plan_year_closed: true });
-    const user = userEvent.setup();
+  it('P53 (R53-1): 4 Jan 2027 is absolute week 53, shown as "Week 1 · 2027"; no closed state', () => {
+    seedSession({
+      current_week: 53,
+      weeks_left_in_year: 51,
+      as_of_date: '2027-01-04',
+      plan_year: 2027,
+      plan_year_start_week: 53,
+      plan_year_end_week: 104,
+    });
     renderPill();
     const pill = screen.getByTestId('week-indicator');
-    expect(pill).toHaveTextContent('Week 52 · 2026 closed');
-    expect(screen.getByTestId('header-today')).toHaveTextContent('04 Jan 2027');
-    await user.hover(pill);
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Planning year 2026 is closed');
+    expect(pill).toHaveTextContent('Week 1 · 2027 · 51 wks left');
+    expect(pill.textContent).not.toMatch(/closed/);
   });
+
 });
 
 describe('PlanWeekChip / PlanWeekNotice (ADR 0052 §6)', () => {

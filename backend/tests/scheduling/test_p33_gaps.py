@@ -261,7 +261,9 @@ def test_wait_counts_against_the_horizon() -> None:
     """N (elapsed) waits 40: release 47, gate 88 > HORIZON 78 -> LEFT_OUT."""
 
     p = _project(step_timing=(_t("PDD-N", wait=40),))
-    _, by_id = _run(_si(p))
+    _, by_id = _run(
+        _si(p, horizon_weeks=78)
+    )  # P53: overflow golden, pinned at the pre-P53 78-week search
     assert by_id["p"].left_out is True
     assert by_id["p"].projected_end_week is None
     assert "PDD-N" not in _weeks(by_id["p"])
@@ -514,10 +516,18 @@ def test_cp_sat_wait_with_capacity_agrees() -> None:
 
 
 def test_cp_sat_wait_to_left_out_agrees() -> None:
-    si = _si(_project(step_timing=(_t("PDD-N", wait=40),)))
+    si = _si(
+        _project(step_timing=(_t("PDD-N", wait=40),)), horizon_weeks=78
+    )  # P53: overflow golden, pinned at the pre-P53 78-week search
     _, greedy = _run(si)
     cp = _cp(si)
     assert greedy["p"].left_out and cp["p"].left_out
+    # P53 (R53-2 / R53-5): with the default H = cw + 260 both place it.
+    si = _si(_project(step_timing=(_t("PDD-N", wait=40),)))
+    _, greedy = _run(si)
+    cp = _cp(si)
+    assert not greedy["p"].left_out and not cp["p"].left_out
+    assert greedy["p"].end_week == cp["p"].end_week == 88
 
 
 def test_cp_sat_zero_wait_is_byte_identical() -> None:
@@ -662,6 +672,7 @@ def test_canonical_schedule_input_asdict_omits_p33_defaults() -> None:
     del raw["categories"]
     del raw["projects"][0]["band_rank"]  # P36 (R36-1(g)): omitted when None
     del raw["projects"][0]["step_pins"]  # P40 (R40-12): omitted when empty
+    del raw["projects"][0]["actual_end_week"]  # P53 (R53-2b): omitted when None
     for row in raw["projects"][0]["step_timing"]:
         del row["wait_weeks"], row["lead_weeks"]
     assert data == raw

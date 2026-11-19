@@ -69,6 +69,7 @@ from models.enums import (
     ProjectStatus,
     ProjectType,
 )
+from scheduling.weeks import WEEK_BASE_YEAR
 from services import plan_clock
 from services.category_type_filter import UNMAPPED, as_list
 from services.xlsx_writer import (
@@ -267,6 +268,8 @@ def xlsx_bytes(sheets: ExportSheets) -> bytes:
 
 #: P43 rework: the first sheet of every surface export.
 SUMMARY_SHEET = "Summary"
+#: P53 (R53-3): the dashboard export's delivery-by-year sheet.
+DELIVERY_SHEET = "Delivery by year"
 
 _PRIORITIES: tuple[str, ...] = ("P1", "P2", "P3", "P4", "Q")
 #: R42-6 bucket -> its words, in the Dashboard's order.
@@ -323,9 +326,11 @@ async def _dashboard_summary(
     category: _ListFilter,
     region: _ListFilter,
     type_: _ListFilter,
-) -> list[SummaryBlock]:
+) -> tuple[list[SummaryBlock], list[SummaryBlock]]:
     """The served P42 delivery figures (`GET /dashboard/completing-within-year`,
-    the Dashboard's own KPI read), as small tables."""
+    the Dashboard's own KPI read), as small tables; and (P53, R53-3) the
+    served delivery-by-year table for its own sheet (I59: the same function's
+    output as the Dashboard and Executive)."""
 
     from api.routers.dashboard import completing_within_year
 
@@ -405,7 +410,51 @@ async def _dashboard_summary(
         ],
         percent_columns=frozenset({len(_BUCKET_WORDS) + 1}),
     )  # fmt: skip
-    return [headline, by_priority, by_hub, by_country]
+    return [headline, by_priority, by_hub, by_country], delivery_by_year_blocks(cw)
+
+
+def delivery_by_year_blocks(cw: Any) -> list[SummaryBlock]:
+    """The "Delivery by year" sheet (P53, R53-3): the served table as is."""
+
+    table = cw.delivery_by_year
+    if table is None:
+        reason = (
+            cw.rules_label
+            if cw.delivery_by_year_unavailable == "pre_p53_run"
+            else "No active schedule run."
+        )
+        return [
+            SummaryBlock(
+                title="Delivery by year",
+                headers=["Note"],
+                rows=[[reason or "Not available."]],
+            )
+        ]
+    rows: list[list[Any]] = []
+    for r in table.rows:
+        label = f"{r.label} (indicative)" if r.indicative else r.label
+        rows.append(
+            [label, r.p1, r.p2, r.p3, r.other, r.total,
+             r.cum_p1, r.cum_p2, r.cum_p3, r.cum_other, r.cum_total]
+        )  # fmt: skip
+    reasons = next((r.left_out_reasons for r in table.rows if r.left_out_reasons), None)
+    note = (
+        f"Not placed: no leader {reasons.no_leader}, no chamber {reasons.no_chamber}, "
+        f"data error {reasons.data_error}, beyond the search limit {reasons.beyond_horizon}."
+        if reasons is not None
+        else None
+    )
+    return [
+        SummaryBlock(
+            title=f"Delivery by year (from {table.base_year}, search limit "
+            f"{table.horizon_years or '?'} years)",
+            headers=["Year", "P1", "P2", "P3", "Other", "Total",
+                     "Cumulative P1", "Cumulative P2", "Cumulative P3", "Cumulative other",
+                     "Cumulative total"],
+            rows=rows,
+            note=note,
+        )
+    ]  # fmt: skip
 
 
 async def build_dashboard_sheets(
@@ -451,15 +500,15 @@ async def build_dashboard_sheets(
     from schemas.dashboard import ProjectFilterRow
 
     headers, rows = rows_from_models(result.rows, ProjectFilterRow)
-    summary = await _dashboard_summary(
+    summary, delivery = await _dashboard_summary(
         db, principal, hub_id=hub_id, category=category, region=region, type_=type_
     )
     return SheetBook(
         {"Dashboard": (headers, rows)},
         title="Dashboard — project analytics",
         context=[f"{len(rows)} project(s)"],
-        summaries={SUMMARY_SHEET: summary},
-        order=[SUMMARY_SHEET, "Dashboard"],
+        summaries={SUMMARY_SHEET: summary, DELIVERY_SHEET: delivery},
+        order=[SUMMARY_SHEET, DELIVERY_SHEET, "Dashboard"],
     )
 
 
@@ -663,7 +712,9 @@ async def _fetch_all_gantt_rows(
             # P43: the title block's run version and the chart's current week.
             meta["schedule_run_version"] = response.schedule_run_version
             meta["current_week"] = response.current_week or clock.week
-            meta["plan_year"] = clock.plan_year
+            # P53: the chart's week columns start at absolute week 1, the
+            # first week of the week base year (R53-1).
+            meta["plan_year"] = WEEK_BASE_YEAR
         if len(all_rows) >= response.total_count or not response.rows:
             break
         offset += page_size

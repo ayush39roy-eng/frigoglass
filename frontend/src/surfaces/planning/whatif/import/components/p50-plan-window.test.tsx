@@ -84,8 +84,10 @@ describe('P50 request payload', () => {
     const body = buildSimulateRequest(ROWS, { ...DEFAULT_IMPORT_OPTIONS, planFromWeek: 53, planUntilWeek: 72 }, {});
     expect(body.plan_from_week).toBe(53);
     expect(body.plan_until_week).toBe(72);
-    const preset = buildSimulateRequest(ROWS, { ...DEFAULT_IMPORT_OPTIONS, planUntilWeek: 104 }, {});
+    const preset = buildSimulateRequest(ROWS, { ...DEFAULT_IMPORT_OPTIONS, planYearEndWeek: 104, planUntilWeek: 104 }, {});
     expect(preset).not.toHaveProperty('plan_until_week');
+    // P53 (R53-4): the default plan year is the server's (null, nothing assumed here).
+    expect(buildSimulateRequest(ROWS, DEFAULT_IMPORT_OPTIONS, {}).plan_year_end_week).toBeNull();
   });
 
   it('sends plan_window_rerun: true only on a re-run', () => {
@@ -147,12 +149,12 @@ describe('P50 picker logic', () => {
   });
 
   it('a re-run result settles to options (today = null, preset = null, flag off)', () => {
-    expect(windowOptionsOf({ plan_from_week: 42, plan_from_min_week: 42, plan_until_week: 104, current_week: 42 }, 104)).toEqual({
+    expect(windowOptionsOf({ plan_from_week: 42, plan_from_min_week: 42, plan_until_week: 104, current_week: 42, plan_year_end_week: 104 }, 104)).toEqual({
       planFromWeek: null,
       planUntilWeek: null,
       planWindowRerun: false,
     });
-    expect(windowOptionsOf({ plan_from_week: 53, plan_from_min_week: 42, plan_until_week: 72, current_week: 42 }, 104)).toEqual({
+    expect(windowOptionsOf({ plan_from_week: 53, plan_from_min_week: 42, plan_until_week: 72, current_week: 42, plan_year_end_week: 104 }, 104)).toEqual({
       planFromWeek: 53,
       planUntilWeek: 72,
       planWindowRerun: false,
@@ -170,9 +172,10 @@ describe('P50 picker logic', () => {
     });
     // A served u equal to the preset (no window label) keeps the plan-year wording.
     expect(planScope({ ...SIMULATE_RESPONSE, plan_until_week: 104, plan_window_label: null }).inPhrase).toBe('in 2027');
-    // P51 (ADR 0062): the Gantt axis runs to the served horizon (u + 26 = 98 for u = 72).
-    const noProjects = { ...WINDOWED, horizon_weeks: 98, projects: [] };
-    expect(importScale(noProjects).horizonWeeks).toBe(98 - 42 + 1);
+    // P53 (R53-6): the Gantt axis runs to the last finish (here the cut-off u = 72),
+    // rounded up to a year end — never to the search limit.
+    const noProjects = { ...WINDOWED, horizon_weeks: 302, projects: [] };
+    expect(importScale(noProjects).horizonWeeks).toBe(104);
   });
 
   it('labels: band source, saved window and banner use week-of-year labels (never W53+)', () => {
@@ -187,6 +190,8 @@ describe('P50 picker logic', () => {
 describe('P50 Review step pickers', () => {
   it('shows the server labels, defaults Plan from to this week and sends the chosen window', async () => {
     useImportPlan.getState().setParsed(PARSED);
+    // P53: the plan year 2027 preset picked (the default is the current year).
+    useImportPlan.getState().setOptions({ planYearEndWeek: 104 });
     const user = userEvent.setup();
     const { container } = renderWithProviders(
       <ReviewStep parsed={PARSED} simulation={idle} onCompute={() => {}} onRetry={() => {}} />,
@@ -230,6 +235,28 @@ describe('P50 Review step pickers', () => {
     expect(screen.getByRole('button', { name: 'Compute plan' })).toBeDisabled();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Plan until (optional)' }), '70');
     expect(screen.queryByTestId('import-compute-hint')).toBeNull();
+  });
+
+  it('P53 (R53-4): the Plan year presets come from the served data, any year', async () => {
+    const parsed = {
+      ...PARSED,
+      plan_until_presets: [
+        { year: 2026, week: 52, label: 'End of 2026' },
+        { year: 2027, week: 104, label: 'End of 2027' },
+        { year: 2028, week: 156, label: 'End of 2028' },
+        { year: 2029, week: 208, label: 'End of 2029' },
+      ],
+    };
+    useImportPlan.getState().setParsed(parsed);
+    const user = userEvent.setup();
+    renderWithProviders(<ReviewStep parsed={parsed} simulation={idle} onCompute={() => {}} onRetry={() => {}} />);
+    const year = screen.getByRole('combobox', { name: 'Plan year' });
+    expect(within(year).getAllByRole('option').map((o) => o.textContent)).toEqual(['2026', '2027', '2028', '2029']);
+    expect(year).toHaveValue('52');
+    await user.selectOptions(year, '208');
+    expect(useImportPlan.getState().options.planYearEndWeek).toBe(208);
+    await user.selectOptions(year, '52');
+    expect(useImportPlan.getState().options.planYearEndWeek).toBeNull();
   });
 
   it('no pickers when the parse serves no choices (pre-P50 server)', () => {

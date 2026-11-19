@@ -116,6 +116,11 @@ function ganttData(over: Record<string, unknown> = {}) {
       total_count: 1,
       rows: [project()],
       weekly_active_counts: Array.from({ length: 52 }, (_, i) => ({ week: i + 1, pdd: i === 11 ? 3 : 0, oem: i === 11 ? 1 : 0, by_step: {} })),
+      // P53 (API_CONTRACT_P53 §7): the run's plan-year window and last finish
+      // (W78 → the axis runs to the end of 2027, W104).
+      plan_year_start_week: 1,
+      plan_year_end_week: 52,
+      last_finish_week: 78,
       ...over,
     },
     isPending: false,
@@ -318,8 +323,9 @@ describe('GanttPage', () => {
     });
   });
 
-  describe('ADR 0062 — the Timeline runs past W52 under a year header row (owner 2026-11-19)', () => {
-    // 16 px per week at the default zoom (P13-T13 slider minimum); the axis is W1..W78.
+  describe('ADR 0062 / P53 R53-6 — the Timeline runs to the last finish under a year header row', () => {
+    // 16 px per week at the default zoom (P13-T13 slider minimum); the axis is W1..W104
+    // (the served last finish W78, rounded up to the end of 2027).
     const W = 16;
 
     /** A tick's printed label (its last text node; the first child is the <title>). */
@@ -327,10 +333,10 @@ describe('GanttPage', () => {
       return tick.lastChild?.textContent ?? '';
     }
 
-    it('the week axis runs W1..W78 (W26 2027); tick labels restart at 1 and never print ≥ 53', () => {
+    it('the week axis runs W1..W104 (end of 2027); tick labels restart at 1 and never print ≥ 53', () => {
       renderWithProviders(<GanttPage />);
-      const axis = screen.getByRole('img', { name: 'Week axis, Week 1 of 2026 to Week 26 of 2027' });
-      expect(axis).toHaveAttribute('width', String(78 * W));
+      const axis = screen.getByRole('img', { name: 'Week axis, Week 1 of 2026 to Week 52 of 2027' });
+      expect(axis).toHaveAttribute('width', String(104 * W));
       expect(within(axis).getByText('W52 year-end')).toBeInTheDocument();
       const ticks = within(axis).getAllByTestId('gantt-week-tick');
       // Stride 4 at 16 px: absolute 1, 5, …, 49, 53, 57, …, 77.
@@ -345,21 +351,21 @@ describe('GanttPage', () => {
       expect(w53 && tickLabel(w53)).toBe('1');
       expect(w57 && tickLabel(w57)).toBe('5');
       expect(w57?.querySelector('title')).toHaveTextContent('Week 5 of 2027');
-      expect(axis.textContent).not.toMatch(/\b(5[3-9]|[6-9]\d)\b/);
+      expect(axis.textContent).not.toMatch(/\b(5[3-9]|[6-9]\d|1\d\d)\b/);
     });
 
-    it('a year header row spans 2026 (W1–W52) and 2027 (W53–W78) from the served plan year', () => {
+    it('a year header row spans 2026 (W1–W52) and 2027 (W53–W104), generated from the range', () => {
       renderWithProviders(<GanttPage />);
       const row = screen.getByTestId('gantt-year-row');
-      expect(row).toHaveStyle({ width: `${String(78 * W)}px` });
+      expect(row).toHaveStyle({ width: `${String(104 * W)}px` });
       const bands = within(row).getAllByTestId('gantt-year-band');
       expect(bands.map((b) => b.textContent)).toEqual(['2026', '2027']);
       expect(bands[0]).toHaveAttribute('data-start-week', '1');
       expect(bands[0]).toHaveAttribute('data-end-week', '52');
       expect(bands[0]).toHaveStyle({ width: `${String(52 * W)}px` });
-      expect(bands[1]).toHaveAttribute('data-end-week', '78');
-      expect(bands[1]).toHaveStyle({ width: `${String(26 * W)}px` });
-      expect(bands[1]).toHaveAttribute('title', '2027: week 1 to week 26');
+      expect(bands[1]).toHaveAttribute('data-end-week', '104');
+      expect(bands[1]).toHaveStyle({ width: `${String(52 * W)}px` });
+      expect(bands[1]).toHaveAttribute('title', '2027: week 1 to week 52');
     });
 
     it('draws a project and steps past W52 in full; spillover is the Status badge, not a pill over the bars', async () => {
@@ -400,13 +406,28 @@ describe('GanttPage', () => {
       expect(within(stepRows[13]).queryByTestId('gantt-step-spillover')).not.toBeInTheDocument();
     });
 
-    it('work past the axis end (W78) is still clipped there and keeps the right-edge cue', () => {
-      const steps = [step(1, 70, 90)];
-      hooks.useGantt.mockReturnValue(ganttData({ rows: [project({ spillover: true, steps })] }));
+    it('P53: a served last finish in 2029 extends the axis to the end of 2029 (never to the search limit)', () => {
+      const steps = [step(1, 70, 150)];
+      hooks.useGantt.mockReturnValue(ganttData({ rows: [project({ spillover: true, steps })], last_finish_week: 150 }));
+      renderWithProviders(<GanttPage />);
+      const bands = within(screen.getByTestId('gantt-year-row')).getAllByTestId('gantt-year-band');
+      expect(bands.map((b) => b.textContent)).toEqual(['2026', '2027', '2028']);
+      expect(screen.getByRole('img', { name: 'Week axis, Week 1 of 2026 to Week 52 of 2028' })).toHaveAttribute('width', String(156 * W));
+      const row = screen.getByTestId('gantt-project-row');
+      const seg = row.querySelector('rect[data-bar="planned"]');
+      expect(Number(seg?.getAttribute('x')) + Number(seg?.getAttribute('width'))).toBe(150 * W);
+      expect(within(row).queryByTestId('gantt-spillover-marker')).not.toBeInTheDocument();
+    });
+
+    it('without a served last finish (older server) work past the plan year is clipped there with the right-edge cue', () => {
+      const steps = [step(1, 40, 60)];
+      hooks.useGantt.mockReturnValue(
+        ganttData({ rows: [project({ spillover: true, steps })], last_finish_week: undefined }),
+      );
       renderWithProviders(<GanttPage />);
       const row = screen.getByTestId('gantt-project-row');
       const seg = row.querySelector('rect[data-bar="planned"]');
-      expect(Number(seg?.getAttribute('x')) + Number(seg?.getAttribute('width'))).toBe(78 * W);
+      expect(Number(seg?.getAttribute('x')) + Number(seg?.getAttribute('width'))).toBe(52 * W);
       expect(within(row).getByTestId('gantt-spillover-marker')).toHaveTextContent('Spillover → 2027');
     });
 
@@ -799,7 +820,7 @@ describe('GanttPage', () => {
       expect(within(row).queryByTestId('gantt-marker-expected')).not.toBeInTheDocument();
 
       await user.click(screen.getByRole('button', { name: 'Zoom in' }));
-      expect(screen.getByRole('img', { name: 'Week axis, Week 1 of 2026 to Week 26 of 2027' })).toHaveAttribute('width', String(78 * 20));
+      expect(screen.getByRole('img', { name: 'Week axis, Week 1 of 2026 to Week 52 of 2027' })).toHaveAttribute('width', String(104 * 20));
       expect(screen.getByRole('slider', { name: 'Zoom' })).toHaveValue('20');
       // Zoom is a rendering concern: the query params are unchanged.
       expect(hooks.useGantt).toHaveBeenLastCalledWith({ includeUnplaced: true, sort: 'priority' });

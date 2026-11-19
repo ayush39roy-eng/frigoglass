@@ -36,7 +36,8 @@ same resource-isolation reasoning above.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from celery import Celery, signals
 from celery.schedules import crontab
@@ -50,6 +51,10 @@ from services import plan_clock
 # lines are JSON too, not just `workers.export_tasks`/`workers.backup_tasks`
 # call sites.
 install_celery_logging("worker")
+
+
+def _athens_now() -> datetime:
+    return datetime.now(ZoneInfo("Europe/Athens"))
 
 
 def _build_worker_app() -> Celery:
@@ -83,6 +88,7 @@ def _build_worker_app() -> Celery:
             "workers.backup_tasks",
             "workers.backup_mirror_tasks",
             "workers.schedule_run_sweeper",
+            "workers.week_rollover_tasks",
         ],
     )
     app.conf.update(
@@ -152,6 +158,18 @@ def _build_worker_app() -> Celery:
             "sweep-stuck-schedule-runs": {
                 "task": "workers.schedule_run_sweeper.sweep_stuck_schedule_runs",
                 "schedule": timedelta(minutes=5),
+            },
+            # P37-T05 (R37-9, built at P53-T03): the weekly rollover. Every
+            # 15 minutes is the guarantee; Monday 00:05 Europe/Athens is the
+            # prompt tick (`nowfun` evaluates the crontab on the Athens clock
+            # while the app stays on UTC for the backups above).
+            "week-rollover-every-15-min": {
+                "task": "workers.week_rollover_tasks.ensure_week_rollover_task",
+                "schedule": timedelta(minutes=15),
+            },
+            "week-rollover-monday-athens": {
+                "task": "workers.week_rollover_tasks.ensure_week_rollover_task",
+                "schedule": crontab(minute=5, hour=0, day_of_week="mon", nowfun=_athens_now),
             },
         },
     )

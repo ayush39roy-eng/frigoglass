@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
-
 /**
  * Client-side shape mirror of `FreezeToggleRequest` (`backend/schemas/gantt.py`).
  * `actual_start_week` is required whenever `frozen` is `true` — the backend 422s
@@ -12,10 +10,11 @@ import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
  */
 export const freezeFormSchema = z.object({
   actualStartWeek: z.coerce
-    .number({ invalid_type_error: `Enter the actual start week (1–${String(DISPLAY_HORIZON_WEEKS)}).` })
+    .number({ invalid_type_error: 'Enter the actual start week.' })
     .int('Whole weeks only.')
-    .min(1, `Enter the actual start week (1–${String(DISPLAY_HORIZON_WEEKS)}).`)
-    .max(DISPLAY_HORIZON_WEEKS, `Week must be between 1 and ${String(DISPLAY_HORIZON_WEEKS)}.`),
+    // P53 (R53-1): weeks are absolute (2027 W1 = 53); the upper bound is the
+    // server's, never a client constant (I40).
+    .min(1, 'Enter the actual start week (from week 1).'),
 });
 
 /** Input type (pre-coercion) — what the RHF field holds. */

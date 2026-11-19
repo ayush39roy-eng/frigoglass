@@ -5,7 +5,7 @@ import { P13_ROW_DEFAULTS } from '@/surfaces/dashboard/test-fixtures';
 import { TEST_PLAN_YEAR as Y } from '@/test/session';
 
 import { columnPrefsKey, readColumnPrefs, sanitizeColumnPrefs, writeColumnPrefs } from './column-prefs';
-import { dateInputToPlanWeek, isoWeekOf, planWeekToDateInput } from './plan-week-date';
+import { dateInputToPlanWeek, isoWeekOf, planDateBounds, planWeekToDateInput } from './plan-week-date';
 import {
   buildRegisterEditsBody,
   changedProjectIds,
@@ -47,17 +47,29 @@ describe('plan week ↔ date (ADR 0035 §11 rule)', () => {
     expect(dateInputToPlanWeek(planWeekToDateInput(78, Y), Y)).toBe(78);
   });
 
-  it('round-trips every plan week 1..78', () => {
-    for (let w = 1; w <= 78; w += 1) expect(dateInputToPlanWeek(planWeekToDateInput(w, Y), Y)).toBe(w);
+  it('P53: round-trips every plan week up to the served search limit, any year', () => {
+    const H = 47 + 52 * 10;
+    for (let w = 1; w <= H; w += 1) expect(dateInputToPlanWeek(planWeekToDateInput(w, Y, H), Y, H)).toBe(w);
+    // 27 Dec 2032 is ISO 2032-W53 → absolute 364 (folds into W52 of 2032).
+    expect(dateInputToPlanWeek('2032-12-27', Y)).toBe(364);
+    expect(dateInputToPlanWeek('2033-01-03', Y)).toBe(365);
+    expect(planWeekToDateInput(365, Y)).toBe('2033-01-03');
   });
 
   it('a date with no plan week is undefined; empty clears', () => {
     expect(dateInputToPlanWeek('2025-12-01', Y)).toBeUndefined();
-    expect(dateInputToPlanWeek('2027-12-31', Y)).toBeUndefined();
+    expect(dateInputToPlanWeek('2027-12-31', Y, 78)).toBeUndefined();
+    expect(dateInputToPlanWeek('2027-12-31', Y)).toBe(104);
     expect(dateInputToPlanWeek('2026-02-30', Y)).toBeUndefined();
     expect(dateInputToPlanWeek('', Y)).toBeNull();
     expect(planWeekToDateInput(null, Y)).toBe('');
-    expect(planWeekToDateInput(79, Y)).toBe('');
+    expect(planWeekToDateInput(79, Y, 78)).toBe('');
+    expect(planWeekToDateInput(79, Y)).not.toBe('');
+  });
+
+  it('P53: picker bounds run to the Sunday of the search limit (week 52 includes ISO W53)', () => {
+    expect(planDateBounds(Y, 52)).toEqual({ min: '2025-12-29', max: '2027-01-03' });
+    expect(planDateBounds(Y, 57).max).toBe('2027-02-07');
   });
 });
 

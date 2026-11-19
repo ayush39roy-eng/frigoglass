@@ -288,6 +288,9 @@ export interface ScheduleRunChanges {
   hidden_count: number;
   /** Only projects whose compared fields differ, sorted by the server. */
   rows: ScheduleRunChangeRow[];
+  /** P53 (API_CONTRACT_P53 §3): the baseline is pre-P53 and this run is P53 —
+   *  the list "includes the scheduling-rule change (P53)". */
+  includes_rule_change?: boolean;
 }
 
 /** `POST /projects/{id}/priority`. Always 200; `recalc_status` says what happened.

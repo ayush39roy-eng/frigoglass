@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
-import { useSessionStore } from '@/stores/session';
 import { apiErrorMessage, checkInRateLimitedMessage } from '@/lib/api/error-messages';
 import {
   checkInEntryErrors,
@@ -85,7 +84,6 @@ export function useCheckInSubmit() {
   const watcher = useFollowUpRunWatcher();
   const { start: startWatcher } = watcher;
   const [flow, setFlow] = React.useState<CheckInFlow>({ kind: 'idle' });
-  const refreshSession = useSessionStore((s) => s.refresh);
   const conflict = useEditConflict();
   const { ask } = conflict;
 
@@ -124,8 +122,6 @@ export function useCheckInSubmit() {
         }
       } catch (err) {
         const entryErrors = checkInEntryErrors(err);
-        // P37 R37-10: the year closed under us; re-read /me so the page shows it.
-        if (err instanceof ApiError && err.code === 'PLAN_YEAR_CLOSED') void refreshSession();
         const message =
           entryErrors.length > 0
             ? null
@@ -184,7 +180,7 @@ export function useCheckInSubmit() {
       });
       return { ok: true, entryErrors: [], message: null };
     },
-    [begin, follow, queryClient, refreshSession, startWatcher, ask],
+    [begin, follow, queryClient, startWatcher, ask],
   );
 
   const close = React.useCallback(() => {

@@ -7,9 +7,10 @@
  * scale — no bar position is ever computed by summing `duration_weeks`, and no
  * `Date` object is involved (the domain model is week-granular everywhere).
  *
- * P51 (ADR 0062): the Timeline axis runs W1 .. the scheduler horizon
- * (`TIMELINE_HORIZON_WEEKS` = 78, W26 of the next year) under a year header row
- * (`yearBands`); weeks after W52 belong to the next calendar year. A bar that runs
+ * P53 (ADR 0063 / R53-6, amends ADR 0062): the Timeline axis starts at the
+ * plan year's first week and runs to the run's served `last_finish_week`,
+ * rounded up to a year end (`timelineAxisRange`) — never to the search limit —
+ * under a data-driven year header row (`yearBands`). A bar that runs
  * past the axis' last week is CLIPPED at its end edge and reports
  * `continuesPastEnd`; one that starts after it is not drawn at all. Clipping is
  * geometry only — the project's spillover verdict is still the server's
@@ -19,7 +20,7 @@
  * computed to pixels. It is unit-tested (`gantt-coordinates.test.ts`).
  */
 
-import { DISPLAY_HORIZON_WEEKS, SCHEDULER_HORIZON_WEEKS } from '@/lib/domain-constants';
+import { PLAN_YEAR_WEEKS, roundUpToYearEnd, yearIndexOf } from '@/lib/week-line';
 
 /** Two zoom levels (`dataviz-gantt` SKILL): weeks (default, full horizon roughly
  *  fits) and days (wider, for inspecting step boundaries). Zoom changes only
@@ -48,17 +49,24 @@ export const ROW_HEIGHTS: Record<GanttDensity, { project: number; step: number }
 };
 
 /**
- * P51 (ADR 0062): the Timeline's axis length — the scheduler's search horizon
- * (`SCHEDULER_HORIZON_WEEKS`, the DOMAIN_RULES constant mirrored, not derived),
- * so work after W52 is drawn in full up to W26 of the next year.
+ * P53 (R53-6): the Timeline / import-Gantt axis. It starts at
+ * `planYearStartWeek` (`year_start(Y0)`, served) and ends at the served
+ * `last_finish_week` (the largest end week of a non-skipped row of the run,
+ * never below the plan year's end) rounded up to a year end. Never the search
+ * limit. Without a served last finish, the plan year alone. Geometry only.
  */
-export const TIMELINE_HORIZON_WEEKS = SCHEDULER_HORIZON_WEEKS;
-
-/** Weeks in one calendar year of the absolute week numbering (W53 = next year's W1). */
-const WEEKS_PER_YEAR = DISPLAY_HORIZON_WEEKS;
+export function timelineAxisRange(
+  planYearStartWeek: number,
+  planYearEndWeek: number,
+  lastFinishWeek: number | null | undefined,
+): { originWeek: number; horizonWeeks: number } {
+  const end = roundUpToYearEnd(Math.max(planYearEndWeek, lastFinishWeek ?? planYearEndWeek));
+  return { originWeek: planYearStartWeek, horizonWeeks: end - planYearStartWeek + 1 };
+}
 
 export interface YearBand {
-  /** 0 = the plan year (absolute weeks 1..52), 1 = the next year, … */
+  /** Year index from the base year: 0 = absolute weeks 1..52 (the served
+   *  `week_base_year`), 1 = the next year, … Label = base year + index. */
   yearOffset: number;
   /** First and last absolute week of this year that lie on the axis. */
   startWeek: number;
@@ -77,8 +85,8 @@ export function yearBands(scale: WeekScale): YearBand[] {
   const last = lastScaleWeek(scale);
   let start = scale.originWeek;
   while (start <= last) {
-    const yearOffset = Math.floor((start - 1) / WEEKS_PER_YEAR);
-    const yearEnd = Math.min(last, (yearOffset + 1) * WEEKS_PER_YEAR);
+    const yearOffset = yearIndexOf(start);
+    const yearEnd = Math.min(last, (yearOffset + 1) * PLAN_YEAR_WEEKS);
     const x = weekToX(start, scale);
     out.push({ yearOffset, startWeek: start, endWeek: yearEnd, x, width: weekEndToX(yearEnd, scale) - x });
     start = yearEnd + 1;
@@ -113,10 +121,14 @@ export function clampZoomPx(px: number): number {
 
 /** `zoom` is a named level or, since P13-T13, a px-per-week value (clamped
  *  16–48). Either way it changes only `weekWidthPx`, never the data query. */
-export function makeWeekScale(zoom: GanttZoom | number, horizonWeeks: number = DISPLAY_HORIZON_WEEKS): WeekScale {
+export function makeWeekScale(
+  zoom: GanttZoom | number,
+  horizonWeeks: number = PLAN_YEAR_WEEKS,
+  originWeek = 1,
+): WeekScale {
   const weekWidthPx = typeof zoom === 'number' ? clampZoomPx(zoom) : WEEK_WIDTH_PX[zoom];
   return {
-    originWeek: 1,
+    originWeek,
     horizonWeeks,
     weekWidthPx,
     totalWidthPx: horizonWeeks * weekWidthPx,
@@ -133,13 +145,13 @@ export function weekToX(week: number, scale: WeekScale): number {
 
 /**
  * X pixel of the END edge of `week` (i.e. the start edge of `week + 1`). Used for
- * the year-end marker: `WITHIN_YEAR_WEEK` means "complete by the end of week 52".
+ * the year-end marker: the run's `within_year_week` means "complete by the end of that week".
  */
 export function weekEndToX(week: number, scale: WeekScale): number {
   return weekToX(week + 1, scale);
 }
 
-/** The last week drawn on the axis (W78 on the Timeline). */
+/** The last week drawn on the axis. */
 export function lastScaleWeek(scale: WeekScale): number {
   return scale.originWeek + scale.horizonWeeks - 1;
 }
@@ -151,10 +163,11 @@ export const WATERFALL_MARGIN_WEEKS = 2;
  * P32-R04: the week scale of one project's step waterfall (Workflow page). It
  * starts `WATERFALL_MARGIN_WEEKS` before the earlier of the project's first
  * served start (planned or actual) and the served calendar week (`currentWeek`,
- * `/me.current_week`, P37), and ends the same margin
- * after the latest of W52 and any served planned / actual end, capped at the
- * scheduler horizon (W78). Read-only since P33-T15 (ADR 0048). A min/max over
- * served week numbers only — pixels, never a schedule.
+ * `/me.current_week`, P37), and ends the same margin after the latest of the
+ * served plan-year end (`planYearEndWeek`) and any served planned / actual end
+ * (P53: no fixed cap; a run's rows never pass its own search limit). Read-only
+ * since P33-T15 (ADR 0048). A min/max over served week numbers only — pixels,
+ * never a schedule.
  */
 export function projectWaterfallScale(
   steps: readonly {
@@ -165,15 +178,16 @@ export function projectWaterfallScale(
   }[],
   weekWidthPx: number,
   currentWeek: number,
+  planYearEndWeek: number,
 ): WeekScale {
   let first = currentWeek;
-  let last = DISPLAY_HORIZON_WEEKS;
+  let last = planYearEndWeek;
   for (const s of steps) {
     for (const w of [s.planned_start_week, s.actual_start_week]) if (w != null) first = Math.min(first, w);
     for (const w of [s.planned_end_week, s.actual_end_week]) if (w != null) last = Math.max(last, w);
   }
   const originWeek = Math.max(1, first - WATERFALL_MARGIN_WEEKS);
-  const endWeek = Math.min(SCHEDULER_HORIZON_WEEKS, last + WATERFALL_MARGIN_WEEKS);
+  const endWeek = last + WATERFALL_MARGIN_WEEKS;
   const horizonWeeks = endWeek - originWeek + 1;
   return {
     originWeek,
@@ -197,6 +211,10 @@ export interface BarGeometry {
   /** Present (and `true`) only when the span ran past the axis' last week and
    *  was clipped at its end edge — the row then shows a spillover marker. */
   continuesPastEnd?: true;
+  /** P53 (R53-6): present (and `true`) only when the span started before the
+   *  axis' first week (the plan year's W1) and was clipped at the start edge —
+   *  the bar then reads "started W.. '26". */
+  startsBeforeOrigin?: true;
 }
 
 /**
@@ -219,11 +237,16 @@ export function barGeometry(
   if (startWeek == null || endWeek == null) return null;
   const last = lastScaleWeek(scale);
   if (startWeek > last) return null;
-  const x = weekToX(startWeek, scale);
+  // P53 (R53-6): a span that ended before the axis' first week is not drawn;
+  // one that started before it is clipped at the start edge.
+  if (endWeek < scale.originWeek) return null;
+  const clippedStart = Math.max(startWeek, scale.originWeek);
+  const x = weekToX(clippedStart, scale);
   const clippedEnd = Math.min(endWeek, last);
-  const spanWeeks = Math.max(1, clippedEnd - startWeek + 1);
+  const spanWeeks = Math.max(1, clippedEnd - clippedStart + 1);
   const geom: BarGeometry = { x, width: spanWeeks * scale.weekWidthPx };
   if (endWeek > last) geom.continuesPastEnd = true;
+  if (startWeek < scale.originWeek) geom.startsBeforeOrigin = true;
   return geom;
 }
 

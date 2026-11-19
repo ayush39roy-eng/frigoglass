@@ -1,4 +1,5 @@
 import { formatWeek } from '@/lib/format';
+import { roundUpToYearEnd } from '@/lib/week-line';
 
 import type { ImportOptions } from './import-rows';
 import type { ImportSimulateResponse, PlanWeekChoice, PrioritySource } from './import-types';
@@ -10,9 +11,6 @@ import { planYearOf } from './week-labels';
  * window (I40: the browser derives no dates), and every "within" figure is served against
  * its `plan_until_week`.
  */
-
-/** The weeks the pickers may go up to (R49-15: year labels know base year + 1 only). */
-export const PLAN_UNTIL_MAX_WEEK = 104;
 
 type CutoffFields = Pick<ImportSimulateResponse, 'plan_year_end_week' | 'plan_until_week'>;
 
@@ -67,9 +65,19 @@ export function choiceLabel(choices: readonly PlanWeekChoice[] | undefined, week
   return choices?.find((c) => c.week === week)?.label ?? formatWeek(week);
 }
 
-/** The plan-year preset's end week as the "Plan until" default (52 / 104). */
-export function effectiveUntil(options: Pick<ImportOptions, 'planYearEndWeek' | 'planUntilWeek'>): number {
-  return options.planUntilWeek ?? options.planYearEndWeek;
+/** P53 (R53-4): the chosen "Plan year" end, else the server default — the end
+ *  of the year of `minWeek` (today's week; `year_end(year_of(cw))`, the week-line
+ *  mirror, I57). */
+export function planYearEnd(options: Pick<ImportOptions, 'planYearEndWeek'>, minWeek: number | null): number | null {
+  return options.planYearEndWeek ?? (minWeek === null ? null : roundUpToYearEnd(minWeek));
+}
+
+/** The "Plan until" in force: the chosen u, else the plan-year end. */
+export function effectiveUntil(
+  options: Pick<ImportOptions, 'planYearEndWeek' | 'planUntilWeek'>,
+  minWeek: number | null = null,
+): number {
+  return options.planUntilWeek ?? planYearEnd(options, minWeek) ?? Number.POSITIVE_INFINITY;
 }
 
 export interface PickerChoices {
@@ -81,9 +89,11 @@ export interface PickerChoices {
 
 /**
  * The two pickers' options from the served choices (R49-7 / R49-15): Plan from = min..u
- * (u = the chosen Plan until, else the plan-year end), Plan until = f..104 without the
- * preset week itself (that is the "end of the plan year" default entry). A chosen week
- * outside its bounds is still listed so the select names what is set.
+ * (u = the chosen Plan until, else the plan-year end), Plan until = f..H without the
+ * preset week itself (that is the "end of the plan year" default entry). P53 (R53-4):
+ * the upper bound is the served search limit — the server serves the choices only up to
+ * H, so no week bound is held here. A chosen week outside its bounds is still listed so
+ * the select names what is set.
  */
 export function pickerChoices(
   choices: readonly PlanWeekChoice[],
@@ -91,19 +101,18 @@ export function pickerChoices(
   options: Pick<ImportOptions, 'planYearEndWeek' | 'planFromWeek' | 'planUntilWeek'>,
 ): PickerChoices {
   const fromWeek = options.planFromWeek ?? minWeek;
-  const until = effectiveUntil(options);
+  const until = effectiveUntil(options, minWeek);
+  const preset = planYearEnd(options, minWeek);
   return {
     fromWeek,
     from: choices.filter((c) => (c.week >= minWeek && c.week <= until) || c.week === fromWeek),
     until: choices.filter(
-      (c) =>
-        c.week !== options.planYearEndWeek &&
-        ((c.week >= fromWeek && c.week <= PLAN_UNTIL_MAX_WEEK) || c.week === options.planUntilWeek),
+      (c) => c.week !== preset && (c.week >= fromWeek || c.week === options.planUntilWeek),
     ),
   };
 }
 
-/** Why the window cannot be sent (I56 `cw ≤ f ≤ u ≤ 104`), or null. The server stays the authority. */
+/** Why the window cannot be sent (I56 `cw ≤ f ≤ u ≤ H`), or null. The server stays the authority. */
 export function windowBlockedReason(
   options: Pick<ImportOptions, 'planYearEndWeek' | 'planFromWeek' | 'planUntilWeek' | 'planWindowRerun'>,
   minWeek: number | null,
@@ -112,7 +121,7 @@ export function windowBlockedReason(
   const f = options.planFromWeek ?? null;
   if (f === null) return null;
   if (minWeek !== null && f < minWeek) return 'The “Plan from” week has passed. Pick this week or a later one.';
-  if (f > effectiveUntil(options))
+  if (f > effectiveUntil(options, minWeek))
     return options.planUntilWeek == null
       ? '“Plan from” is after the end of the plan year. Pick a later “Plan until” or an earlier “Plan from”.'
       : '“Plan from” is after “Plan until”. Pick a later “Plan until” or an earlier “Plan from”.';
@@ -121,15 +130,20 @@ export function windowBlockedReason(
 
 /** The planner's window options from a served result (after a re-run raised them). */
 export function windowOptionsOf(
-  result: Pick<ImportSimulateResponse, 'plan_from_week' | 'plan_from_min_week' | 'plan_until_week' | 'current_week'>,
-  planYearEndWeek: number,
+  result: Pick<
+    ImportSimulateResponse,
+    'plan_from_week' | 'plan_from_min_week' | 'plan_until_week' | 'current_week' | 'plan_year_end_week'
+  >,
+  planYearEndWeek: number | null,
 ): Pick<ImportOptions, 'planFromWeek' | 'planUntilWeek' | 'planWindowRerun'> {
+  // P53: null = the server default, which the result names as its plan-year end.
+  const preset = planYearEndWeek ?? result.plan_year_end_week;
   const min = result.plan_from_min_week ?? result.current_week;
   const f = result.plan_from_week ?? null;
   const u = result.plan_until_week ?? null;
   return {
     planFromWeek: f === null || f === min ? null : f,
-    planUntilWeek: u === null || u === planYearEndWeek ? null : u,
+    planUntilWeek: u === null || u === preset ? null : u,
     planWindowRerun: false,
   };
 }

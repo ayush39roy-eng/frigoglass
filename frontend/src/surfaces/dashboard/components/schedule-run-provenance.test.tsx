@@ -16,6 +16,10 @@ const greedyRun: ScheduleRunSummary = {
   trigger_reason: 'manual_recalc',
   solver_status: null,
   created_at: '2026-08-31T09:00:00Z',
+  // P53 (API_CONTRACT_P53 §3): a run computed under the P53 rules.
+  within_year_week: 52,
+  pre_p53: false,
+  rules_label: null,
 };
 
 describe('ScheduleRunProvenance', () => {

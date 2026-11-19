@@ -16,7 +16,7 @@ import { useImportPlan } from '../import-store';
 import type { ImportMode, ImportParseIssue, ImportParseResponse, PlanYearEndWeek } from '../import-types';
 import { classifyImportError, type ImportSimulationState } from '../use-import';
 import { planYearOf } from '../week-labels';
-import { choiceLabel, pickerChoices, windowBlockedReason } from '../plan-window';
+import { choiceLabel, pickerChoices, planYearEnd, windowBlockedReason } from '../plan-window';
 import { reviewTileDrill, type ReviewTile } from '../drilldown';
 import { DrillNumber } from './drill-number';
 import { ActionBar, FeatureCard } from './feature-card';
@@ -101,7 +101,7 @@ export function ReviewStep({
   }, [rows, parsed.rows]);
   const useServedProjects = servedProjects !== undefined && options.expandMulti && rowsAsServed;
   const projectsCount = useServedProjects ? servedProjects : projectsToSchedule(rows, options.expandMulti);
-  const year = planYearOf(options.planYearEndWeek, parsed.base_year);
+  const year = planYearOf(planYearEnd(options, minWeek) ?? minWeek, parsed.base_year);
   // P32-R07: every count tile lists the rows behind it.
   const tileFig = (tile: ReviewTile, figure: number) => (
     <DrillNumber
@@ -113,7 +113,12 @@ export function ReviewStep({
       testId={`import-review-drill-${tile}`}
     />
   );
-  const y0 = parsed.base_year;
+  // P53 (R53-4): the "Plan year" presets come from the data — each year from
+  // today's year whose year end is within the search limit. A pre-P53 server
+  // serves none; the current plan year (the server default) is then the only one.
+  const presets = parsed.plan_until_presets ?? [];
+  const defaultYearEnd = planYearEnd({ planYearEndWeek: null }, minWeek);
+  const selectedYearEnd = planYearEnd(options, minWeek);
 
   return (
     <div className="space-y-s5" data-testid="import-review">
@@ -332,15 +337,25 @@ export function ReviewStep({
             </Label>
             <NativeSelect
               id="import-year"
-              value={String(options.planYearEndWeek)}
-              onChange={(e) =>
+              value={String(selectedYearEnd ?? '')}
+              onChange={(e) => {
+                const w = Number(e.target.value);
                 setOptions({
-                  planYearEndWeek: Number(e.target.value) as PlanYearEndWeek,
-                })
-              }
+                  planYearEndWeek: (w === defaultYearEnd ? null : w) as PlanYearEndWeek,
+                  // A "Plan until" past the new plan year is kept; the server bounds it by H.
+                });
+              }}
+              data-testid="import-year"
             >
-              <option value="104">{String(y0 + 1)}</option>
-              <option value="52">{String(y0)}</option>
+              {presets.length > 0 ? (
+                presets.map((p) => (
+                  <option key={p.week} value={String(p.week)}>
+                    {String(p.year)}
+                  </option>
+                ))
+              ) : selectedYearEnd !== null ? (
+                <option value={String(selectedYearEnd)}>{String(planYearOf(selectedYearEnd, parsed.base_year))}</option>
+              ) : null}
             </NativeSelect>
           </div>
           {weekChoices.length > 0 ? (
@@ -404,7 +419,8 @@ function PlanWindowPickers({
   const options = useImportPlan((s) => s.options);
   const setOptions = useImportPlan((s) => s.setOptions);
   const picks = pickerChoices(choices, minWeek, options);
-  const presetLabel = choiceLabel(choices, options.planYearEndWeek);
+  const presetWeek = planYearEnd(options, minWeek);
+  const presetLabel = presetWeek === null ? 'the plan year' : choiceLabel(choices, presetWeek);
   return (
     <>
       <div className="flex flex-col gap-1">
@@ -443,7 +459,7 @@ function PlanWindowPickers({
             const raw = e.target.value;
             const w = raw === DEFAULT_UNTIL ? null : Number(raw);
             setOptions({
-              planUntilWeek: w === null || w === options.planYearEndWeek ? null : w,
+              planUntilWeek: w === null || w === presetWeek ? null : w,
               planWindowRerun: false,
             });
           }}

@@ -1,7 +1,8 @@
 """P40-T03b: manual step pins, non-HTTP parts (ADR 0054 R40-1 / R40-3 /
 R40-12; docs/DOMAIN_RULES.md "Manual step weeks").
 
-- the DB CHECK `step_pin_range` (both null, or 1 <= ms <= me <= 52);
+- the DB CHECK `step_pin_range` (both null, or 1 <= ms <= me; P53 moved the
+  plan-year cap to the service);
 - persistence of the run flags (`pinned`, `manual_overlap`, `pin_lapsed`) and
   `span_fte = NULL` on a pinned row;
 - the per-week readers spread a pinned row's effort over its window, lab
@@ -52,7 +53,8 @@ from tests.p12_helpers import CW, live_step, plan_step, set_progress, stepped_pr
         (None, 40, False),
         (41, 40, False),
         (0, 3, False),
-        (50, 53, False),
+        # P53 (R53-7/R53-8): the plan-year cap moved to the service.
+        (50, 53, True),
     ],
 )
 async def test_db_check_step_pin_range(db_session, start, end, ok):

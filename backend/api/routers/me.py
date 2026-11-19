@@ -36,6 +36,7 @@ from core.rbac import Action, Surface, role_allows
 from models.engineer import Engineer
 from models.enums import RoleName
 from models.user import User, UserRole
+from scheduling.weeks import WEEK_BASE_YEAR, horizon_for
 from schemas.session import (
     DevLoginRequest,
     DevUser,
@@ -49,6 +50,7 @@ from services.plan_clock import PlanClock, get_plan_clock
 from services.plan_week import plan_week_state
 from services.project_access import has_any_manageable_project
 from services.rate_limit import TokenBucketLimiter
+from services.scheduling_settings import read_horizon_years
 
 router = APIRouter(prefix="/me", tags=["session"])
 
@@ -134,6 +136,7 @@ async def get_me(
     engineer_id = (
         await db.execute(select(Engineer.id).where(Engineer.user_id == principal.user_id))
     ).scalar_one_or_none()
+    horizon_years = await read_horizon_years(db)
     return MeResponse(
         user_id=principal.user_id,
         email=principal.email,
@@ -149,7 +152,12 @@ async def get_me(
         weeks_left_in_year=clock.weeks_left_in_year,
         as_of_date=clock.as_of_date,
         plan_year=clock.plan_year,
-        plan_year_closed=clock.plan_year_closed,
+        week_base_year=WEEK_BASE_YEAR,
+        plan_year_start_week=clock.plan_year_start_week,
+        plan_year_end_week=clock.plan_year_end_week,
+        horizon_years=horizon_years,
+        horizon_weeks=horizon_for(clock.week, horizon_years),
+        plan_year_closed=False,
         week_source=clock.source,
         week_ends_at=clock.week_ends_at,
         plan_week=(

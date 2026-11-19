@@ -21,6 +21,12 @@ from models.enums import (
     ProjectType,
 )
 from schemas.category import CategoryCodeOut
+from schemas.delivery import (
+    DeliveryByYearOut,
+    DeliveryUnavailable,
+    LeftOutReason,
+    TailWarningsOut,
+)
 
 
 class PipelineTotals(BaseModel):
@@ -125,6 +131,16 @@ class CompletingWithinYearRow(BaseModel):
     priority_label: str | None
     #: The stored `projected_end_week` (end + delay); null when unscheduled.
     projected_end_week: int | None
+    # --- P53 (ADR 0063, docs/API_CONTRACT_P53.md §4.2) ----------------------
+    #: The band in the run input; null on every pre-P53 row.
+    priority_at_run: str | None = None
+    #: The delivery-table year this row is counted in (null when not listed
+    #: by year).
+    delivery_year: int | None = None
+    #: R53-2: null when placed.
+    left_out_reason: LeftOutReason | None = None
+    #: R53-9: scheduled and finishing after Y0 + 1.
+    far_finish: bool = False
 
 
 class PriorityDeliveryBand(BaseModel):
@@ -239,6 +255,16 @@ class CompletingWithinYear(BaseModel):
     #: zero rows included. For each bucket, Σ over `regions` == the top-level
     #: count above.
     regions: list[DeliveryRegionRow]
+    # --- P53 (ADR 0063 R53-3 / R53-7 / R53-9, API_CONTRACT_P53 §4.2) --------
+    #: Over exactly the rows above (scope + filters). Row 1 total ==
+    #: `within_year_count` (I59). Null for a pre-P53 run or no active run.
+    delivery_by_year: DeliveryByYearOut | None = None
+    delivery_by_year_unavailable: DeliveryUnavailable | None = None
+    rules_epoch: str | None = None
+    #: "Computed under the earlier rules …" for a pre-P53 run, else null.
+    rules_label: str | None = None
+    #: Counts only (no engineer names, OQ #8); null for a pre-P53 run.
+    tail_warnings: TailWarningsOut | None = None
 
 
 #: The active run's per-project outcome bucket (P13 register column).

@@ -78,6 +78,7 @@ from schemas.whatif import (
     UnattainableProjectOut,
     UtilizationRowOut,
 )
+from services.delivery_serving import result_delivery, result_row
 from services.whatif_baseline import Scope, WhatIfContext, principal_audit_hub_id
 
 #: Wall-clock caps (seconds). One greedy run on ~250 projects is about 20 ms:
@@ -577,7 +578,45 @@ async def do_simulate(ctx: WhatIfContext, req: Any) -> SimulateResponse:
         WHATIF_TIME_CAP_SECONDS,
         user_key=ctx.user_key,
     )
-    return scope_simulation(raw, ctx.scope)
+    return with_delivery(scope_simulation(raw, ctx.scope), ctx, raw)
+
+
+def with_delivery(
+    resp: SimulateResponse, ctx: WhatIfContext, raw: SimulationResult
+) -> SimulateResponse:
+    """P53 (R53-3, I59): the delivery table over exactly the served (scoped)
+    projects of a simulation, at the input week and search limit.
+
+    P53-R01 (F53-1, I58): each not-placed row carries the engine's
+    diagnostics (`no_leader` / `no_chamber_step_id` / `data_error`) from the
+    unscoped `raw` result, so a What-if serves the same `left_out_reason` as
+    the Dashboard; `beyond_horizon` only when none applies. The diagnostics
+    stay off the wire (`ProjectResultOut` is unchanged)."""
+
+    diag = {p.project_id: p for p in raw.projects}
+    si = ctx.baseline.schedule
+    resp.delivery_by_year = result_delivery(
+        [
+            result_row(
+                project_id=p.project_id,
+                priority=p.priority,
+                outcome=p.outcome,
+                within_year=within_year_bucket(p.within_year, p.outcome),
+                finish_week=p.finish_week,
+                counts_toward_year=p.counts_toward_year,
+                not_scheduled_priority=p.not_scheduled_priority,
+                no_leader=diag[p.project_id].no_leader,
+                no_chamber_step_id=diag[p.project_id].no_chamber_step_id,
+                data_error=diag[p.project_id].data_error,
+                left_out=diag[p.project_id].left_out,
+            )
+            for p in resp.projects
+        ],
+        run_week=si.current_week,
+        within_year_week=si.within_year_week,
+        horizon_weeks=si.horizon_weeks,
+    )
+    return resp
 
 
 async def do_solve(
@@ -604,7 +643,10 @@ async def do_solve(
         WHATIF_SOLVE_TIME_CAP_SECONDS,
         user_key=ctx.user_key,
     )
-    return scope_solution(raw, ctx.scope, ctx)
+    out = scope_solution(raw, ctx.scope, ctx)
+    if out.achieved is not None and raw.achieved is not None:
+        out.delivery_by_year = with_delivery(out.achieved, ctx, raw.achieved).delivery_by_year
+    return out
 
 
 # --- audit ---------------------------------------------------------------------------------

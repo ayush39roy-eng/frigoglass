@@ -23,6 +23,13 @@ export interface ScheduleRunListItem {
   trigger_reason: string | null;
   solver_status: string | null;
   created_at: string;
+  /** P53 (API_CONTRACT_P53 §3): null on pre-P53 runs. */
+  rules_epoch?: 'p53' | null;
+  within_year_week?: number;
+  pre_p53?: boolean;
+  /** "Computed under the earlier rules (78-week search; queued P3 not counted)"
+   *  on pre-P53 runs, else null. Shown wherever the run is shown (R53-7). */
+  rules_label?: string | null;
 }
 
 type FetchCtx = Pick<ApiRequestOptions, 'signal'>;

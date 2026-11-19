@@ -26,6 +26,9 @@ import os
 # `setdefault`: a developer shell exporting another week must not change
 # test results.
 os.environ["RPD_CURRENT_WEEK"] = "31"
+# P37-T05 / R37-9 (built at P53-T03): `TestClient` runs the lifespan; the
+# in-app weekly rollover ticker must never dispatch in tests.
+os.environ["RPD_WEEK_ROLLOVER_TICKER"] = "false"
 import subprocess
 import sys
 from pathlib import Path

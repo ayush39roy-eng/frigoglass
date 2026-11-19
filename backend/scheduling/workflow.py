@@ -988,6 +988,9 @@ def canonical_schedule_input_asdict(schedule_input: ScheduleInput) -> dict[str, 
         # before the field existed.
         if project.get("band_rank") is None:
             project.pop("band_rank", None)
+        # P53 (R53-2b): no recorded actual end serialises as before the field.
+        if "actual_end_week" in project and project["actual_end_week"] is None:
+            del project["actual_end_week"]
         # P40 (ADR 0054, R40-12, I48(a)): a project without pins serialises
         # exactly as before the field existed; set pins are sorted by step id.
         if "step_pins" in project:

@@ -77,7 +77,7 @@ PALE_CURRENT_WEEK = "FEF3C7"
 #: API_CONTRACT_P43 §7: sheets, in order, per surface xlsx.
 SURFACE_SHEETS: dict[str, list[str]] = {
     "gantt": ["Summary", "Gantt", "Gantt data"],
-    "dashboard": ["Summary", "Dashboard"],
+    "dashboard": ["Summary", "Delivery by year", "Dashboard"],  # P53 (R53-3)
     "capacity": ["Summary", "Capacity"],
     "matrix": ["Summary", "Matrix"],
     "project-registration": ["Summary", "Projects"],
@@ -194,6 +194,15 @@ async def test_every_surface_xlsx_is_styled_summarised_and_formula_free(
     for ws in wb.worksheets[1:]:
         if ws.title == "Gantt":
             _assert_chart_sheet(ws)
+        elif ws.title == "Delivery by year":
+            # P53 (R53-3): a summary-style sheet of the served table: bold
+            # title, a blue heading bar above a navy header row.
+            assert ws["A1"].value and ws["A1"].font.b
+            fills = [
+                _fill_rgb(ws.cell(row=r, column=1))
+                for r in range(TABLE_HEADER_ROW, ws.max_row + 1)
+            ]
+            assert SECTION_FILL in fills, fills
         else:
             _assert_styled_table(ws)
             if surface != "capacity":  # gap G2, pinned below

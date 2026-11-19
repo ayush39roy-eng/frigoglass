@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
+import { DeliveryByYearCard } from '../delivery-by-year-card';
 
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { PanelSkeleton } from '@/components/ui/panel-skeleton';
@@ -186,6 +187,14 @@ export function ExecutiveView({
           )}
         </SectionBoundary>
       </StaggerSection>
+
+      {/* P53 (ADR 0063, R53-3): the same served delivery-by-year table as the
+          Detailed view (I59); counts only, no leader names. */}
+      {hasRun && withinYear.data ? (
+        <StaggerSection>
+          <DeliveryByYearCard data={withinYear.data} hub={hub} selection={selection} />
+        </StaggerSection>
+      ) : null}
 
       {canReadCapacity ? (
         <HubLoadStrip

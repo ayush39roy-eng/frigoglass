@@ -14,9 +14,13 @@ Week convention (DOMAIN_RULES "Engineer deactivation", whole-week rule):
 - An open period runs to week 52 and covers every week of every later plan year.
   A period that began in an earlier plan year starts at week 1.
 
-Covered weeks are given in **plan-horizon weeks** relative to the served plan
-year Y: weeks 1..52 are Y's, weeks 53..104 are Y+1's (the plan-import
-`plan_year_end_week = 104` window). Week numbers beyond 104 are never needed.
+Covered weeks are **absolute weeks** on the one week line (R53-1, ADR 0063;
+`scheduling.weeks`): week 1 is 2026 W1, 53 is 2027 W1. `covered_plan_weeks`
+covers `year_start(Y) .. last_week` for the served plan year Y (default
+`last_week = year_end(Y + 1)`; a caller passes the run's `horizon_weeks` to
+cover the whole search, R53-1 "1..horizon_weeks of the run instead of
+1..104"). For Y = 2026 and the default this is exactly the pre-P53 1..104.
+The year-relative period rows are converted only by `year_start(y) - 1 + w`.
 
 `A_e(Y, a..b)` (R38-1) is `active_week_count(covered, a, b)`: the number of
 weeks in `a..b` not covered.
@@ -27,9 +31,18 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-WEEKS_PER_PLAN_YEAR = 52
-#: Plan-horizon weeks an `EngineerActiveWeeks` may cover: plan year Y and Y+1.
-MAX_COVERED_WEEK = 2 * WEEKS_PER_PLAN_YEAR
+from scheduling.weeks import (
+    MAX_ABSOLUTE_WEEK,
+    PLAN_YEAR_WEEKS,
+    year_end,
+    year_relative_to_abs,
+    year_start,
+)
+
+WEEKS_PER_PLAN_YEAR = PLAN_YEAR_WEEKS
+#: R53-1: the largest absolute week an `EngineerActiveWeeks` may cover (the
+#: 100-year sanity bound, not a calendar cap).
+MAX_COVERED_WEEK = MAX_ABSOLUTE_WEEK
 
 
 @dataclass(frozen=True)
@@ -64,27 +77,27 @@ def _check_week(week: object, name: str) -> None:
         raise ValueError(f"{name} must be in 1..{WEEKS_PER_PLAN_YEAR}")
 
 
-def covered_plan_weeks(periods: Iterable[InactivePeriod], plan_year: int) -> tuple[int, ...]:
-    """The plan-horizon weeks (1..104, relative to `plan_year`) that `periods`
-    cover, sorted and unique. This is the one place the whole-week rule lives;
-    the services side should build `EngineerActiveWeeks.covered_weeks` with it.
-    """
+def covered_plan_weeks(
+    periods: Iterable[InactivePeriod], plan_year: int, *, last_week: int | None = None
+) -> tuple[int, ...]:
+    """The absolute weeks in `year_start(plan_year) .. last_week` (default
+    `year_end(plan_year + 1)`) that `periods` cover, sorted and unique. This
+    is the one place the whole-week rule lives; the services side should
+    build `EngineerActiveWeeks.covered_weeks` with it.
 
+    A period covers `abs(d) + 1 .. abs(r)` (open: to `last_week`), with
+    `abs(y, w) = year_start(y) - 1 + w` (R53-1)."""
+
+    first_week = year_start(plan_year)
+    last = year_end(plan_year + 1) if last_week is None else last_week
     covered: set[int] = set()
-    for offset in (0, 1):
-        year = plan_year + offset
-        base = offset * WEEKS_PER_PLAN_YEAR
-        for p in periods:
-            if p.from_plan_year > year:
-                continue
-            first = p.from_week + 1 if p.from_plan_year == year else 1
-            if p.to_plan_year is None or p.to_week is None or p.to_plan_year > year:
-                last = WEEKS_PER_PLAN_YEAR
-            elif p.to_plan_year == year:
-                last = p.to_week
-            else:  # closed in an earlier plan year
-                continue
-            covered.update(base + w for w in range(first, last + 1))
+    for p in periods:
+        lo = max(first_week, year_relative_to_abs(p.from_plan_year, p.from_week) + 1)
+        if p.to_plan_year is None or p.to_week is None:
+            hi = last
+        else:
+            hi = min(last, year_relative_to_abs(p.to_plan_year, p.to_week))
+        covered.update(range(lo, hi + 1))
     return tuple(sorted(covered))
 
 
@@ -107,9 +120,8 @@ class EngineerActiveWeeks:
 
     - `engineer_id` / `hub` / `fte`: as on `EngineerInput` (`hub` is the
       engineer's own hub; the capacity hub is derived as for any engineer).
-    - `covered_weeks`: plan-horizon weeks (1..104 relative to the served plan
-      year) the engineer's periods cover; sorted, unique. Build it with
-      `covered_plan_weeks`.
+    - `covered_weeks`: absolute weeks (R53-1) the engineer's periods cover;
+      sorted, unique. Build it with `covered_plan_weeks`.
 
     An inactive engineer is absent from `ScheduleInput.engineers` (the builder
     filters them) but still supplies in the weeks before `d + 1`; a reactivated

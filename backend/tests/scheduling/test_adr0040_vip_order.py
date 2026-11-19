@@ -29,7 +29,7 @@ from scheduling import (
 )
 from scheduling._selftest_common import SELFTEST_WEEK, load_seed_schedule_input
 from scheduling.cp_sat import PRIORITY_OBJECTIVE_WEIGHT, objective_weights
-from scheduling.greedy import _sort_key
+from scheduling.greedy import _sort_key, project_queue_tier
 from tests.scheduling._fixtures import (
     CHAMBER_GR1,
     ENGINEER_A,
@@ -171,10 +171,11 @@ def test_seed_with_vip_validates_invariants():
 
     si = load_seed_schedule_input()
     base = run_greedy_sgs(si)
-    # P42 R42-5: VIP lifts a project to the front of its (frozen, counts)
-    # tier only, so the target is the last *counting* non-frozen project.
+    # P42 R42-5 (R53-2: the tier is `queue_tier`, not counting): VIP lifts a
+    # project to the front of its (frozen, queue_tier) tier only, so the
+    # target is the last non-queue-tier non-frozen project.
     non_frozen = [
-        pid for pid in base.scheduling_order if not _frozen(si, pid) and outcome_counts(base, pid)
+        pid for pid in base.scheduling_order if not _frozen(si, pid) and not _queue_tier(si, pid)
     ]
     target = non_frozen[-1]
     vip_si = dataclasses.replace(
@@ -196,7 +197,7 @@ def test_vip_queued_p3_stays_in_the_queued_tier_on_seed():
 
     si = load_seed_schedule_input()
     base = run_greedy_sgs(si)
-    queued = [pid for pid in base.scheduling_order if not outcome_counts(base, pid)]
+    queued = [pid for pid in base.scheduling_order if _queue_tier(si, pid)]
     assert queued, "the seed has queued P3 projects"
     target = queued[-1]
     vip_si = dataclasses.replace(
@@ -213,8 +214,10 @@ def test_vip_queued_p3_stays_in_the_queued_tier_on_seed():
     assert validate_invariants(vip_si, out) == ()
 
 
-def outcome_counts(out, pid: str) -> bool:
-    return _by_id(out)[pid].counts_toward_year
+def _queue_tier(si: ScheduleInput, pid: str) -> bool:
+    """R53-2: the scheduling tier (the old R42-4 negation)."""
+
+    return project_queue_tier(next(p for p in si.projects if p.project_id == pid))
 
 
 def _frozen(si: ScheduleInput, pid: str) -> bool:

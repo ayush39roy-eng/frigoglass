@@ -1,10 +1,12 @@
 import * as React from 'react';
-import { Clock, History, OctagonAlert, Pin, Snowflake, TimerReset, Waypoints } from 'lucide-react';
+import { Clock, History, Hourglass, OctagonAlert, Pin, Snowflake, TimerReset, Waypoints } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { BandOutcomeChip } from '@/components/shared/project-outcome-chips';
 import { ScheduleOutcomeBadge } from '@/components/shared/schedule-outcome-badge';
 import { nonCountingOutcome } from '@/components/shared/schedule-outcome-meta';
+import { calendarYearOf } from '@/lib/format';
+import { farFinishText } from '@/lib/left-out-reason';
 
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
 
@@ -69,6 +71,14 @@ export function ProjectRowBadges({ project }: { project: GanttProjectRow }): Rea
       {band ? <BandOutcomeChip outcome={band} label={project.outcome_label} projectedEndWeek={project.projected_end_week} /> : null}
       {project.left_out && !band ? <ScheduleOutcomeBadge flag="LEFT_OUT" /> : null}
       {project.spillover ? <ScheduleOutcomeBadge flag="SPILLOVER" /> : null}
+      {/* P53 (R53-9): served far-finish warning; the year names the served
+          projected finish. Display only, never a scheduler input (I63). */}
+      {project.far_finish ? (
+        <Badge tone="warning" title={farFinishText(project.projected_end_week == null ? null : calendarYearOf(project.projected_end_week))} data-testid="far-finish-chip">
+          <Hourglass className="size-3" aria-hidden="true" />
+          {farFinishText(project.projected_end_week == null ? null : calendarYearOf(project.projected_end_week))}
+        </Badge>
+      ) : null}
       {project.cat_not_allowed ? <ScheduleOutcomeBadge flag="CAT_NOT_ALLOWED" iconOnly /> : null}
       {project.blocked ? (
         <Badge tone="danger" title="A stage is on hold — the project stays in the plan, held at its earliest feasible frontier until the hold is lifted">

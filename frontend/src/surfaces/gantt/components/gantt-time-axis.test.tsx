@@ -71,3 +71,21 @@ describe('P51 (ADR 0062): year header row and an axis past W52', () => {
     expect(axis.textContent).not.toMatch(/\b(5[3-9]|[6-9]\d|1\d\d)\b/);
   });
 });
+
+describe('P53 (R53-6): plan year 2027 on the one week line', () => {
+  it('"now" reads the week of its year and the year-end line sits at the served plan-year end', () => {
+    seedSession({ current_week: 57, weeks_left_in_year: 47, plan_year: 2027, plan_year_start_week: 53, plan_year_end_week: 104 });
+    const scale = makeWeekScale(16, 104, 53);
+    render(<GanttWeekAxis scale={scale} />);
+    expect(screen.getByText('W5 now')).toBeInTheDocument();
+    expect(screen.getByTestId('gantt-year-end-label')).toHaveTextContent('W52 year-end');
+  });
+
+  it('year bands are labelled from the base year, with years after the plan year shaded', () => {
+    render(<GanttYearRow scale={makeWeekScale(16, 156, 53)} baseYear={2026} planYearOffset={1} />);
+    const bands = screen.getAllByTestId('gantt-year-band');
+    expect(bands.map((b) => b.textContent)).toEqual(['2027', '2028', '2029']);
+    expect(bands[0]?.style.background).toBe('');
+    expect(bands[1]?.style.background).not.toBe('');
+  });
+});

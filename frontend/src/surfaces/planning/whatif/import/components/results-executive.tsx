@@ -10,6 +10,7 @@ import {
   ListChecks,
   TrendingDown,
 } from 'lucide-react';
+import { DeliveryByYearTable } from '@/components/shared/delivery-by-year/delivery-by-year-table';
 
 import { ExecKpiTile } from '@/surfaces/dashboard/components/executive/exec-kpi-tile';
 import { categoryRank, dashCatFill } from '@/lib/categorical-palette';
@@ -300,6 +301,23 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
           />
         )}
       </section>
+
+      {/* P53 (ADR 0063, R53-3): the served delivery-by-year table of this import
+          run — calendar years whatever the plan window is; later years
+          indicative. "Finish within …" above stays the window's figure. */}
+      {result.delivery_by_year ? (
+        <DeliveryByYearTable
+          data={result.delivery_by_year}
+          testId="import-delivery-by-year"
+          caption={
+            sc.windowed
+              ? 'Rows are calendar years. The "Finish within the plan window" figure above uses the plan window, so it can differ from the first row.'
+              : undefined
+          }
+        />
+      ) : result.delivery_by_year === null ? (
+        <DeliveryByYearTable data={null} unavailable="pre_p53_run" testId="import-delivery-by-year" />
+      ) : null}
 
       {block === null ? (
         <FeatureCard

@@ -41,12 +41,12 @@ export const SCHEDULE_OUTCOME_META: Record<ScheduleOutcomeFlag, OutcomeMeta> = {
   },
   LEFT_OUT: {
     tone: 'warning',
-    // Client ask 2026-10-13: the UI frames a 52-week year only, so a project the
-    // server could not place is presented as spillover (it is certainly not done
-    // by W52), not as a separate "beyond the horizon" concept. Flag unchanged.
+    // P53 (R53-2): a LEFT_OUT project found no slot within the run's search limit
+    // (N years, the Admin setting) or has a data problem (the served
+    // `left_out_reason`). Label unchanged; the description names the limit.
     label: 'Spillover · unplaced',
     Icon: CircleOff,
-    description: 'Not done by week 52 — no slot found in the plan yet, so it spills over to {spillover_year} unscheduled.',
+    description: 'Not placed — cannot be scheduled within the search limit (no leader, no chamber, a data problem or no capacity) — check resources.',
   },
   SPILLOVER: {
     tone: 'warning',

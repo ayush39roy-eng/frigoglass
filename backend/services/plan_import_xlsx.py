@@ -112,6 +112,8 @@ class ParseContext:
     app_lead_times: Mapping[tuple[str, str], Mapping[str, int]]
     current_week: int
     base_year: int = BASE_YEAR
+    #: P53 (R53-4): the search limit H of the baseline (the pickers' end).
+    horizon_weeks: int = 0
     #: P33-T07 (ADR 0047 §4, contract B3): the app's categories, code ->
     #: workflow id (the `categories` table via the what-if input). A file
     #: value equal to a code (case-insensitive, exact) that is not one of the

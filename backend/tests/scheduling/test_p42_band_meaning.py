@@ -40,7 +40,7 @@ from scheduling import (
     year_flags,
 )
 from scheduling._selftest_common import SELFTEST_WEEK, load_seed_schedule_input
-from scheduling.greedy import _sort_key, prepare_run
+from scheduling.greedy import _sort_key, prepare_run, project_queue_tier
 from scheduling.monte_carlo import forecast_delivery
 from scheduling.plan_import import (
     ImportProject,
@@ -68,7 +68,11 @@ from tests.scheduling._fixtures import (
     base_project,
     progress,
 )
-from tests.scheduling._whatif_fixtures import portfolio_baseline, tiny_baseline
+from tests.scheduling._whatif_fixtures import (
+    portfolio_baseline,
+    tiny_baseline,
+    without_p53_r01_fields,
+)
 
 CP_KW = dict(deterministic_time=2.0, earliness_deterministic_time=1.0)
 
@@ -262,9 +266,10 @@ def test_vip_queued_p3_walks_after_counting_work() -> None:
     assert out.scheduling_order == ("z-p1", "m-p2", "a-vipq")
     b = _by(out)
     q = b["a-vipq"]
-    assert not q.counts_toward_year and not q.within_year and not q.spillover
-    assert q.projected_end_week is not None and q.projected_end_week <= 52  # "fits by W{n}"
-    assert classify_outcome(q) == "queued"
+    # P53 (R53-2): a queued P3 still walks last (queue tier) but now counts.
+    assert q.counts_toward_year and q.within_year and not q.spillover
+    assert q.projected_end_week is not None and q.projected_end_week <= 52
+    assert classify_outcome(q) == "within_year"
     assert _step(b["z-p1"], "PDD-A").start_week == SELFTEST_WEEK
     assert _step(q, "PDD-A").start_week > _step(b["z-p1"], "PDD-A").end_week
     assert validate_invariants(si, out) == ()
@@ -293,7 +298,9 @@ def test_cp_sat_parity_on_i49_to_i52_on_the_seed() -> None:
         assert gb[pid].not_scheduled_priority == cb[pid].not_scheduled_priority, pid
     assert g.scheduling_order == c.scheduling_order
     assert sum(o.not_scheduled_priority for o in g.project_outcomes) == 25
-    assert sum(not o.counts_toward_year for o in g.project_outcomes) == 33
+    # P53 (R53-2): the 8 queued P3 now count; only the 25 P4 / Q do not.
+    assert sum(not o.counts_toward_year for o in g.project_outcomes) == 25
+    assert sum(project_queue_tier(p) for p in seed.projects) == 33
 
 
 def test_cp_sat_model_ignores_queued_projects() -> None:
@@ -337,10 +344,25 @@ def test_i49_flags_a_scheduled_p4_and_a_stray_flag() -> None:
 
 
 def test_i50_flags_a_wrong_counts_flag_and_a_counted_queued_project() -> None:
+    # P53 (R53-2): a queued P3 counts; a frozen P4 is the non-counting case.
     q = base_project(project_id="q", priority="P3")
     si = _si(q)
     out = run_greedy_sgs(si)
     o = _by(out)["q"]
+    assert o.counts_toward_year
+    viol = validate_invariants(
+        si,
+        dataclasses.replace(
+            out, project_outcomes=(dataclasses.replace(o, counts_toward_year=False),)
+        ),
+        check_determinism=False,
+    )
+    assert "I50" in _codes(viol)
+    f4 = base_project(project_id="q", priority="P4", frozen=True, actual_start_week=SELFTEST_WEEK)
+    si = _si(f4)
+    out = run_greedy_sgs(si)
+    o = _by(out)["q"]
+    assert not o.counts_toward_year
     for bad in (
         dataclasses.replace(o, counts_toward_year=True),
         dataclasses.replace(o, within_year=True),
@@ -400,19 +422,19 @@ def test_whatif_classes_and_queued_new_project_target() -> None:
         base,
         Scenario(
             add_projects=(
-                AddProject("R&D-Greece", "C"),  # default P3 In Queue: queued
+                AddProject("R&D-Greece", "C"),  # default P3 In Queue: counts (R53-2)
                 AddProject("R&D-Greece", "C", priority="P4"),
             )
         ),
     )
     new = {p.project_id: p for p in res.projects if p.is_new}
     outcomes = sorted(p.outcome for p in new.values())
-    assert outcomes == ["not_scheduled_priority", "queued"]
-    assert res.outcome_counts_after["queued"] == 1
+    assert outcomes == ["not_scheduled_priority", "within_year"]
+    assert res.outcome_counts_after["queued"] == 0
     assert res.outcome_counts_after["not_scheduled_priority"] == 1
-    queued = next(p for p in new.values() if p.outcome == "queued")
-    assert not queued.counts_toward_year and not queued.within_year
-    assert queued.finish_week is not None and queued.finish_week <= 52
+    q3 = next(p for p in new.values() if p.outcome == "within_year")
+    assert q3.counts_toward_year and q3.within_year
+    assert q3.finish_week is not None and q3.finish_week <= 52
 
 
 def test_plan_import_kpis_serve_queued_and_not_scheduled() -> None:
@@ -438,13 +460,14 @@ def test_plan_import_kpis_serve_queued_and_not_scheduled() -> None:
         PlanImportRequest(projects=(row(1, "P2"), row(2, "P3"), row(3, "Q")), mode="file_only"),
     )
     k = res.kpis
-    assert (k.queued, k.not_scheduled_priority, k.within_plan_year) == (1, 1, 1)
+    # P53 (R53-2): the In Queue P3 row counts (walked after the P2).
+    assert (k.queued, k.not_scheduled_priority, k.within_plan_year) == (0, 1, 2)
     rows = {r.ref: r for r in res.projects}
     assert rows["r3"].not_scheduled_priority and rows["r3"].outcome == "not_scheduled_priority"
     assert not rows["r3"].leader_auto_assigned  # never scheduled, never auto-led
-    assert not rows["r2"].counts_toward_year and rows["r2"].outcome == "queued"
+    assert rows["r2"].counts_toward_year and rows["r2"].outcome == "within_year"
     codes = {(i.ref, i.code) for i in res.issues}
-    assert ("r3", "NOT_SCHEDULED_PRIORITY") in codes and ("r2", "QUEUED") in codes
+    assert ("r3", "NOT_SCHEDULED_PRIORITY") in codes and ("r2", "QUEUED") not in codes
 
 
 def test_monte_carlo_carries_the_band_flags() -> None:
@@ -455,7 +478,8 @@ def test_monte_carlo_carries_the_band_flags() -> None:
     )
     fc = {f.project_id: f for f in forecast_delivery(si, iterations=4, seed=3).project_forecasts}
     assert fc["p4"].not_scheduled_priority and fc["p4"].iterations_scheduled == 0
-    assert not fc["q"].counts_toward_year and fc["q"].iterations_within_year == 0
+    # P53 (R53-2): a queued P3 counts.
+    assert fc["q"].counts_toward_year and fc["q"].iterations_within_year == 4
     assert fc["p1"].counts_toward_year and fc["p1"].iterations_within_year == 4
 
 
@@ -503,18 +527,24 @@ def test_i25_remaining_demand_drops_non_frozen_p4_and_q_only() -> None:
 #: HEAD before P42-T02 and after: identical. Inputs: the seed and
 #: `portfolio_baseline()` with every P4 / Q and every In Queue P3 moved to P2,
 #: and added / imported projects at P2.
+# P53-T02 (ADR 0063) re-pin: values recomputed under the P53 rules. Every
+# changed field was attributed by an old/new differential (MEMORY P53-T02):
+# (a) a project LEFT_OUT at the 78-week search now placed within H = cw + 260
+# (portfolio p017 / p024; seed 26-00205 ...), (c) a queued P3 now counted
+# (R53-2: p003 / p009 / p023, import rows "In Queue" P3), and for plan import
+# R53-4 (`horizon_weeks` = H not u + 26; the QUEUED issue no longer raised).
 _PRE_P42_NEUTRAL = {
-    "analytic_add_remaining": "f3f3a0938877c12481cf6ccdaa0d4dc95e14d5f0ff9809af0f3345deda422afd",
-    "analytic_add_year": "9165f691a5050ff7f1b24b69e0c9630aee5a4187e0ec10959b6d17a041ec1935",
-    "analytic_remove_remaining": "85870e59a1608fc898b2a4b3d7cea8d6813268c0ea867af39f688169d83ea31d",
-    "analytic_remove_year": "38d4e1c8d0f86a19c4b4bce0ea5febcb18b65aeefbeca1cafb55164a72df8a75",
-    "plan_import_104": "d5759b0433549400467fd42bffe8c6ed84578729910c6bb563e7650a3f726be9",
-    "plan_import_52": "88cbaab37dfc0d832d7659f1663f1e05b101c3dca4bf9b9a27d3c4ba3a2eb5eb",
-    "seed_cp_sat": "217e36ee7074c4576ec160987d3238e25dc193ec860ac730422a96898630826f",
-    "seed_greedy": "7f16cc9011f6bdc1df49e7e25113ba1ce895163b72398cc658681cddbc01efa9",
-    "seed_mc": "248ebd3004e76c563c09b60014316306d6781ccc9a62d01ac2aa13a62b5aa8f2",
-    "simulate_add": "b6c3fd26258018d018256cf833eb52adf3ab62917db464cc488eb5ad1850e41a",
-    "simulate_remove": "95f527e090d35d07b2410b7442e4565a43c21330e8aa78c63069ebd295d34806",
+    "analytic_add_remaining": "75937da190f468418224473635808125b0a1ffaccb20d9e91ff5945f9cc4b880",
+    "analytic_add_year": "f9163d6349c18fb9cf0a012774e2d36eb4d4e04bb78158409caa685d3cdbb66f",
+    "analytic_remove_remaining": "4f24761a6e50728a520602e2178a211fd13c7d81f8bf17422a4db7d593baf011",
+    "analytic_remove_year": "69e13f8a40247245e03d69aed360c89495b47b42ace0b29f5893eabfc23c17c2",
+    "plan_import_104": "87e93dcdc6aef77e719166980faa46692aa8e9ee36b33a72fb7e835c239122d8",
+    "plan_import_52": "f34d808aabf7e2ff080a4c6178afefe1f18b8c3a972aaca25fe00821e6d92a1a",
+    "seed_cp_sat": "5bc74bc3ea4a2c06eb9fcf2a2ec2569333b66f8ee75b825ad99810cb61856de3",
+    "seed_greedy": "94d7f3b35ac534be735686b49dbcb77c93a724f01a86d370994df41d8b4d9a2b",
+    "seed_mc": "c47d73ee8769ef777aa62156b9f391f9265630d34f920f41e3344f521cb838d7",
+    "simulate_add": "c838f4ea5a4ba9a10d504bcd449241c876166950a141014ef9eabd88d542bffc",
+    "simulate_remove": "c1225d29afdc0a22e6376b2a82919b45372e4fb924250ff4477a50d911ee28cb",
 }
 
 _P42_DEFAULTS = {
@@ -591,7 +621,7 @@ def test_neutral_inputs_are_byte_identical_to_pre_p42() -> None:
             got[f"analytic_{k}_{basis}"] = _h(
                 to_jsonable(analytic_requirements(b, sc, basis=basis))
             )
-        got[f"simulate_{k}"] = _h(to_jsonable(simulate(b, sc)))
+        got[f"simulate_{k}"] = _h(without_p53_r01_fields(simulate(b, sc)))
     rows = tuple(
         ImportProject(
             key=f"r{i}",

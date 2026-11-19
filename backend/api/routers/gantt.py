@@ -73,7 +73,7 @@ from collections.abc import Mapping, Sequence
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import ColumnElement, or_, select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -108,6 +108,7 @@ from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from scheduling.effort_split import EffortSplitRejected
+from scheduling.weeks import year_end, year_of, year_start
 from schemas.gantt import (
     FreezeToggleRequest,
     GanttProjectRow,
@@ -121,6 +122,7 @@ from services.active_run import slip_weeks, step_kinds_for_run
 from services.audit_helpers import project_audit_state
 from services.band_rank import band_sizes
 from services.category_type_filter import any_of, category_type_filter
+from services.delivery_serving import stored_far_finish
 from services.edit_conflict import check_base, field_refs
 from services.hub_scope import (
     global_hub_filter,
@@ -229,17 +231,37 @@ def _kind_weeks(
     return design, lab, total
 
 
+async def last_finish_week(db: AsyncSession, run: ScheduleRun) -> int:
+    """P53 (R53-6): the largest end week of a non-skipped row of the RUN (not
+    of the filtered page, so every filtered slice shares one axis), never
+    below `year_end(Y0)`, rounded up to a year end. The Timeline axis ends
+    here, never at the search limit H."""
+
+    y_end = year_end(year_of(run.current_week))
+    last = (
+        await db.execute(
+            select(func.max(ScheduleRunProjectStep.end_week)).where(
+                ScheduleRunProjectStep.schedule_run_id == run.id,
+                ScheduleRunProjectStep.skipped.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    return year_end(year_of(max(last or y_end, y_end)))
+
+
 def _weekly_active_counts(
     projects: Sequence[Project],
     steps_by_project: dict[uuid.UUID, list[ScheduleRunProjectStep]],
+    *,
+    first: int,
+    last: int,
 ) -> list[GanttWeeklyActiveCount]:
-    """Active non-skipped run steps per display week (1..HORIZON_WEEKS; ADR 0062
-    extends the Timeline past W52)
-    over the whole filtered set, split by the project's workflow, and (P40-T01)
-    by step code (`by_step`, the step id such as `"PDD-A"`; same rows, so it
-    sums to `pdd + oem`)."""
+    """Active non-skipped run steps per display week, `first..last` (P53
+    R53-6: `year_start(Y0)..last_finish_week`; ADR 0062 extended the Timeline
+    past W52) over the whole filtered set, split by the project's workflow, and
+    (P40-T01) by step code (`by_step`, the step id such as `"PDD-A"`; same
+    rows, so it sums to `pdd + oem`)."""
 
-    last = dc.HORIZON_WEEKS
     pdd = [0] * (last + 1)
     oem = [0] * (last + 1)
     by_step: list[dict[str, int]] = [defaultdict(int) for _ in range(last + 1)]
@@ -249,14 +271,14 @@ def _weekly_active_counts(
             if step.skipped:
                 continue
             code = step.step_template_id
-            for week in range(max(1, step.start_week), min(last, step.end_week) + 1):
+            for week in range(max(first, step.start_week), min(last, step.end_week) + 1):
                 counts[week] += 1
                 by_step[week][code] += 1
     return [
         GanttWeeklyActiveCount(
             week=w, pdd=pdd[w], oem=oem[w], by_step=dict(sorted(by_step[w].items()))
         )
-        for w in range(1, last + 1)
+        for w in range(first, last + 1)
     ]
 
 
@@ -471,7 +493,11 @@ async def get_gantt(
     templates = {
         t.id: t for t in (await db.execute(select(WorkflowStepTemplate))).scalars().all()
     }
-    weekly_counts = _weekly_active_counts(filtered, planned_steps)
+    run_week = active_run.current_week
+    axis_end = await last_finish_week(db, active_run)
+    weekly_counts = _weekly_active_counts(
+        filtered, planned_steps, first=year_start(year_of(run_week)), last=axis_end
+    )
     current_counts = _current_step_counts(filtered, planned_steps, clock.week)
     projects = filtered[offset : offset + limit]
     project_ids = [p.id for p in projects]
@@ -712,6 +738,7 @@ async def get_gantt(
                 outcome=outcome_bucket(outcome),
                 outcome_label=outcome_label(outcome, projected),
                 steps=step_rows,
+                far_finish=stored_far_finish(outcome, run_week) if outcome else False,
             )
         )
 
@@ -723,6 +750,9 @@ async def get_gantt(
         weekly_active_counts=weekly_counts,
         current_step_counts=current_counts,
         current_week=clock.week,
+        plan_year_start_week=year_start(year_of(run_week)),
+        plan_year_end_week=year_end(year_of(run_week)),
+        last_finish_week=axis_end,
     )
 
 

@@ -2,8 +2,8 @@ import * as React from 'react';
 import { X } from 'lucide-react';
 
 import { WeekText } from '@/components/shared/week-text';
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { usePlanYearLabels } from '@/lib/plan-clock';
+import { formatWeekTitle, weekOfYear } from '@/lib/format';
+import { useSessionStore } from '@/stores/session';
 import { cn } from '@/lib/utils';
 
 import { PIN_BLOCK_REASON_COPY } from '../api/step-pins-api';
@@ -42,8 +42,19 @@ const INPUT_CLASS = cn(
 export function StepPinCell({ project, step }: { project: GanttProjectRow; step: GanttStepRow }): React.JSX.Element | null {
   const edit = useStepPinEdit();
   const baseId = React.useId();
-  const years = usePlanYearLabels();
+  // P53 (R53-1 / R53-8): pins lie inside the current plan year, so the boxes
+  // show and take the week OF that year (never a number ≥ 53); the stored and
+  // sent week stays absolute. Offset = served `plan_year_start_week − 1`.
+  const yearOffset = useSessionStore((s) => (s.me?.plan_year_start_week ?? 1) - 1);
   if (!edit) return null;
+  const toLocal = (v: string): string => {
+    const t = v.trim();
+    return /^\d+$/.test(t) && yearOffset > 0 ? String(Number(t) - yearOffset) : v;
+  };
+  const toAbs = (v: string): string => {
+    const t = v.trim();
+    return /^\d+$/.test(t) && yearOffset > 0 ? String(Number(t) + yearOffset) : v;
+  };
 
   const key = pinKey(project.project_id, step.step_id);
   const draft = edit.drafts.get(key);
@@ -75,25 +86,25 @@ export function StepPinCell({ project, step }: { project: GanttProjectRow; step:
     return {
       type: 'number' as const,
       inputMode: 'numeric' as const,
-      min: edit.minWeek,
-      max: edit.maxWeek,
+      min: edit.minWeek - yearOffset,
+      max: edit.maxWeek - yearOffset,
       step: 1,
       readOnly: !editable,
       'aria-readonly': !editable || undefined,
       'aria-invalid': invalid || undefined,
       'aria-describedby': describedBy,
-      // ADR 0024: no surface shows a week past W52. A planned week in the
-      // next year shows as that year's week (plan week 53 → 1, owner
-      // 2026-11-18); the tooltip names the year.
+      // Owner rule 2026-11-18 / P53: no surface shows a week ≥ 53. A planned
+      // week shows as the week of its year; the tooltip names the year when it
+      // is not the plan year.
       placeholder:
         placeholderWeek == null
           ? which === 'start' ? 'S' : 'E'
-          : String(placeholderWeek > WITHIN_YEAR_WEEK ? placeholderWeek - WITHIN_YEAR_WEEK : placeholderWeek),
+          : String(weekOfYear(placeholderWeek).week),
       title:
         reason ??
         `${which === 'start' ? 'Start week (inclusive)' : 'End week (inclusive)'}${
-          placeholderWeek != null && placeholderWeek > WITHIN_YEAR_WEEK
-            ? ` — week ${String(placeholderWeek - WITHIN_YEAR_WEEK)} of ${years.spilloverYear} (spillover)`
+          placeholderWeek != null && weekOfYear(placeholderWeek).yearOffset !== 0
+            ? ` — ${formatWeekTitle(placeholderWeek).replace(/^Week/, 'week')} (spillover)`
             : ''
         }`,
       className: cn(
@@ -117,14 +128,14 @@ export function StepPinCell({ project, step }: { project: GanttProjectRow; step:
       <input
         {...inputProps('start')}
         aria-label={`Start week, ${step.step_name}`}
-        value={pair.start}
-        onChange={(e) => edit.setStart(project, step, e.target.value)}
+        value={toLocal(pair.start)}
+        onChange={(e) => edit.setStart(project, step, toAbs(e.target.value))}
       />
       <input
         {...inputProps('end')}
         aria-label={`End week, ${step.step_name}`}
-        value={pair.end}
-        onChange={(e) => edit.setEnd(project, step, e.target.value)}
+        value={toLocal(pair.end)}
+        onChange={(e) => edit.setEnd(project, step, toAbs(e.target.value))}
       />
       {canClear ? (
         <button

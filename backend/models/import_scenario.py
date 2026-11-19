@@ -56,7 +56,10 @@ class WhatifImportScenario(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "whatif_import_scenarios"
     __table_args__ = (
         CheckConstraint("mode IN ('merge', 'file_only')", name="mode_valid"),
-        CheckConstraint("plan_year_end_week IN (52, 104)", name="plan_year_end_valid"),
+        CheckConstraint(
+            "plan_year_end_week > 0 AND plan_year_end_week % 52 = 0",
+            name="plan_year_end_valid",
+        ),
         CheckConstraint("char_length(name) BETWEEN 1 AND 120", name="name_length"),
         Index("ix_whatif_import_scenarios_created_by", "created_by"),
         Index("ix_whatif_import_scenarios_source_file_sha256", "source_file_sha256"),

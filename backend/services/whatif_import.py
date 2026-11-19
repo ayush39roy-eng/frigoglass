@@ -48,7 +48,17 @@ from scheduling.plan_import import (
     PlanImportResult,
     StepEdit,
     _ancestors,
+    plan_from_label,
     run_plan_import,
+)
+from scheduling.weeks import (
+    PLAN_YEAR_WEEKS,
+    horizon_for,
+    plan_until_presets,
+    plan_year_end_week,
+    week_of_year,
+    year_end,
+    year_of,
 )
 from scheduling.workflow import (
     STATUS_BLOCKED,
@@ -89,6 +99,7 @@ from schemas.whatif_import import (
     LeaderNew,
     LeadTimeRowOut,
     PlanProjectOut,
+    PlanUntilPresetOut,
     PlanWeekChoiceOut,
     RosterEntryOut,
     SimIssueOut,
@@ -98,6 +109,7 @@ from schemas.whatif_import import (
     WindowLoadOut,
 )
 from services.categories import unknown_category_error
+from services.delivery_serving import result_delivery, result_row
 from services.hub_scope import hub_scope_filter
 from services.plan_import_xlsx import (
     BASE_YEAR,
@@ -126,8 +138,9 @@ def invalid_import(message: str) -> CodedHTTPException:
 
 # --- the plan window: "Plan from" f and "Plan until" u (ADR 0061, R49-7, R49-15) ------------
 
-#: The last week a plan window may reach (base year + 1, W52; R49-15).
-MAX_PLAN_WEEK = 2 * dc.WEEKS_IN_YEAR
+#: P53 (R53-4): the plan window may reach the search limit H = cw + 52 × N
+#: (the baseline input's `horizon_weeks`); there is no fixed last week.
+PLAN_UNTIL_LOWERED = "PLAN_UNTIL_LOWERED"
 PLAN_FROM_LATER = "PLAN_FROM_LATER"
 PLAN_FROM_RAISED = "PLAN_FROM_RAISED"
 PLAN_UNTIL_RAISED = "PLAN_UNTIL_RAISED"
@@ -137,8 +150,7 @@ _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
 def week_year(week: int) -> tuple[int, int]:
     """(calendar year, week 1..52) of an absolute week (53 = base year + 1, W1)."""
 
-    offset, in_year = divmod(week - 1, dc.WEEKS_IN_YEAR)
-    return BASE_YEAR + offset, in_year + 1
+    return year_of(week), week_of_year(week)
 
 
 def week_monday(week: int) -> date:
@@ -161,12 +173,29 @@ def plan_week_label(week: int) -> str:
     return f"{plan_week_short(week)} ({d.day} {_MONTHS[d.month - 1]} {d.year})"
 
 
-def plan_week_choices(current_week: int) -> list[PlanWeekChoiceOut]:
-    """Every week a "Plan from" / "Plan until" picker may offer: cw..104."""
+def plan_week_choices(
+    current_week: int, horizon_weeks: int | None = None
+) -> list[PlanWeekChoiceOut]:
+    """Every week a "Plan from" / "Plan until" picker may offer: cw..H (R53-4;
+    H defaults to `horizon_for(cw)`, N = 5)."""
 
+    if not horizon_weeks:
+        horizon_weeks = horizon_for(current_week)
     return [
         PlanWeekChoiceOut(week=w, label=plan_week_label(w))
-        for w in range(current_week, MAX_PLAN_WEEK + 1)
+        for w in range(current_week, horizon_weeks + 1)
+    ]
+
+
+def plan_until_presets_out(
+    current_week: int, horizon_weeks: int | None = None
+) -> list[PlanUntilPresetOut]:
+    """R53-4: `{year, week: year_end(year)}` for each year from `year_of(cw)`
+    whose year end is within H."""
+
+    return [
+        PlanUntilPresetOut(year=y, week=w, label=f"End of {y}")
+        for y, w in plan_until_presets(current_week, horizon_weeks or horizon_for(current_week))
     ]
 
 
@@ -182,19 +211,42 @@ class PlanWindow:
     #: The request gave a `plan_until_week` other than the preset (R49-18:
     #: the window label is served).
     until_given: bool
+    #: P53 (R53-4): the resolved preset (`plan_year_end_week`), a year end
+    #: within cw..H, and the search limit H.
+    year_end_week: int = 52
+    horizon_weeks: int = 0
+    until_lowered_from: int | None = None
     #: R49-13 / R49-19: re-run raised a stored week (the week asked for).
     from_raised_from: int | None = None
     until_raised_from: int | None = None
 
 
 def resolve_plan_window(ctx: WhatIfContext, body: ImportSimulateRequest) -> PlanWindow:
-    """`cw <= f <= u <= 104`, else 422 `INVALID_IMPORT` (no clamping). On a
-    re-run (`plan_window_rerun`) f := max(f, cw), then u := max(u, f)."""
+    """`cw <= f <= u <= H`, else 422 `INVALID_IMPORT` (no clamping; R53-4,
+    I56). The preset `plan_year_end_week` defaults to `year_end(year_of(cw))`
+    and must be a year end. On a re-run (`plan_window_rerun`) f := max(f, cw),
+    then u := max(u, f), then u := min(u, H) (`PLAN_UNTIL_LOWERED`)."""
 
     cw = ctx.baseline.schedule.current_week
+    h = getattr(ctx.baseline.schedule, "horizon_weeks", 0) or horizon_for(cw)
+    default_end = plan_year_end_week(cw)
+    pye = default_end if body.plan_year_end_week is None else body.plan_year_end_week
+    if pye % PLAN_YEAR_WEEKS != 0:
+        raise invalid_import(f"plan_year_end_week {pye} is not the last week of a year.")
+    if body.plan_window_rerun:
+        # A stored preset may have passed (2027: a 2026 scenario's 52) or lie
+        # past a lowered search limit.
+        pye = max(pye, default_end)
+        while pye > h and pye - PLAN_YEAR_WEEKS >= default_end:
+            pye -= PLAN_YEAR_WEEKS
+    elif not cw <= pye <= h:
+        raise invalid_import(
+            f"plan_year_end_week {pye} must be a year end from week {cw} to the search "
+            f"limit, week {h}."
+        )
     f = cw if body.plan_from_week is None else body.plan_from_week
-    u = body.plan_year_end_week if body.plan_until_week is None else body.plan_until_week
-    from_raised = until_raised = None
+    u = pye if body.plan_until_week is None else body.plan_until_week
+    from_raised = until_raised = until_lowered = None
     if f < cw:
         if not body.plan_window_rerun:
             raise invalid_import(
@@ -209,17 +261,24 @@ def resolve_plan_window(ctx: WhatIfContext, body: ImportSimulateRequest) -> Plan
                 f"(plan_until_week {u} < plan_from_week {f})."
             )
         until_raised, u = u, f
-    if u > MAX_PLAN_WEEK:  # pragma: no cover - the schema bounds it
-        raise invalid_import(f"plan_until_week must be at most {MAX_PLAN_WEEK}.")
+    if u > h:
+        if not body.plan_window_rerun or f > h:
+            raise invalid_import(
+                f"plan_until_week {u} is past the search limit, week {h} ({plan_week_label(h)})."
+            )
+        until_lowered, u = u, h
     return PlanWindow(
         current_week=cw,
         from_week=f,
         until_week=u,
         # R49-18: u equal to the preset reads as the plan year (so a saved
         # request, which stores the resolved u, re-simulates identically).
-        until_given=body.plan_until_week is not None and u != body.plan_year_end_week,
+        until_given=body.plan_until_week is not None and u != pye,
         from_raised_from=from_raised,
         until_raised_from=until_raised,
+        year_end_week=pye,
+        horizon_weeks=h,
+        until_lowered_from=until_lowered,
     )
 
 
@@ -253,6 +312,19 @@ def plan_window_issues(w: PlanWindow) -> list[SimIssueOut]:
                 ),
             )
         )
+    if w.until_lowered_from is not None:
+        out.append(
+            SimIssueOut(
+                ref=None,
+                severity="info",
+                code=PLAN_UNTIL_LOWERED,
+                message=(
+                    "The saved scenario's plan window ended "
+                    f"{plan_week_short(w.until_lowered_from)}, past today's search limit; "
+                    f"it ends {plan_week_label(w.until_week)}."
+                ),
+            )
+        )
     if w.from_week != w.current_week:
         out.append(
             SimIssueOut(
@@ -260,7 +332,7 @@ def plan_window_issues(w: PlanWindow) -> list[SimIssueOut]:
                 severity="info",
                 code=PLAN_FROM_LATER,
                 message=(
-                    f"Simulated from W{w.current_week}; file projects start from "
+                    f"Simulated from {plan_from_label(w.current_week)}; file projects start from "
                     f"{plan_week_label(w.from_week)}. Live plan projects keep their own start rules (their finishes can still move as capacity frees up)."
                 ),
             )
@@ -284,7 +356,8 @@ def apply_plan_window(result: ImportSimulateResponse, w: PlanWindow) -> None:
     result.plan_from_label = plan_week_label(w.from_week)
     result.plan_until_week = w.until_week
     result.plan_window_label = plan_window_label(w)
-    result.plan_week_choices = plan_week_choices(w.current_week)
+    result.plan_week_choices = plan_week_choices(w.current_week, w.horizon_weeks)
+    result.plan_until_presets = plan_until_presets_out(w.current_week, w.horizon_weeks)
 
 
 def import_format_error(message: str) -> CodedHTTPException:
@@ -408,6 +481,7 @@ async def build_parse_context(
         app_lead_times=app_lead_times(ctx),
         current_week=ctx.baseline.schedule.current_week,
         base_year=BASE_YEAR,
+        horizon_weeks=ctx.baseline.schedule.horizon_weeks,
         categories={c.code: c.workflow_id for c in ctx.baseline.schedule.categories},
     )
 
@@ -520,7 +594,8 @@ def parse_response(
         ],
         counts=ImportCounts(**vars(res.counts)),
         plan_from_min_week=pctx.current_week,
-        plan_week_choices=plan_week_choices(pctx.current_week),
+        plan_week_choices=plan_week_choices(pctx.current_week, pctx.horizon_weeks),
+        plan_until_presets=plan_until_presets_out(pctx.current_week, pctx.horizon_weeks),
     )
 
 
@@ -688,7 +763,7 @@ def to_engine_request(
             new_engineers=new_engs,
             edits=tuple(edits),
             mode=body.mode,
-            plan_year_end_week=body.plan_year_end_week,
+            plan_year_end_week=window.year_end_week,
             # ADR 0061: f and u, resolved (the engine re-validates them).
             plan_from_week=window.from_week,
             plan_until_week=window.until_week,
@@ -887,7 +962,7 @@ _SOURCE_ORDER: tuple[str, ...] = ("file", "plan")
 _QUARTER_WEEKS = 13
 
 
-def breakdown_year_key(p: ImportProjectOut) -> str | None:
+def breakdown_year_key(p: ImportProjectOut, plan_year: int = BASE_YEAR) -> str | None:
     """The year block a served project belongs to besides `all` (C1): placed
     projects by `finish_week` (1..52 base year, 53..104 next year, > 104
     `later`); left_out / blocked / data_error are `not_placed`; excluded file
@@ -904,19 +979,21 @@ def breakdown_year_key(p: ImportProjectOut) -> str | None:
         return "not_placed"
     if p.outcome not in (*_PLACED_OUTCOMES, "queued") or p.finish_week is None:
         return None
-    if p.finish_week <= dc.WEEKS_IN_YEAR:
-        return str(BASE_YEAR)
-    if p.finish_week <= 2 * dc.WEEKS_IN_YEAR:
-        return str(BASE_YEAR + 1)
+    # P53 (R53-1): years from the plan year of the input week (a finish
+    # before it, e.g. a Done history, counts in the plan year).
+    if p.finish_week <= year_end(plan_year):
+        return str(plan_year)
+    if p.finish_week <= year_end(plan_year + 1):
+        return str(plan_year + 1)
     return "later"
 
 
-def breakdown_years() -> list[BreakdownYearOut]:
+def breakdown_years(plan_year: int = BASE_YEAR) -> list[BreakdownYearOut]:
     return [
         BreakdownYearOut(key="all", label="All projects"),
-        BreakdownYearOut(key=str(BASE_YEAR), label=f"Finish in {BASE_YEAR}"),
-        BreakdownYearOut(key=str(BASE_YEAR + 1), label=f"Finish in {BASE_YEAR + 1}"),
-        BreakdownYearOut(key="later", label=f"Finish after {BASE_YEAR + 1}"),
+        BreakdownYearOut(key=str(plan_year), label=f"Finish in {plan_year}"),
+        BreakdownYearOut(key=str(plan_year + 1), label=f"Finish in {plan_year + 1}"),
+        BreakdownYearOut(key="later", label=f"Finish after {plan_year + 1}"),
         BreakdownYearOut(key="not_placed", label="Not placed"),
     ]
 
@@ -925,8 +1002,7 @@ def finish_quarter(week: int) -> tuple[int, int]:
     """(calendar year, quarter) of an absolute week (53 = base year + 1, W1);
     weeks 1-13 are Q1 ... 40-52 Q4."""
 
-    offset, in_year = divmod(week - 1, dc.WEEKS_IN_YEAR)
-    return BASE_YEAR + offset, min(in_year // _QUARTER_WEEKS + 1, 4)
+    return year_of(week), min((week_of_year(week) - 1) // _QUARTER_WEEKS + 1, 4)
 
 
 def _buckets(
@@ -989,18 +1065,20 @@ def breakdown_of(
 
 
 def import_breakdowns(
-    projects: list[ImportProjectOut], category_order: tuple[str, ...] = dc.CATEGORY_ORDER
+    projects: list[ImportProjectOut],
+    category_order: tuple[str, ...] = dc.CATEGORY_ORDER,
+    plan_year: int = BASE_YEAR,
 ) -> ImportBreakdownsOut:
     """C1: every chart figure of the Executive tab, over exactly the served
     (already scoped) `projects`, so the charts reconcile with the list.
     `category_order`: the input's categories in rank order (P33-T07; default
     the seeded seven)."""
 
-    years = breakdown_years()
+    years = breakdown_years(plan_year)
     by_key: dict[str, list[ImportProjectOut]] = {y.key: [] for y in years}
     by_key["all"] = list(projects)
     for p in projects:
-        key = breakdown_year_key(p)
+        key = breakdown_year_key(p, plan_year)
         if key is not None:
             by_key[key].append(p)
     return ImportBreakdownsOut(
@@ -1207,6 +1285,28 @@ def scope_import_result(
         breakdowns=import_breakdowns(
             served,
             tuple(c.code for c in sorted(ctx.baseline.schedule.categories, key=lambda c: c.rank)),
+            year_of(raw.current_week),
+        ),
+        # P53 (R53-3, I59): the delivery table over exactly the served rows.
+        delivery_by_year=result_delivery(
+            [
+                result_row(
+                    project_id=p.project_id,
+                    priority=p.priority,
+                    outcome=p.outcome,
+                    within_year=p.within_plan_year,
+                    finish_week=p.finish_week,
+                    counts_toward_year=p.counts_toward_year,
+                    not_scheduled_priority=p.not_scheduled_priority,
+                    no_leader=p.no_leader,
+                    no_chamber_step_id=p.no_chamber_step_id,
+                    data_error=p.data_error,
+                )
+                for p in rows
+            ],
+            run_week=raw.current_week,
+            within_year_week=raw.plan_until_week,
+            horizon_weeks=raw.horizon_weeks,
         ),
     )
 

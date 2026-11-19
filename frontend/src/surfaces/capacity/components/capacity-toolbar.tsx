@@ -1,8 +1,8 @@
 import * as React from 'react';
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { useCurrentWeek, usePlanYearLabels } from '@/lib/plan-clock';
+import { formatWeek } from '@/lib/format';
+import { useCurrentWeek, usePlanYearEndWeek, usePlanYearLabels } from '@/lib/plan-clock';
 
 import type { CapacityView } from '../lib/pick-figures';
 
@@ -34,6 +34,7 @@ export interface CapacityToolbarProps {
 export function CapacityToolbar({ view, onViewChange, disabled = false }: CapacityToolbarProps): React.JSX.Element {
   // P37: the served calendar week and plan year.
   const currentWeek = useCurrentWeek();
+  const yearEndWeek = usePlanYearEndWeek();
   const { planYear } = usePlanYearLabels();
   return (
     <div className="flex flex-wrap items-center gap-s2" data-testid="capacity-toolbar">
@@ -75,7 +76,7 @@ export function CapacityToolbar({ view, onViewChange, disabled = false }: Capaci
         <ToggleGroupItem
           value="remaining"
           className={PILL_ITEM}
-          title={`Remaining year: week ${String(currentWeek ?? '…')} to week ${String(WITHIN_YEAR_WEEK)}`}
+          title={`Remaining year: ${currentWeek === null ? '…' : formatWeek(currentWeek)} to ${yearEndWeek === null ? '…' : formatWeek(yearEndWeek)}`}
         >
           YTD {planYear}
         </ToggleGroupItem>

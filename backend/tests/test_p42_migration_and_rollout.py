@@ -245,7 +245,8 @@ def test_script_dispatches_one_greedy_band_rules_run(url: str) -> None:
         }
         assert outcomes[ids["P4 queue"]].not_scheduled_priority is True
         assert outcomes[ids["Q dev"]].not_scheduled_priority is True
-        assert outcomes[ids["P3 queue"]].counts_toward_year is False
+        # P53 (R53-2): a queued P3 counts in a P53 run.
+        assert outcomes[ids["P3 queue"]].counts_toward_year is True
         assert outcomes[ids["P3 queue"]].not_scheduled_priority is False
         assert outcomes[ids["P2 queue"]].counts_toward_year is True
         assert outcomes[ids["P4 on hold"]].counts_toward_year is True

@@ -139,7 +139,10 @@ def test_canonical_hash_and_greedy_output_byte_identical_to_pre_p37() -> None:
     under the suite pin 31) for this exact input. The explicit W31 input
     must hash and solve to the same bytes."""
 
-    si = _si(31)
+    # P53 (R53-2, ADR 0063): the default search limit is now cw + 52 x 5; the
+    # pre-P37 digests were taken at the 78-week search, pinned explicitly here
+    # (an old-rules-epoch input). With it the bytes are unchanged.
+    si = dataclasses.replace(_si(31), horizon_weeks=78)
     assert (
         _digest(canonical_schedule_input_asdict(si))
         == "87341158d09004a259e7765a28e5976ec10195476435db8b0340d7fd1e5c0b96"
@@ -152,6 +155,7 @@ def test_canonical_hash_and_greedy_output_byte_identical_to_pre_p37() -> None:
     raw = dataclasses.asdict(si)
     for project in raw["projects"]:
         assert project.pop("step_pins") == ()
+        assert project.pop("actual_end_week") is None  # P53 (R53-2b): omitted at None
     assert _digest(raw) == "d3542beb18c2f126d99a7a05188b0bbd9b049eb3cb2bc50e0d527cab68172d4f"
     assert (
         _digest(canonical_schedule_output_asdict(run_greedy_sgs(si)))
@@ -162,10 +166,20 @@ def test_canonical_hash_and_greedy_output_byte_identical_to_pre_p37() -> None:
 # --- Range checks ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("week", [0, -1, 79, 1000])
+@pytest.mark.parametrize("week", [0, -1])
 def test_out_of_range_week_rejected(week: int) -> None:
     with pytest.raises(ValueError, match="current_week"):
         _si(week)
+
+
+@pytest.mark.parametrize("week", [79, 1000])
+def test_any_absolute_week_solves_with_the_derived_horizon(week: int) -> None:
+    # P53 (R53-1 / R53-2): weeks are absolute; the default horizon is derived
+    # from the week (cw + 260), so a later week is no longer out of range.
+    si = _si(week)
+    assert (si.horizon_weeks, si.current_week) == (week + 260, week)
+    with pytest.raises(ValueError, match="current_week"):
+        dataclasses.replace(si, horizon_weeks=week - 1)
 
 
 @pytest.mark.parametrize("week", [True, False, "31", 31.0, None])
@@ -185,14 +199,15 @@ def test_week_bounded_by_horizon_not_by_52_in_the_engine() -> None:
         validate_current_week(2, 1)
 
 
-@pytest.mark.parametrize("week", [PLAN_WEEK_MIN, 31, 47, PLAN_WEEK_MAX])
-def test_require_plan_week_accepts_1_to_52(week: int) -> None:
-    assert (PLAN_WEEK_MIN, PLAN_WEEK_MAX) == (1, 52)
+@pytest.mark.parametrize("week", [PLAN_WEEK_MIN, 31, 47, 52, 53, 104, 105, 364, 365, PLAN_WEEK_MAX])
+def test_require_plan_week_accepts_absolute_weeks(week: int) -> None:
+    # I41 amended by R53-1: an absolute week >= 1 (5200 = 100-year sanity bound).
+    assert (PLAN_WEEK_MIN, PLAN_WEEK_MAX) == (1, 5200)
     assert require_plan_week(week) == week
     assert check_i41_week_domain(week) == []
 
 
-@pytest.mark.parametrize("week", [0, 53, -5, 78])
+@pytest.mark.parametrize("week", [0, -5, 5201])
 def test_require_plan_week_rejects_out_of_range(week: int) -> None:
     with pytest.raises(ValueError, match="I41"):
         require_plan_week(week)
@@ -214,8 +229,9 @@ def test_require_plan_week_rejects_non_int(week: object) -> None:
 def test_w47_vs_w42_differs_only_through_the_week() -> None:
     a, b = _si(42), _si(47)
     da, db = canonical_schedule_input_asdict(a), canonical_schedule_input_asdict(b)
-    assert {k for k in da if da[k] != db[k]} == {"current_week"}
-    assert dataclasses.replace(a, current_week=47) == b
+    # P53: the derived search limit H = cw + 260 moves with the week.
+    assert {k for k in da if da[k] != db[k]} == {"current_week", "horizon_weeks"}
+    assert dataclasses.replace(a, current_week=47, horizon_weeks=47 + 260) == b
 
     oa, ob = run_greedy_sgs(a), run_greedy_sgs(b)
     assert oa != ob
@@ -291,14 +307,13 @@ def test_i38_run_week_equals_input_week() -> None:
 
 
 def test_i38_with_a_week_outside_the_domain_reports_i41_too() -> None:
+    # P53 (I41 amended): W60 (2027 W8) is a valid absolute week now.
     si = _si(60)
     out = run_greedy_sgs(si)
-    got = [v.invariant for v in check_i38_run_week(si, 60)]
-    assert got == ["I41"]
+    assert check_i38_run_week(si, 60) == []
     got = [v.invariant for v in check_i38_run_week(si, "60")]
     assert got == ["I41", "I38"]
-    # Without `run_week` an engine-only input past W52 is not an I41 failure
-    # (the horizon-overflow golden scenarios), but a live-state one is.
-    assert all(v.invariant != "I41" for v in validate_invariants(si, out, check_determinism=False))
     live = validate_invariants(si, out, check_determinism=False, live_state=True)
-    assert [v.invariant for v in live if v.invariant == "I41"] == ["I41"]
+    assert [v.invariant for v in live if v.invariant == "I41"] == []
+    got = [v.invariant for v in check_i38_run_week(si, 0)]
+    assert got == ["I41", "I38"]

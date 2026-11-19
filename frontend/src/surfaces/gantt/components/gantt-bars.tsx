@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { usePlanYearLabels } from '@/lib/plan-clock';
-import { formatPlanWeek } from '@/lib/format';
+import { formatPlanWeek, formatWeekWithYear } from '@/lib/format';
 import type { WorkflowStepKind } from '@/types/enums';
 
 import {
@@ -221,6 +221,20 @@ export function GanttBarGroup({
           className="gantt-bar-label tabular-nums"
         >
           {`${formatPlanWeek(planned.startWeek)} – ${formatPlanWeek(planned.endWeek)}`}
+        </text>
+      ) : null}
+      {!compact && plannedGeom?.startsBeforeOrigin && planned ? (
+        <text
+          x={plannedGeom.x + 4}
+          y={plannedY - 2}
+          fontSize={9}
+          fontWeight={600}
+          fill="hsl(var(--color-text-muted))"
+          pointerEvents="none"
+          data-testid="gantt-started-before"
+          className="tabular-nums"
+        >
+          {`started ${formatWeekWithYear(planned.startWeek)}`}
         </text>
       ) : null}
       {connector ? (

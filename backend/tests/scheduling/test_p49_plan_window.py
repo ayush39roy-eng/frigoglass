@@ -138,12 +138,18 @@ SCENARIOS: dict[str, Callable[[], tuple[WhatIfBaseline, PlanImportRequest]]] = {
     "port_file_only_104": lambda: _portfolio_scenario("file_only", 104),
 }
 
+# P53-T02 (ADR 0063) re-pin: values recomputed under the P53 rules. Every
+# changed field was attributed by an old/new differential (MEMORY P53-T02):
+# (a) a project LEFT_OUT at the 78-week search now placed within H = cw + 260
+# (portfolio p017 / p024; seed 26-00205 ...), (c) a queued P3 now counted
+# (R53-2: p003 / p009 / p023, import rows "In Queue" P3), and for plan import
+# R53-4 (`horizon_weeks` = H not u + 26; the QUEUED issue no longer raised).
 PRE_R49_SHA256 = {
-    "tiny_fo": "57a1168e860cf4236bb0af450e353d633aa5e61a211c10c019785f77d0b6cdae",
-    "port_merge_52": "70ff2609e26ab3571337853a921f481156ed39f81af291b8c61ba2e20e4e49e6",
-    "port_merge_104": "21702f841c0fde29deec78b041dd38671bb36542fe2c7139939e8300a8b8d3a3",
-    "port_file_only_52": "45decb4e81725437547159d29d4d2c4b709365fecb9338316f8b34a5987cec09",
-    "port_file_only_104": "9544442d7eae3848c8f596d7f085662f595b81836da322d0f1e4cb5a7583ae8b",
+    "port_file_only_104": "35706cbf7c0b0d29ddef68ed28739d05a31f9835c496664005fc5458c1d9ffb6",
+    "port_file_only_52": "1bc760aa62fead64cf0b1f72d4ec70b7f54d46620769d72e349b6b7b2b54c820",
+    "port_merge_104": "01e04303cb5787253e8189ff7b95ddaabfb2d08cea84a42dfeafa43d3b5ba3c2",
+    "port_merge_52": "63014fba1eb4d4336acbc988df6c199b64cc7050ac1f0bc4a2ca82ab8214b212",
+    "tiny_fo": "056bbba41523307253bfdc41367bf8bb11a689b1259e6183d3b208e358e40d12",
 }
 
 
@@ -282,18 +288,18 @@ def test_plan_from_above_the_preset_or_window_is_rejected() -> None:
 @pytest.mark.parametrize("u", [CW, 40, 52, 53, 70, 104])
 def test_plan_window_holds(name: str, u: int) -> None:
     base, req = SCENARIOS[name]()
-    # An edit floor past the window's horizon u + 26 is invalid (tested below).
-    edits = tuple(
-        e for e in req.edits if e.start_not_before_week is None or e.start_not_before_week <= u + 26
-    )
-    req = dataclasses.replace(req, plan_until_week=u, edits=edits)
+    # P53 (R53-4): the import searches to the live H (cw + 260 = 291 here),
+    # whatever u is; u only cuts "within".
+    h = base.schedule.horizon_weeks
+    assert h == CW + 260
+    req = dataclasses.replace(req, plan_until_week=u)
     res = run_plan_import(base, req)
-    assert res.plan_until_week == u and res.horizon_weeks == u + 26
+    assert res.plan_until_week == u and res.horizon_weeks == h
     assert res.plan_year_end_week == req.plan_year_end_week  # preset echo
     assert check_plan_window(base, req, res) == ()
     assert check_plan_from_floor(base, req, res) == ()
     si = build_plan_import_input(base, req)
-    assert (si.within_year_week, si.horizon_weeks) == (u, u + 26)
+    assert (si.within_year_week, si.horizon_weeks) == (u, h)
 
 
 def test_plan_until_windows_and_wording() -> None:
@@ -304,7 +310,7 @@ def test_plan_until_windows_and_wording() -> None:
         ("y1", "2027 W1–W18", 53, 70),
     ]
     assert res.capacity.weekly.weeks == tuple(range(31, 71))
-    assert res.workings[1].startswith("Plan window ends week 70; search horizon week 96;")
+    assert res.workings[1].startswith("Plan window ends week 70; search horizon week 291;")
     res52 = run_plan_import(base, dataclasses.replace(req, plan_until_week=45))
     assert [(w.key, w.from_week, w.to_week) for w in res52.capacity.windows] == [("y0", 31, 45)]
     for i in res52.issues:
@@ -325,19 +331,41 @@ def test_plan_until_cut_off_in_both_merge_runs() -> None:
     assert check_plan_window(base, req, res) == ()
 
 
-@pytest.mark.parametrize("bad", [CW - 1, 105, True])
+@pytest.mark.parametrize("bad", [CW - 1, CW + 261, True])
 def test_plan_until_out_of_range_is_rejected(bad: object) -> None:
     base, req = _tiny_scenario()
     with pytest.raises(ValueError, match="plan_until_week"):
         run_plan_import(base, dataclasses.replace(req, plan_until_week=bad))  # type: ignore[arg-type]
 
 
-def test_plan_until_bounds_the_edit_floor() -> None:
+def test_plan_until_accepts_any_week_up_to_h_and_later_year_windows() -> None:
+    # P53 (R53-4): u up to H = cw + 260; one capacity window per calendar year.
     base, req = _tiny_scenario()
-    late = (StepEdit("row-1", "PDD-H", None, 80, None),)
+    res = run_plan_import(base, dataclasses.replace(req, plan_until_week=CW + 260))
+    assert [(w.key, w.label, w.from_week, w.to_week) for w in res.capacity.windows] == [
+        ("y0", "2026 W31–W52", 31, 52),
+        ("y1", "2027", 53, 104),
+        ("y2", "2028", 105, 156),
+        ("y3", "2029", 157, 208),
+        ("y4", "2030", 209, 260),
+        ("y5", "2031 W1–W31", 261, 291),
+    ]
+    assert check_plan_window(base, dataclasses.replace(req, plan_until_week=CW + 260), res) == ()
+    for pyew in (156, 260):
+        run_plan_import(base, dataclasses.replace(req, plan_year_end_week=pyew))
+    for pyew in (312, 100, 0):
+        with pytest.raises(ValueError, match="plan_year_end_week"):
+            run_plan_import(base, dataclasses.replace(req, plan_year_end_week=pyew))
+
+
+def test_plan_until_bounds_the_edit_floor() -> None:
+    # P53 (R53-4): the edit floor is bounded by the search limit H, not u + 26.
+    base, req = _tiny_scenario()
+    late = (StepEdit("row-1", "PDD-H", None, CW + 261, None),)
     with pytest.raises(ValueError, match="start_not_before_week"):
         run_plan_import(base, dataclasses.replace(req, plan_until_week=52, edits=late))
-    run_plan_import(base, dataclasses.replace(req, plan_until_week=60, edits=late))
+    ok = (StepEdit("row-1", "PDD-H", None, 80, None),)
+    run_plan_import(base, dataclasses.replace(req, plan_until_week=52, edits=ok))
 
 
 # =====================================================================================

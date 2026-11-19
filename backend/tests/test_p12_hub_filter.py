@@ -204,8 +204,9 @@ async def test_p42_counts_are_non_zero_in_scope_and_zero_out_of_scope(db_session
     await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
     async with _client(db_session) as client:
         everything = await _get(client, "/dashboard/completing-within-year")
+    # P53 (I53): a P53 run has no QUEUED row, so `queued_count` is not
+    # checked as non-zero here.
     for key in (
-        "queued_count",
         "not_scheduled_priority_count",
         "excluded_count",
         "counting_outcome_count",

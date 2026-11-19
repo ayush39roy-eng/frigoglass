@@ -262,8 +262,9 @@ def test_week_labels_are_server_made():
     assert plan_week_label(47) == "W47 2026 (16 Nov 2026)"
     assert plan_week_label(52) == "W52 2026 (21 Dec 2026)"
     assert plan_week_label(104) == "W52 2027 (27 Dec 2027)"
+    # P53 (R53-4): cw..H, H = cw + 52 × N (N = 5 by default).
     choices = plan_week_choices(47)
-    assert [c.week for c in choices] == list(range(47, 105))
+    assert [c.week for c in choices] == list(range(47, 47 + 260 + 1))
 
 
 def _wctx(cw: int) -> Any:
@@ -275,8 +276,9 @@ def _req(**kw: Any) -> ImportSimulateRequest:
 
 
 def test_resolve_defaults_to_cw_and_the_preset():
+    # P53 (I56): u unset → year_end(year_of(cw)).
     w = resolve_plan_window(_wctx(47), _req())
-    assert (w.from_week, w.until_week, w.until_given) == (47, 104, False)
+    assert (w.from_week, w.until_week, w.until_given) == (47, 52, False)
     assert plan_window_issues(w) == [] and plan_window_label(w) is None
     w = resolve_plan_window(_wctx(47), _req(plan_year_end_week=52, plan_until_week=52))
     assert (w.until_week, w.until_given) == (52, False)  # the preset: plan-year wording
@@ -298,7 +300,8 @@ def test_resolve_rejects_out_of_window(kw):
 
 
 def test_schema_bounds_the_weeks():
-    for bad in ({"plan_from_week": 105}, {"plan_until_week": 0}, {"plan_from_week": "53"}):
+    # P53 (R53-4): the schema caps at 5200; ≤ H is the service's check.
+    for bad in ({"plan_from_week": 5201}, {"plan_until_week": 0}, {"plan_from_week": "53"}):
         with pytest.raises(ValueError):
             _req(**bad)
 
@@ -319,7 +322,13 @@ def test_rerun_raises_f_then_u():
     assert (w.from_week, w.until_week) == (50, 50)
     assert [i.code for i in plan_window_issues(w)] == [PLAN_FROM_RAISED, PLAN_UNTIL_RAISED]
     # Nothing to raise: no issue.
+    # P53 (I56): an unset preset is year_end(year_of(cw)) = 52, so a later
+    # f raises u to f on a re-run.
     w = resolve_plan_window(_wctx(50), _req(plan_from_week=55, plan_window_rerun=True))
+    assert (w.from_week, w.until_week) == (55, 55)
+    w = resolve_plan_window(
+        _wctx(50), _req(plan_from_week=55, plan_year_end_week=104, plan_window_rerun=True)
+    )
     assert (w.from_week, w.until_week) == (55, 104) and plan_window_issues(w) == [
         i for i in plan_window_issues(w) if i.code == PLAN_FROM_LATER
     ]
@@ -356,7 +365,9 @@ async def test_api_parse_serves_window_bounds_and_simulate_echoes(db_session):
         parsed = (await parse(c, standard_file())).json()
         cw = parsed["current_week"]
         assert parsed["plan_from_min_week"] == cw
-        assert [x["week"] for x in parsed["plan_week_choices"]] == list(range(cw, 105))
+        # P53 (R53-4): cw..H.
+        assert [x["week"] for x in parsed["plan_week_choices"]] == list(range(cw, cw + 261))
+        assert [x["week"] for x in parsed["plan_until_presets"]][:2] == [52, 104]
         assert all(r["file_band"] is None for r in parsed["rows"])
         rows = parsed["rows"]
         base = (await c.post("/whatif/import/simulate", json={"rows": rows})).json()
@@ -375,7 +386,8 @@ async def test_api_parse_serves_window_bounds_and_simulate_echoes(db_session):
     # f = cw (given or not) is the same response.
     assert same == base
     assert base["plan_from_week"] == cw and base["plan_from_min_week"] == cw
-    assert base["plan_until_week"] == 104 and base["plan_window_label"] is None
+    # P53 (I56): u unset → year_end(year_of(cw)).
+    assert base["plan_until_week"] == 52 and base["plan_window_label"] is None
     assert base["plan_from_label"] == plan_week_label(cw)
     assert not any(i["code"].startswith("PLAN_") for i in base["issues"])
 
@@ -432,7 +444,7 @@ async def test_api_saved_scenario_stores_window_and_reads_old_rows(db_session):
     assert saved["result"]["plan_from_week"] == f
     # Unset in the request: stored resolved (never null).
     assert plain["request"]["plan_from_week"] == cw
-    assert plain["request"]["plan_until_week"] == 104
+    assert plain["request"]["plan_until_week"] == 52  # P53 (I56): year_end(year_of(cw))
     by_id = {x["id"]: x for x in listed}
     assert (by_id[saved["id"]]["plan_from_week"], by_id[saved["id"]]["plan_until_week"]) == (f, 80)
 
@@ -472,7 +484,7 @@ async def test_api_saved_scenario_stores_window_and_reads_old_rows(db_session):
             "/whatif/import/simulate", json={**got["request"], "plan_window_rerun": True}
         )
         no_flag = await c.post("/whatif/import/simulate", json=got["request"])
-    assert (got["plan_from_week"], got["plan_until_week"]) == (cw - 4, 104)
+    assert (got["plan_from_week"], got["plan_until_week"]) == (cw - 4, 52)  # P53 (I56)
     assert got["request"]["plan_from_week"] == cw - 4
     assert got["result"]["plan_from_week"] == cw - 4
     assert {x["id"]: x["plan_from_week"] for x in listed}[plain["id"]] == cw - 4

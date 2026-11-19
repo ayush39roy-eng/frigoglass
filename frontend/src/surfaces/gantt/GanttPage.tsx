@@ -18,8 +18,7 @@ import { hasHubSelection, useHubFilter, useHubSelection, type HubSelection } fro
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { PlanWeekNotice } from '@/components/shared/plan-week-notice';
 import { formatInteger } from '@/lib/format';
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { useCurrentWeek, usePlanYearLabels } from '@/lib/plan-clock';
+import { useCurrentWeek, usePlanYearEndWeek, usePlanYearLabels } from '@/lib/plan-clock';
 import { SURFACES } from '@/app/nav';
 import { usePermission, useSessionStore } from '@/stores/session';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
@@ -211,7 +210,7 @@ export default function GanttPage(): React.JSX.Element {
   const title = TIMELINE_SURFACE?.title ?? 'Project Execution Timeline';
   const description =
     TIMELINE_SURFACE?.summary ??
-    'Hand-built virtualized Gantt: 14 workflow steps per project across the plan year and the first 26 weeks of the next.';
+    'Hand-built virtualized Gantt: 14 workflow steps per project from the plan year to the last finish of the plan.';
 
   const denied = authKind([ganttQuery.error]);
   const rows = React.useMemo<GanttProjectRow[]>(
@@ -229,10 +228,13 @@ export default function GanttPage(): React.JSX.Element {
 
   // P40-T03c (ADR 0054): drafted step Start / End weeks, one batch Save.
   const calendarWeek = useCurrentWeek();
+  // P53 (R53-8): step pins stay inside the current plan year, whose last week
+  // is served (`/me.plan_year_end_week`), never a constant.
+  const servedYearEnd = usePlanYearEndWeek();
   const pinSave = useStepPinSave();
   const pinDrafts = useStepPinDraftState({
     minWeek: ganttQuery.data?.current_week ?? calendarWeek ?? 1,
-    maxWeek: WITHIN_YEAR_WEEK,
+    maxWeek: ganttQuery.data?.plan_year_end_week ?? servedYearEnd ?? calendarWeek ?? 1,
     locked: pinSave.saving,
   });
   const [pinBarError, setPinBarError] = React.useState<string | null>(null);
@@ -452,11 +454,10 @@ export default function GanttPage(): React.JSX.Element {
                             data).
                           </span>
                           <span className="block">
-                            <strong>Red connector</strong> = delay magnitude. The timeline shows
-                            the plan year and the first 26 weeks of {years.spilloverYear}, with the
-                            year above the weeks; work after the dashed week {WITHIN_YEAR_WEEK}{' '}
-                            year-end line runs into the shaded {years.spilloverYear} weeks
-                            (spillover). Whether a project
+                            <strong>Red connector</strong> = delay magnitude. The timeline starts at
+                            the plan year and runs to the last finish of the run, with the year above
+                            the weeks; work after the dashed year-end line runs into the shaded
+                            later years (spillover). Whether a project
                             completes within the year is the server&apos;s <code>spillover</code>{' '}
                             / <code>left out</code> flag, shown as a badge — not computed here.
                           </span>
@@ -523,6 +524,11 @@ export default function GanttPage(): React.JSX.Element {
                         canWrite={canWrite}
                         canUnfreeze={canUnfreeze}
                         markUnplaced
+                        timeline={{
+                          planYearStartWeek: data.plan_year_start_week,
+                          planYearEndWeek: data.plan_year_end_week,
+                          lastFinishWeek: data.last_finish_week,
+                        }}
                         {...(chartHeight !== undefined ? { maxHeight: chartHeight } : {})}
                       />
                     </>

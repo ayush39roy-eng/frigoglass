@@ -38,7 +38,6 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import domain_constants as dc
 from api.deps import principal_can
 from core.principal import Principal
 from core.rbac import Action, Surface
@@ -53,6 +52,7 @@ from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunP
 from models.user import User
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from models.workspace import ProjectComment, ProjectFile
+from scheduling.weeks import plan_year_end_week
 from scheduling.workflow import derive_remaining, fte_span, is_valid_fte
 from schemas.workspace import (
     ActivityComment,
@@ -332,7 +332,7 @@ def health_badge(
     - `left_out` → `left_out`;
     - `blocked` (a Blocked stage held the project) → `blocked` (ruling 5);
     - projected finish (`last_step_end + delay`, delay terminal per ADR 0004)
-      after `WITHIN_YEAR_WEEK` → `off_track`;
+      after the run's plan-year end → `off_track`;
     - any stage overrunning its planned span (`stage_overrun`; ADR 0032: a
       design stage's planned span is FTE-stretched, so pass the assigned
       engineers' `fte_by_engineer` and the project's `frozen` flag), or any
@@ -351,7 +351,8 @@ def health_badge(
     if outcome.last_step_end_week is None:
         return "unscheduled"
     finish = outcome.last_step_end_week + outcome.delay_weeks_applied
-    if finish > dc.WITHIN_YEAR_WEEK:
+    # P53 (R53-8): the run's plan-year end (52 for every 2026 run).
+    if finish > plan_year_end_week(run_current_week):
         return "off_track"
     for step in run_steps:
         if step.skipped:

@@ -196,12 +196,9 @@ async def test_flags_are_persisted_as_emitted(db_session: AsyncSession) -> None:
     for pid, o in emitted.items():
         assert stored[pid].counts_toward_year == o.counts_toward_year, pid
         assert stored[pid].not_scheduled_priority == o.not_scheduled_priority, pid
-    # The seed holds both classes (P42-T02: 25 not scheduled, 8 queued).
+    # The seed holds not-scheduled P4/Q projects. P53 (R53-2, I53): a queued
+    # P3 counts, so a P53 run has no counting-false row besides frozen P4/Q.
     assert sum(o.not_scheduled_priority for o in stored.values()) > 0
-    assert (
-        sum((not o.counts_toward_year) and not o.not_scheduled_priority for o in stored.values())
-        > 0
-    )
     # I49: a not-scheduled project books no rows and is never within / spillover.
     for row in stored.values():
         if row.not_scheduled_priority:
@@ -226,7 +223,8 @@ async def test_completing_within_year_buckets_sum_to_row_count(db_session: Async
     for r in rows:
         by_bucket[r["outcome"]] = by_bucket.get(r["outcome"], 0) + 1
     assert body["not_scheduled_priority_count"] == by_bucket.get("NOT_SCHEDULED_PRIORITY", 0) > 0
-    assert body["queued_count"] == by_bucket.get("QUEUED", 0) > 0
+    # P53 (I53): no QUEUED row in a P53 run.
+    assert body["queued_count"] == by_bucket.get("QUEUED", 0) == 0
     assert body["within_year_count"] == by_bucket.get("WITHIN_YEAR", 0)
     assert body["spillover_count"] == by_bucket.get("SPILLOVER", 0)
     assert body["left_out_count"] == by_bucket.get("LEFT_OUT", 0)
@@ -371,7 +369,8 @@ async def test_greedy_recalc_counts_counting_rows_only(db_session: AsyncSession)
     assert body["queued_count"] == sum(
         (not o.counts_toward_year) and not o.not_scheduled_priority for o in stored
     )
-    assert body["queued_count"] > 0 and body["not_scheduled_priority_count"] > 0
+    # P53 (I53): a queued P3 counts; QUEUED is empty in a P53 run.
+    assert body["queued_count"] == 0 and body["not_scheduled_priority_count"] > 0
 
 
 # --- labels ----------------------------------------------------------------------------
@@ -777,9 +776,10 @@ async def test_preview_p4_to_p3_in_queue_joins_the_queue(db_session: AsyncSessio
     moved = resp.json()["moved"]
     assert moved["not_scheduled_priority_before"] is True
     assert moved["not_scheduled_priority_after"] is False
-    assert moved["counts_toward_year_after"] is False
+    # P53 (R53-2): a queued P3 counts; the copy says it joins the plan.
+    assert moved["counts_toward_year_after"] is True
     assert moved["effect"] == "joins_queue"
-    assert moved["effect_label"] == "joins the queue — not counted this year"
+    assert moved["effect_label"] == "joins the plan — scheduled after P1/P2 and started P3"
     for change in resp.json()["changes"]:
         assert "counts_toward_year_before" in change
         assert "priority_label" in change

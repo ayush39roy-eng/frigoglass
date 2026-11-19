@@ -305,7 +305,8 @@ class ProjectWorkflowStep(TimestampMixin, Base):
     # --- Manual step pins (P40, ADR 0054 ruling R40-1..R40-15) ----------------
     #: A person's fixed placement of this step: weeks `manual_start_week ..
     #: manual_end_week`, end inclusive (length `me − ms + 1`). Both set or both
-    #: null; stored `1 <= ms <= me <= 52` (CHECK `step_pin_range`). Written only
+    #: null; stored `1 <= ms <= me` (CHECK `step_pin_range`; the plan-year cap
+    #: `me <= plan_year_end_week(cw)` is checked by the service since P53). Written only
     #: by `PUT /gantt/step-pins` (Admin / Super Admin) and cleared by it, by the
     #: stage leaving Not Started (`cause = "stage_started"`) or by a workflow
     #: re-point (`cause = "workflow_change"`), each with an audit row (I46). A
@@ -411,12 +412,14 @@ class ProjectWorkflowStep(TimestampMixin, Base):
         CheckConstraint("plan_gap_weeks BETWEEN -104 AND 104", name="plan_gap_weeks_range"),
         # P35 (migration p35b_step_excluded): I34 (i).
         CheckConstraint("NOT (excluded AND status = 'Done')", name="excluded_not_done"),
-        # P40 (migration p40a_step_pins, ADR 0054 R40-1).
+        # P40 (migration p40a_step_pins, ADR 0054 R40-1); P53 (p53a_week_line,
+        # R53-7/R53-8): the plan-year cap moved to the service
+        # (`services.step_pins`, `me <= plan_year_end_week(cw)`).
         CheckConstraint(
             "(manual_start_week IS NULL AND manual_end_week IS NULL) OR ("
             "manual_start_week IS NOT NULL AND manual_end_week IS NOT NULL "
             "AND manual_start_week >= 1 AND manual_start_week <= manual_end_week "
-            "AND manual_end_week <= 52)",
+            "AND manual_end_week >= 1)",
             name="step_pin_range",
         ),
     )

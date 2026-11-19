@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import domain_constants as dc
+from scheduling.weeks import MAX_ABSOLUTE_WEEK, horizon_for, plan_year_end_week
 
 # --- Constants owned by the scheduling package ------------------------------
 
@@ -280,7 +280,7 @@ class StepTimingInput:
     - `duration_override_weeks` (1..104 or None): this project's effective
       duration for the step (`override ?? lead_time[...]`). Ignored for a step
       whose lead time is 0 (the step stays skipped).
-    - `start_not_before_week` (1..HORIZON_WEEKS or None): a `Not Started`
+    - `start_not_before_week` (1..horizon_weeks or None): a `Not Started`
       step may not start before this week. Ignored for In Progress / Blocked /
       Done steps and for frozen projects.
     - `overlap_weeks` (0..104, ADR 0043, P32): the step may start up to this
@@ -311,7 +311,7 @@ class StepTimingInput:
 
     step_id: str
     duration_override_weeks: int | None  # 1..104, None = lead-time table
-    start_not_before_week: int | None  # 1..HORIZON_WEEKS, None = no floor
+    start_not_before_week: int | None  # 1..horizon_weeks (H), None = no floor
     overlap_weeks: int = 0  # ADR 0043: 0..104, 0 = no overlap
     wait_weeks: int = 0  # P33 (ADR 0046 §4, R33-4): 0..104, 0 = no wait
     lead_weeks: int | None = None  # P33 (R33-1): 0..104, None = the input's lead-time table
@@ -421,6 +421,12 @@ class ProjectInput:
     # `()` is omitted from the canonical / hashed form, so every pre-P40
     # caller, golden file, hash and stored run is byte-identical (I48(a)).
     step_pins: tuple[StepPinInput, ...] = ()
+    # R53-2b (ADR 0063, I61): the project's actual end (absolute week), read
+    # only for a Commercialized project's delivered year
+    # (`weeks.commercialized_within_year`). `None` = not recorded. Omitted
+    # from the canonical / hashed form at `None`, so every pre-P53 hash and
+    # golden file is byte-identical.
+    actual_end_week: int | None = None
 
     def __post_init__(self) -> None:
         if self.capacity_hub == "":
@@ -517,12 +523,12 @@ class ProjectScheduleOutcome:
     # `not_scheduled_priority`: True exactly on a non-frozen P4/Q project in a
     # schedulable status, excluded before validation (`excluded` is True, no
     # rows, null weeks, never within year / spillover / left out / blocked).
-    # `counts_toward_year`: `domain_constants.counts_toward_year(priority,
-    # status)` on the run input; `within_year` and `spillover` are AND-ed with
-    # it (`greedy.year_flags`). A queued P3 (In Queue) is scheduled with spare
-    # capacity only and is False. Both are omitted from the canonical /
-    # hashed form at their default (False / True), so a run with no P4/Q and
-    # no queued P3 serialises exactly as before P42.
+    # `counts_toward_year`: `weeks.counts_toward_year(priority, status)` on
+    # the run input (R53-2: a queued P3 counts, it is still walked last in the
+    # queue tier; only a P4/Q in a schedulable status is False);
+    # `within_year` and `spillover` are AND-ed with it (`greedy.year_flags`).
+    # Both are omitted from the canonical / hashed form at their default
+    # (False / True), so a run with no P4/Q serialises exactly as before P42.
     not_scheduled_priority: bool = False
     counts_toward_year: bool = True
 
@@ -552,21 +558,35 @@ class ScheduleInput:
     # and every hash over it are byte-identical (ADR 0052 pin condition (ii)).
     # `__post_init__` rejects anything that is not a week (see there).
     current_week: int = field(kw_only=True)
-    horizon_weeks: int = dc.HORIZON_WEEKS
-    within_year_week: int = dc.WITHIN_YEAR_WEEK
+    # R53-2 / R53-5 (ADR 0063, I57 / I58): the run's search limit H and its
+    # within-year cut-off. `0` (the default) means "derive from
+    # `current_week`" in `__post_init__`: `horizon_weeks = horizon_for(cw)`
+    # (cw + 52 x DEFAULT_HORIZON_YEARS) and `within_year_week =
+    # plan_year_end_week(cw)`. A service passes the stored N's
+    # `horizon_for(cw, N)`; plan import passes u. No fixed calendar week is a
+    # default (I58).
+    horizon_weeks: int = 0
+    within_year_week: int = 0
     # ADR 0047 §3 / R33-8 (P33-T03): the category list, scheduling order key 5
     # (rank value) and the workflow each category belongs to. The default is
     # the seven seeded categories, so every pre-P33 caller is unchanged.
     categories: tuple[CategoryInput, ...] = field(default_factory=default_categories)
 
     def __post_init__(self) -> None:
+        if isinstance(self.current_week, int) and not isinstance(self.current_week, bool):
+            # Frozen dataclass: the documented idiom for a derived default.
+            if self.horizon_weeks == 0 and self.current_week >= 1:
+                object.__setattr__(self, "horizon_weeks", horizon_for(self.current_week))
+            if self.within_year_week == 0 and self.current_week >= 1:
+                object.__setattr__(self, "within_year_week", plan_year_end_week(self.current_week))
         validate_current_week(self.current_week, self.horizon_weeks)
 
 
-#: I41: the domain of a served / stored plan week (DOMAIN_RULES "The current
-#: week follows the calendar"). Literal, not read from the environment.
+#: I41 (amended by R53-1, ADR 0063): the domain of a served / stored plan
+#: week, an absolute week from 2026 W1. The upper bound is the 100-year
+#: sanity bound (`weeks.MAX_ABSOLUTE_WEEK`), not a calendar cap.
 PLAN_WEEK_MIN: int = 1
-PLAN_WEEK_MAX: int = 52
+PLAN_WEEK_MAX: int = MAX_ABSOLUTE_WEEK
 
 
 def validate_current_week(week: object, horizon_weeks: int) -> None:
@@ -577,7 +597,7 @@ def validate_current_week(week: object, horizon_weeks: int) -> None:
     as `ValueError` (`TypeError` for a wrong type) at construction, so no
     solver ever sees such an input.
 
-    The narrower I41 domain `1..52` (`PLAN_WEEK_MIN..PLAN_WEEK_MAX`) is a
+    The I41 domain (`PLAN_WEEK_MIN..PLAN_WEEK_MAX`, absolute since R53) is a
     property of the clock, enforced by `require_plan_week` (the builders'
     check) and by the validator's I41 check, not here: the engine's
     edge-case golden scenarios solve from weeks past 52 (horizon overflow
@@ -590,7 +610,8 @@ def validate_current_week(week: object, horizon_weeks: int) -> None:
 
 
 def require_plan_week(week: object) -> int:
-    """I41 / API_CONTRACT_P37: a plan week is an int in 1..52. Returns it,
+    """I41 (R53-1) / API_CONTRACT_P37: a plan week is an absolute int week in
+    1..MAX_ABSOLUTE_WEEK. Returns it,
     or raises (`TypeError` for a non-int or bool, `ValueError` out of
     range). The check every caller that builds a live, What-if, plan-import
     or Monte Carlo input from the clock or a stored run applies."""

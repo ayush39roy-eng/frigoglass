@@ -420,7 +420,8 @@ def test_expected_projected_unconstrained_values():
 
 def test_left_out_and_excluded_have_no_projected_week():
     late = _project("p-late", category="A+")
-    _, by = _run(_si(late, current_week=60))
+    # P53: overflow golden, pinned at the pre-P53 search (H 78, cut-off 52).
+    _, by = _run(_si(late, current_week=60, horizon_weeks=78, within_year_week=52))
     assert by["p-late"].left_out and by["p-late"].projected_end_week is None
     assert by["p-late"].unconstrained_end_week == 103  # 60 + 44 - 1
 

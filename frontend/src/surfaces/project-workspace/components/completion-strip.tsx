@@ -1,8 +1,7 @@
 import * as React from 'react';
 
 import { WeekText } from '@/components/shared/week-text';
-import { DISPLAY_HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { useCurrentWeek } from '@/lib/plan-clock';
+import { useCurrentWeek, usePlanYearWindow } from '@/lib/plan-clock';
 import { formatWeek } from '@/lib/format';
 import { GanttCompletionMarkers } from '@/surfaces/gantt/components/gantt-completion-markers';
 import { expectedLabel, slipLabel } from '@/surfaces/gantt/lib/completion-labels';
@@ -13,9 +12,9 @@ import type { WorkspaceSchedule } from '../api/types';
 /**
  * Mini completion strip — the Gantt's expected / will-be-completed / slip
  * language at a glance, drawn by the SAME `<GanttCompletionMarkers>` (same
- * tokens, dash patterns and caps) on a compact W1–W52 plan-year scale (ADR
- * 0024). A completion week past W52 is not drawn on the strip and reads "After
- * W52" in the legend. Every week is a server field (I16).
+ * tokens, dash patterns and caps) on a compact plan-year scale (ADR 0024; P53:
+ * the served `[plan_year_start_week, plan_year_end_week]`). A completion week
+ * past the year end is not drawn on the strip. Every week is a server field (I16).
  */
 const WEEK_PX = 5;
 const HEIGHT = 34;
@@ -29,16 +28,20 @@ export function CompletionStrip({
   targetEndWeek: number | null;
   projectName: string;
 }): React.JSX.Element {
+  const window = usePlanYearWindow();
+  const originWeek = window?.start ?? 1;
+  const horizonWeeks = window ? window.end - window.start + 1 : 52;
   const scale: WeekScale = {
-    originWeek: 1,
-    horizonWeeks: DISPLAY_HORIZON_WEEKS,
+    originWeek,
+    horizonWeeks,
     weekWidthPx: WEEK_PX,
-    totalWidthPx: DISPLAY_HORIZON_WEEKS * WEEK_PX,
+    totalWidthPx: horizonWeeks * WEEK_PX,
   };
   // P37: "now" is the served calendar week (ADR 0052 §4).
   const currentWeek = useCurrentWeek();
   const nowX = currentWeek === null ? null : weekToX(currentWeek, scale);
-  const yearX = weekEndToX(WITHIN_YEAR_WEEK, scale);
+  const yearEndWeek = window?.end ?? null;
+  const yearX = yearEndWeek === null ? scale.totalWidthPx : weekEndToX(yearEndWeek, scale);
 
   return (
     <div className="space-y-1" data-testid="completion-strip">
@@ -96,7 +99,7 @@ export function CompletionStrip({
           <dt>Now</dt>
           <dd className="font-mono">{currentWeek === null ? '—' : formatWeek(currentWeek)}</dd>
           <dt className="ml-2">Year-end</dt>
-          <dd className="font-mono">{formatWeek(WITHIN_YEAR_WEEK)}</dd>
+          <dd className="font-mono">{yearEndWeek === null ? '—' : formatWeek(yearEndWeek)}</dd>
         </div>
       </dl>
     </div>

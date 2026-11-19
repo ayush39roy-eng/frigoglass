@@ -4,6 +4,7 @@
 // its CONTRACT_TABLE). Every figure on the What-if surface is one of these fields,
 // shown as served: the browser never computes booked %, counts, deltas or
 // requirements (Invariant I9 / I19).
+import type { DeliveryByYear } from '@/types/delivery-by-year';
 
 import type {
   BookingStatus,
@@ -260,6 +261,9 @@ export interface SimulateResponse {
   reassigned_project_ids: string[];
   greedy_runs: number;
   workings: string[];
+  /** P53 (R53-3, API_CONTRACT_P53 §4.2): the served delivery-by-year table of
+   *  the scenario's outcomes. Optional for a pre-P53 server. */
+  delivery_by_year?: DeliveryByYear | null;
 }
 
 export interface DesignerAdditionOut {
@@ -305,6 +309,8 @@ export interface SolveResponse {
   searched_chamber_regions: string[];
   achieved: SimulateResponse | null;
   workings: string[];
+  /** P53 (R53-3): served per scenario; the achieved scenario's table. */
+  delivery_by_year?: DeliveryByYear | null;
 }
 
 export interface SnapshotChamberOut {

@@ -30,6 +30,7 @@ from sqlalchemy import ColumnElement, and_
 
 import domain_constants as dc
 from models.schedule import ScheduleRunProjectOutcome
+from scheduling.weeks import week_of_year
 
 OutcomeBucket = Literal[
     "NOT_SCHEDULED_PRIORITY", "QUEUED", "BLOCKED", "WITHIN_YEAR", "SPILLOVER", "LEFT_OUT"
@@ -98,15 +99,19 @@ def priority_label(priority: object) -> str | None:
     return dc.PRIORITY_LABELS.get(str(value))
 
 
-def queued_display(*, left_out: bool, projected_end_week: int | None) -> str:
+def queued_display(
+    *, left_out: bool, projected_end_week: int | None, year_end_week: int = 52
+) -> str:
     """R42-4 display of a queued project: "Queued — fits by W{n}",
-    "Queued — after W52" or "Queued — no slot"."""
+    "Queued — after W52" or "Queued — no slot". P53 (R53-2): only pre-P53
+    rows are ever QUEUED; `year_end_week` is that run's plan-year end (52 for
+    every stored run, since every pre-P53 run is a 2026 run)."""
 
     if left_out or projected_end_week is None:
         return "Queued — no slot"
-    if projected_end_week <= dc.WITHIN_YEAR_WEEK:
-        return f"Queued — fits by W{projected_end_week}"
-    return f"Queued — after W{dc.WITHIN_YEAR_WEEK}"
+    if projected_end_week <= year_end_week:
+        return f"Queued — fits by W{week_of_year(projected_end_week)}"
+    return f"Queued — after W{week_of_year(year_end_week)}"
 
 
 def outcome_label(outcome: _OutcomeFlags | None, projected_end_week: int | None) -> str | None:

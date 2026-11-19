@@ -45,6 +45,7 @@ import { SectionBoundary } from '@/components/shared/section-boundary';
 import { StaggerSection } from './components/stagger';
 import { StatusOverviewCards } from './components/status-overview-cards';
 import { WithinYearKpis } from './components/within-year-panel';
+import { DeliveryByYearCard } from './components/delivery-by-year-card';
 import { DeliveryGaugeCard } from './components/delivery-gauge-card';
 import { VipProjectsCard } from './components/vip/vip-projects-card';
 import { Button } from '@/components/ui/button';
@@ -380,6 +381,14 @@ export default function DashboardPage(): React.JSX.Element {
                 )}
               </SectionBoundary>
             </StaggerSection>
+
+            {/* P53 (ADR 0063, R53-3): delivered by year — the served table; its
+                first row equals the Within-year KPI above (I59). */}
+            {withinYear.data?.has_active_schedule_run ? (
+              <StaggerSection>
+                <DeliveryByYearCard data={withinYear.data} hub={hub} selection={selection} />
+              </StaggerSection>
+            ) : null}
 
             {/* P17-R08: Project pipeline summary | Completing within year (Hub ×
                 Type tables with drill-down), then Pipeline vs completing. */}

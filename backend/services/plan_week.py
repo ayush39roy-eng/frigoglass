@@ -10,9 +10,8 @@ dispatch).
   equality, so a lowered pin is "behind" too);
 - `recalculating`: the weeks differ and some run is queued or running inside
   the in-flight window (any trigger);
-- `failed`: the weeks differ and the week's rollover budget is spent. That
-  needs P37-T05's `plan_week_rollovers` table; until it lands this module
-  never answers `failed` (served as `pending`, per the P37-T04 plan row);
+- `failed`: the weeks differ and the week's rollover budget is spent
+  (`plan_week_rollovers.status = 'failed'` for the calendar week, P37-T05);
 - `pending` otherwise.
 """
 
@@ -29,6 +28,7 @@ from models.schedule import ScheduleRun
 from services.active_run import get_active_run
 from services.plan_clock import PlanClock
 from services.run_dispatch import in_flight_window
+from services.week_rollover import rollover_failed_for_week
 
 PlanWeekStatus = Literal["current", "recalculating", "pending", "failed"]
 
@@ -63,6 +63,8 @@ async def plan_week_state(
         status = "current"
     elif await any_run_in_flight(db):
         status = "recalculating"
+    elif await rollover_failed_for_week(db, clock.week):
+        status = "failed"
     else:
         status = "pending"
     return active.current_week, active.version, status

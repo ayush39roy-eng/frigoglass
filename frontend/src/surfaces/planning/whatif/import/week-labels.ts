@@ -1,10 +1,13 @@
+import { PLAN_YEAR_WEEKS } from '@/lib/week-line';
+
 /**
  * Year-aware week labels for the plan import (ADR 0044 §7): weeks are absolute
  * (`1..52` = `base_year`, `53..104` = `base_year + 1`, …). Formatting only — the
  * week numbers are the server's fields.
  */
 
-const WEEKS_PER_YEAR = 52;
+/** The structural plan-year length (the shared week-line mirror, P53). */
+const WEEKS_PER_YEAR = PLAN_YEAR_WEEKS;
 
 export function weekYear(week: number, baseYear: number): { year: number; week: number } {
   const zero = Math.max(0, Math.floor(week) - 1);

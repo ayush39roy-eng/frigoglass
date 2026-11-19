@@ -64,6 +64,7 @@ from typing import Literal
 import domain_constants as dc
 from scheduling import hubs as hub_names
 from scheduling.active_weeks import EngineerActiveWeeks
+from scheduling.delivery import outcome_left_out_reason
 from scheduling.greedy import (
     _cat_not_allowed,
     category_maps_for,
@@ -78,6 +79,12 @@ from scheduling.types import (
     ProjectScheduleOutcome,
     ScheduleInput,
     ScheduleOutput,
+)
+from scheduling.weeks import (
+    PLAN_YEAR_WEEKS,
+    plan_year_end_week,
+    plan_year_start_week,
+    week_of_year,
 )
 from scheduling.workflow import (
     CategoryMaps,
@@ -145,7 +152,8 @@ OUTCOME_CLASSES: tuple[str, ...] = (
     # ADR 0056 (R42-3 / R42-6): appended so the existing keys keep their order.
     # `not_scheduled_priority`: a non-frozen P4/Q project (never scheduled).
     # `queued`: a scheduled-or-not project with `counts_toward_year = false`
-    # (a queued P3, or a frozen P4/Q); never within year, never spillover.
+    # (since R53-2 only a frozen P4/Q; a queued P3 counts); never within
+    # year, never spillover.
     "not_scheduled_priority",
     "queued",
 )
@@ -376,7 +384,8 @@ def _hub_figures(cal: HubCalendarInput | None, current_week: int) -> _HubFigures
             + cal.casual_leave_days
             + cal.annual_leave_days
         ) / float(cal.weekdays_per_week)
-    remaining_weeks = max(0.0, wiy - current_week)
+    # R53-8: remaining = weeks_in_year - week_of_year(cw) (identical in 2026).
+    remaining_weeks = max(0.0, wiy - week_of_year(current_week))
     fraction = remaining_weeks / wiy
     return _HubFigures(
         deduction_weeks=deduction,
@@ -402,7 +411,7 @@ def _efficient_lab_weeks(
     calibration: float,
     region_holidays: float,
 ) -> float:
-    working = float(dc.WITHIN_YEAR_WEEK) - region_holidays - maintenance - breakdown - calibration
+    working = float(PLAN_YEAR_WEEKS) - region_holidays - maintenance - breakdown - calibration
     return working * efficiency * platforms
 
 
@@ -981,8 +990,10 @@ def _supply(
     if entries:
         # R38-1, exact: FTE as Decimal, week factor as Fraction. Hubs without an
         # entry keep the float path above, so their figures do not move.
+        # R53-1 / R53-8: the plan-year window of cw on the absolute week line
+        # (active weeks are absolute, `covered_plan_weeks`); 1..52 in 2026.
         cw = current_week
-        wy = dc.WITHIN_YEAR_WEEK
+        ys, wy = plan_year_start_week(cw), plan_year_end_week(cw)
         for hub in sorted({a.hub for a in entries.values()}):
             base = sum(
                 (
@@ -994,7 +1005,10 @@ def _supply(
             )
             mine = [entries[k] for k in sorted(entries) if entries[k].hub == hub]
             y = base + sum(
-                (_exact_fte(a.fte) * Fraction(a.active_weeks(1, wy), wy) for a in mine),
+                (
+                    _exact_fte(a.fte) * Fraction(a.active_weeks(ys, wy), PLAN_YEAR_WEEKS)
+                    for a in mine
+                ),
                 Fraction(0),
             )
             r = base
@@ -1034,13 +1048,13 @@ def _supply(
             holidays.get(ch.lab_region, 0.0),
         )
         n_ch[ch.lab_region] += 1
-    year = float(dc.WITHIN_YEAR_WEEK)
+    year = float(PLAN_YEAR_WEEKS)
     return _Supply(
         fte_by_hub=dict(fte),
         wwpe_by_hub=wwpe,
         remaining_wwpe_by_hub=rem,
         lab_year_by_region=dict(lab_year),
-        lab_remaining_fraction=max(0.0, year - current_week) / year,
+        lab_remaining_fraction=max(0.0, year - week_of_year(current_week)) / year,
         chambers_by_region=dict(n_ch),
         region_holidays=holidays,
         fte_year_by_hub=fte_year,
@@ -1300,7 +1314,9 @@ def analytic_requirements(
         n_added_by_region[_lab_region_of(hub)] += 1
 
     workings: list[str] = []
-    basis_label = "year" if basis == "year" else f"remaining (W{cw + 1}-W{dc.WITHIN_YEAR_WEEK})"
+    basis_label = (
+        "year" if basis == "year" else f"remaining (W{week_of_year(cw) + 1}-W{PLAN_YEAR_WEEKS})"
+    )
     workings.append(
         f"Capacity basis: {basis_label}. A hub or lab region counts as safe while booked % "
         f"is below {_fmt(target_below_pct)} % (served rule: load and capacity rounded to 2 dp)."
@@ -1464,7 +1480,7 @@ def analytic_requirements(
                 f"{region} lab: adding chambers cannot reach the target (no capacity per chamber)."
             )
         else:
-            working_wk = float(dc.WITHIN_YEAR_WEEK) - hol - mnt - brk - cal
+            working_wk = float(PLAN_YEAR_WEEKS) - hol - mnt - brk - cal
             need_cap = _fmt(_round2(new_load * 100.0 / target_below_pct))
             tail = (
                 ""
@@ -1540,6 +1556,16 @@ class ProjectResult:
     #: ADR 0056 (R42-3 / R42-4): copied from the outcome (I49 / I50).
     counts_toward_year: bool = True
     not_scheduled_priority: bool = False
+    #: P53-R01 (F53-1, I58): the run's not-placed diagnostics, copied from
+    #: the outcome, so a What-if serves the same `left_out_reason` as the
+    #: Dashboard (`beyond_horizon` only when none applies). `left_out` is the
+    #: raw outcome flag (the `outcome` class ranks `data_error` above it);
+    #: `left_out_reason` = `delivery.outcome_left_out_reason(outcome)`.
+    left_out: bool = False
+    no_leader: bool = False
+    no_chamber_step_id: str | None = None
+    data_error: str | None = None
+    left_out_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1765,6 +1791,11 @@ def _simulate_with(
                 unconstrained_end_week=o.unconstrained_end_week,
                 counts_toward_year=o.counts_toward_year,
                 not_scheduled_priority=o.not_scheduled_priority,
+                left_out=o.left_out,
+                no_leader=o.no_leader,
+                no_chamber_step_id=o.no_chamber_step_id,
+                data_error=o.data_error,
+                left_out_reason=outcome_left_out_reason(o),
             )
         )
 
@@ -1951,21 +1982,26 @@ def _violators(
     res: SimulationResult,
     base_run: _BaselineRun,
     unattainable: frozenset[str] | None = None,
+    *,
+    within_year_week: int,
+    horizon_weeks: int,
 ) -> tuple[tuple[str, ...], int]:
     """(violating project ids, total lateness weeks over the violators).
     `unattainable`: new projects excluded from the target (None: decide per
-    result from its own unconstrained finish)."""
+    result from its own unconstrained finish). `within_year_week` /
+    `horizon_weeks` are the run input's (R53-8)."""
 
+    wy, hz = within_year_week, horizon_weeks
     ids: list[str] = []
     late = 0
     if target == "all_new_within_year":
         for r in res.projects:
-            skip = _unattainable(r) if unattainable is None else r.project_id in unattainable
+            skip = _unattainable(r, wy) if unattainable is None else r.project_id in unattainable
             # R42-3: a not-scheduled (P4/Q) new project is outside the plan.
             skip = skip or r.not_scheduled_priority
-            if r.is_new and not _meets_new_target(r) and not skip:
+            if r.is_new and not _meets_new_target(r, wy) and not skip:
                 ids.append(r.project_id)
-                late += _lateness(r)
+                late += _lateness(r, wy, hz)
     else:
         for r in res.projects:
             if r.is_new:
@@ -1973,30 +2009,27 @@ def _violators(
             b = base_run.by_id.get(r.project_id)
             if b is not None and b.within_year and not r.within_year:
                 ids.append(r.project_id)
-                late += _lateness(r)
+                late += _lateness(r, wy, hz)
     return tuple(ids), late
 
 
-def _meets_new_target(r: ProjectResult) -> bool:
+def _meets_new_target(r: ProjectResult, within_year_week: int) -> bool:
     """`all_new_within_year` for one new project. A counting project must be
-    `within_year`. ADR 0056 (P42-T02 resolution, see MEMORY): a queued new
-    project (`counts_toward_year = false`) can never be `within_year` (I50),
-    so it meets the target when it fits on spare capacity: scheduled, with
-    `projected_end_week <= WITHIN_YEAR_WEEK` ("Queued — fits by W{n}")."""
+    `within_year`. ADR 0056 (P42-T02 resolution, see MEMORY): a non-counting
+    new project (`counts_toward_year = false`; since R53-2 only a frozen
+    P4/Q, never a new project) can never be `within_year` (I50), so it meets
+    the target when it fits on spare capacity: scheduled, with
+    `projected_end_week <= within_year_week`."""
 
     if r.counts_toward_year:
         return r.outcome == "within_year"
-    return (
-        r.outcome == "queued"
-        and r.finish_week is not None
-        and (r.finish_week <= dc.WITHIN_YEAR_WEEK)
-    )
+    return r.outcome == "queued" and r.finish_week is not None and r.finish_week <= within_year_week
 
 
-def _unattainable(r: ProjectResult) -> bool:
-    """A project that misses W52 even with unlimited resources."""
+def _unattainable(r: ProjectResult, within_year_week: int) -> bool:
+    """A project that misses the plan-year end even with unlimited resources."""
 
-    return r.unconstrained_end_week is not None and r.unconstrained_end_week > dc.WITHIN_YEAR_WEEK
+    return r.unconstrained_end_week is not None and r.unconstrained_end_week > within_year_week
 
 
 def _unattainable_new_projects(applied: AppliedScenario, designer_fte: float) -> frozenset[str]:
@@ -2023,15 +2056,18 @@ def _unattainable_new_projects(applied: AppliedScenario, designer_fte: float) ->
         speed = max(designer_fte, best.get(p.capacity_hub, 0.0))
         plan = analyse_project(p, workflows[p.workflow_id], table, leader_fte=speed)
         u = unconstrained_end_week(plan, si.current_week)
-        if u is not None and u > dc.WITHIN_YEAR_WEEK:
+        if u is not None and u > si.within_year_week:
             out.add(p.project_id)
     return frozenset(out)
 
 
-def _lateness(r: ProjectResult) -> int:
+def _lateness(r: ProjectResult, within_year_week: int, horizon_weeks: int) -> int:
+    """Weeks past the cut-off; a not-placed project counts as one week past
+    the run's search limit H (R53-8: the input's fields, not constants)."""
+
     if r.finish_week is None:
-        return dc.HORIZON_WEEKS + 1 - dc.WITHIN_YEAR_WEEK
-    return max(0, r.finish_week - dc.WITHIN_YEAR_WEEK)
+        return horizon_weeks + 1 - within_year_week
+    return max(0, r.finish_week - within_year_week)
 
 
 def _compositions(total: int, parts: int) -> Iterable[tuple[int, ...]]:
@@ -2195,7 +2231,14 @@ def solve_minimum_additions(
         sc = _apply_units(scenario, dims, units, designer_fte)
         res = _simulate_with(baseline, sc, base_run, runs, budget, check_limits=False)
         runs += 1
-        vio, late = _violators(target, res, base_run, unattainable_ids)
+        vio, late = _violators(
+            target,
+            res,
+            base_run,
+            unattainable_ids,
+            within_year_week=applied0.schedule_input.within_year_week,
+            horizon_weeks=applied0.schedule_input.horizon_weeks,
+        )
         cache[units] = (res, vio, late)
         hub_of = {r.project_id: r.hub for r in res.projects}
         bad_regions = {_lab_region_of(hub_of[p]) for p in vio}
@@ -2518,7 +2561,8 @@ def solve_minimum_additions(
     )
     if unattainable:
         workings.append(
-            f"{len(unattainable)} added project(s) cannot finish by W{dc.WITHIN_YEAR_WEEK} even "
+            f"{len(unattainable)} added project(s) cannot finish by "
+            f"W{week_of_year(applied0.schedule_input.within_year_week)} even "
             "with unlimited designers and chambers (their lead-time critical path, at the "
             "fastest designer FTE available, alone ends later); they are excluded from the "
             "search."

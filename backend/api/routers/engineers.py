@@ -637,7 +637,7 @@ async def deactivate_engineer(
     engineer_before = engineer_audit_state(engineer)
     engineer.active = False
     engineer.deactivated_at = datetime.now(UTC)
-    engineer.deactivated_week = clock.week
+    engineer.deactivated_week = clock.week_of_year  # R53-1: year-relative
     engineer.deactivated_plan_year = clock.plan_year
     engineer.deactivated_by_user_id = current_user.user_id
     engineer.deactivation_reason = body.reason
@@ -646,7 +646,7 @@ async def deactivate_engineer(
             id=uuid.uuid4(),
             engineer_id=engineer.id,
             from_plan_year=clock.plan_year,
-            from_week=clock.week,
+            from_week=clock.week_of_year,
         )
     )
 
@@ -765,7 +765,7 @@ async def reactivate_engineer(
     before = engineer_audit_state(engineer)
     period = await open_period(db, engineer.id)
     if period is not None:
-        to = (clock.plan_year, clock.week)
+        to = (clock.plan_year, clock.week_of_year)
         # A lowered week pin can put "now" before the period's start: the
         # period then covers nothing (same-week rule), never a negative span.
         if to < (period.from_plan_year, period.from_week):

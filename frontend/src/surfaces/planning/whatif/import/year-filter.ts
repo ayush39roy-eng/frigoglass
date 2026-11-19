@@ -1,3 +1,4 @@
+import { PLAN_YEAR_WEEKS } from '@/lib/week-line';
 import type { WhatIfOutcome } from '../../api/whatif-types';
 import type { Breakdown, BreakdownYear, ImportResultProject, ImportSimulateResponse } from './import-types';
 
@@ -12,7 +13,8 @@ export const YEAR_ALL = 'all';
 export const YEAR_LATER = 'later';
 export const YEAR_NOT_PLACED = 'not_placed';
 
-const WEEKS_PER_YEAR = 52;
+/** The structural plan-year length (the shared week-line mirror, P53). */
+const WEEKS_PER_YEAR = PLAN_YEAR_WEEKS;
 /** C1: "later" is a finish after the base year + 1 (week > 104). */
 const LATER_AFTER_WEEK = 2 * WEEKS_PER_YEAR;
 

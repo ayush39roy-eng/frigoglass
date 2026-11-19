@@ -279,7 +279,8 @@ async def test_vip_year_membership(db_session):
         plan = await client.get("/vip-projects", params={"year": "plan"})
         nxt = await client.get("/vip-projects", params={"year": "next"})
     assert [p["name"] for p in plan.json()["hubs"][0]["projects"]] == ["Both years", "Pipeline"]
-    assert nxt.json()["week_range"] == [53, 78]
+    # P53 (R53-6): "next" is the whole following year.
+    assert nxt.json()["week_range"] == [53, 104]
     assert nxt.json()["run_id"] == str(run.id)
     assert [p["name"] for p in nxt.json()["hubs"][0]["projects"]] == ["Both years", "Next only"]
 

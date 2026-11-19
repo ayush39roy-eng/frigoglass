@@ -65,7 +65,7 @@ function useRecalculatePlan() {
   });
 }
 
-function RecalculateButton({ compact }: { compact?: boolean }): React.JSX.Element {
+export function RecalculateButton({ compact }: { compact?: boolean }): React.JSX.Element {
   const recalc = useRecalculatePlan();
   return (
     <>
@@ -195,27 +195,5 @@ export function SimulatedWeekNotice({
       <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
       Simulated from {formatWeek(simulatedWeek)}; the active plan is from {formatWeek(runWeek)}.
     </p>
-  );
-}
-
-/** "Planning year 2026 closed" banner (R37-10). Nothing while the year is open. */
-export function PlanYearClosedNotice({ className, detail }: { className?: string; detail?: string }): React.JSX.Element | null {
-  const clock = usePlanClock();
-  if (!clock?.closed) return null;
-  return (
-    <div
-      role="status"
-      data-testid="plan-year-closed-notice"
-      className={cn(
-        'flex items-center gap-s2 rounded-card border border-border bg-surface-sunken px-s3 py-s2 text-xs text-text',
-        className,
-      )}
-    >
-      <AlertTriangle className="size-3.5 shrink-0 text-text-subtle" aria-hidden="true" />
-      <span>
-        Planning year {clock.planYear} closed. The week stays at {formatWeek(clock.week)} until an Admin opens{' '}
-        {clock.spilloverYear}.{detail ? ` ${detail}` : ''}
-      </span>
-    </div>
   );
 }

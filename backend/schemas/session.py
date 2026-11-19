@@ -72,20 +72,30 @@ class MeResponse(BaseModel):
     #: manager without re-opening it for every role (P10-F03's frontend
     #: half, queued after this).
     is_delegate_manager: bool
-    #: P13-T15, source changed at P37-T04 (ADR 0052, API_CONTRACT_P37 §1): the
-    #: calendar week (`services.plan_clock`, Europe/Athens, or the
-    #: `RPD_CURRENT_WEEK` pin) and `52 − current_week` (the current week not
-    #: counted, OQ #91). For the header "Week N · M wks left".
-    current_week: int = Field(ge=1, le=52)
+    #: P13-T15; P37-T04 (calendar source); P53 (ADR 0063 R53-1, I41): the
+    #: ABSOLUTE calendar week from 2026 W1 (2027 W1 = 53), Europe/Athens with
+    #: ISO W53 folded into W52, or the `RPD_CURRENT_WEEK` pin (1..5200).
+    current_week: int = Field(ge=1, le=5200)
+    #: I40 (amended): `plan_year_end_week − current_week` (current week not
+    #: counted, OQ #91).
     weeks_left_in_year: int = Field(ge=0, le=51)
     #: P37-T04: today's date in Europe/Athens (the header shows it, never the
     #: browser's date).
     as_of_date: date
-    #: P37-T04: `RPD_PLAN_YEAR` (default 2026).
+    #: P53 (R53-1): `year_of(current_week)`. No longer from `RPD_PLAN_YEAR`.
     plan_year: int
-    #: P37-T04: the ISO week-year is later than `plan_year`; `current_week` is
-    #: then 52 and `POST /check-ins` answers 409 `PLAN_YEAR_CLOSED` (R37-10).
-    plan_year_closed: bool
+    #: P53 (R53-6): the year of absolute week 1 (2026, never changes).
+    week_base_year: int
+    #: P53: `year_start(plan_year)` / `year_end(plan_year)`.
+    plan_year_start_week: int
+    plan_year_end_week: int
+    #: P53 (R53-2): the Admin setting N (1..10, default 5) and the search
+    #: limit `current_week + 52 × N` the next run will store.
+    horizon_years: int = Field(ge=1, le=10)
+    horizon_weeks: int
+    #: Deprecated at P53 (R53-1: no closed year). Always false; removed in
+    #: the next release.
+    plan_year_closed: bool = False
     #: P37-T04: `"pinned"` when `RPD_CURRENT_WEEK` is set.
     week_source: Literal["calendar", "pinned"]
     #: P37-T04: the next Monday 00:00 Europe/Athens; the client refetches then.

@@ -3,8 +3,8 @@ import * as React from 'react';
 import { BookingStatusChip } from '@/components/shared/booking-status-chip';
 import { Badge } from '@/components/ui/badge';
 import { CardInfo } from '@/components/ui/card-info';
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { useCurrentWeek, usePlanYearLabels } from '@/lib/plan-clock';
+import { formatWeek } from '@/lib/format';
+import { useCurrentWeek, usePlanYearEndWeek, usePlanYearLabels } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session';
 
@@ -38,11 +38,11 @@ import { formatFigure, formatPctCompact } from '../lib/status-format';
 
 /** P37: the remaining year starts at the served calendar week (the same week
  *  the hub-load response's `remaining_weeks` is evaluated at, I19/I40). */
-function horizonCaption(horizon: CapacityHorizon, currentWeek: number | null): string {
+function horizonCaption(horizon: CapacityHorizon, currentWeek: number | null, yearEndWeek: number | null): string {
   if (horizon === 'year') return 'Full year';
-  return currentWeek === null
+  return currentWeek === null || yearEndWeek === null
     ? 'Remaining year'
-    : `Remaining year (W${String(currentWeek)}–W${String(WITHIN_YEAR_WEEK)})`;
+    : `Remaining year (${formatWeek(currentWeek)}–${formatWeek(yearEndWeek)})`;
 }
 
 function BookedLine({
@@ -85,6 +85,7 @@ export function HubBookingStrip({
   const { horizon } = view;
   const scopedToHubs = useSessionStore((s) => (s.me ? !s.me.hub_scope_all : false));
   const currentWeek = useCurrentWeek();
+  const yearEndWeek = usePlanYearEndWeek();
   const { planYear } = usePlanYearLabels();
   if (rows.length === 0) return null;
   const groups = groupByHubFamily(rows);
@@ -101,7 +102,7 @@ export function HubBookingStrip({
             </Badge>
           ) : null}
           <Badge tone="outline" className="rounded-pill" data-testid="booked-strip-horizon">
-            {horizonCaption(horizon, currentWeek)}
+            {horizonCaption(horizon, currentWeek, yearEndWeek)}
           </Badge>
           <CardInfo label="How booked % is defined">
             <p>

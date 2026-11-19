@@ -45563,6 +45563,57 @@ No feature code written.
 - **Invariant I63 — tail flags.** `far_finish` and `leader_overloaded` are computed only from the run's stored rows. Neither changes any placement, and the input and output of a run are identical with or without them. Engineer-level tail data is never served to a role or hub that cannot already see that engineer's utilisation.
 - **Task split:** T02 adds the `far_finish` / `leader_tail_week` pure helpers and I63. T03 adds the served fields and their role gating. T04 adds the warnings in the drill-in, on the Timeline and on Capacity.
 
+
+
+## [2026-11-19] P53-T03 contract — backend-builder (contract published; implementation in progress)
+
+- Contract: `docs/API_CONTRACT_P53.md`. Frontend (P53-T04) builds from it. Names follow the ruling and the frontend's `lib/api/session.ts` draft: `/me` gains `week_base_year`, `plan_year_start_week`, `plan_year_end_week`, `horizon_years`, `horizon_weeks`; `current_week` absolute; `plan_year = year_of(current_week)`; `plan_year_closed` always false (deprecated).
+- Admin N: `GET/PUT /scheduling-settings` `{horizon_years, version, updated_at, current_week, horizon_weeks_next_run}`; PUT Admin/Super Admin, optimistic `version`, audit `settings.scheduling_horizon_updated`, no dispatch.
+- Runs: `ScheduleRunSummary` + `rules_epoch`, `within_year_week`, `pre_p53`, `rules_label`; `/changes` + `includes_rule_change`.
+- Delivery table `DeliveryByYear {run_week, base_year, within_year_week, horizon_weeks, horizon_years, rows[{kind, year, label, indicative, p1, p2, p3, total, cum_*, left_out_reasons}]}` on `/dashboard/completing-within-year` (+ `delivery_by_year_unavailable`, `tail_warnings` counts, row `priority_at_run`/`delivery_year`/`left_out_reason`/`far_finish`), drill-in `GET /dashboard/delivery-by-year/projects`, What-if simulate/solve, import simulate, saved scenarios, dashboard export sheet "Delivery by year".
+- Leader tail fields (`leader_tail_week`, `leader_overloaded`, `far_finish_count`) only on `/capacity/engineer-utilization`.
+- Import: `plan_year_end_week` int|null (multiple of 52), `plan_until_presets`, bounds cw ≤ f ≤ u ≤ H in the service; schema caps 5200.
+
+## [2026-11-19] P53-T02 interface (early publication for P53-T03) — algorithm-engineer
+
+Helpers are importable now; bodies may still be refined, names/signatures are fixed.
+Lives in `backend/scheduling/` (scope rule): `domain_constants.py` is not touched, so T03 should import these
+directly (do NOT re-implement `year_of` in `domain_constants`/`plan_clock` — I57 "one backend implementation";
+`domain_constants` must not import `scheduling` (cycle via `scheduling/__init__` → greedy → dc)).
+
+- `scheduling.weeks` (no deps): `WEEK_BASE_YEAR=2026`, `PLAN_YEAR_WEEKS=52`, `DEFAULT_HORIZON_YEARS=5`,
+  `MIN_HORIZON_YEARS=1`, `MAX_HORIZON_YEARS=10`, `CP_SAT_WINDOW_MARGIN_WEEKS=26`, `MAX_ABSOLUTE_WEEK=5200`;
+  `year_of(w)`, `week_of_year(w)`, `year_start(Y)`, `year_end(Y)`, `abs_week(iso_year, iso_week)`,
+  `year_relative_to_abs(plan_year, week)`, `plan_year_start_week(cw)`, `plan_year_end_week(cw)`,
+  `weeks_left_in_year(cw)`, `check_horizon_years(n) -> int` (raises), `horizon_for(cw, n=5) -> int`,
+  `cp_sat_window(within_year_week, horizon_weeks)`, `year_windows(first, last) -> Iterator[(year, a, b)]`,
+  `plan_until_presets(cw, H) -> tuple[(year, year_end)]` (years whose end ≤ H),
+  `counts_toward_year(priority, status)` (R53-2, queued P3 counts), `queue_tier(priority, status)` (old R42-4
+  negation), `commercialized_within_year(actual_end_week, cw)` (R53-2b). `domain_constants.counts_toward_year`
+  still holds the R42-4 rule — T03 should point every service caller (e.g. preview / bucket code) at
+  `scheduling.weeks.counts_toward_year` / `queue_tier` as appropriate, or make dc's delegate-free copy match.
+- `ScheduleInput.horizon_weeks` / `within_year_week` default `0` = derived in `__post_init__`
+  (`horizon_for(cw)` with N=5, `plan_year_end_week(cw)`). Services pass `horizon_weeks=horizon_for(cw, N)`
+  (N read at run-row creation); plan import passes u as within_year_week (engine does this itself).
+- `ProjectInput.actual_end_week: int | None = None` (keyword, last field; omitted from the canonical/hashed
+  form at None). T03 fills it from `projects.actual_end_week` (absolute week).
+- `scheduling.types.PLAN_WEEK_MAX` / `require_plan_week`: domain now `1..5200` (I41 amended).
+- `scheduling.delivery`: `left_out_reason(*, left_out, no_leader, no_chamber_step_id, data_error) -> str|None`
+  (`no_leader|no_chamber|data_error|beyond_horizon`), `outcome_left_out_reason(outcome)`;
+  `DeliveryRow(project_id, priority, counts_toward_year, not_scheduled_priority, blocked, within_year, spillover,
+  left_out, completion_week, left_out_reason=None)` (priority = `priority_at_run`, completion =
+  `projected_end_week`); `delivery_by_year(rows, *, run_week) -> DeliveryByYear(plan_year, years:
+  tuple[DeliveryYear(year, is_plan_year, indicative, counts: BandCounts, cumulative: BandCounts)], not_placed,
+  not_placed_by_reason: {reason: BandCounts}, blocked)`; `BandCounts(p1, p2, p3, other, total, project_ids:
+  {"P1"|"P2"|"P3"|"other": ids})` (`other` = Commercialized P4/Q/no-band rows that count, so Total stays equal to
+  the Dashboard bucket count); `delivery_rows(si, out)`, `delivery_row_of(outcome, priority)`.
+  Rows follow the stored bucket precedence of `services.outcome_buckets` (blocked > within/spill > left_out).
+- R53-9 / I63: `far_finish(*, scheduled, completion_week, run_week) -> bool`;
+  `leader_tails(*, run_week, design_rows: Iterable[(engineer_id, end_week)], project_leaders:
+  Iterable[(project_id, leader_id|None)], far_finish_project_ids) -> tuple[LeaderTail(engineer_id,
+  leader_tail_week, overloaded, far_finish_projects)]`; `tail_flags(si, out) -> (frozenset far ids, tails)`.
+- `scheduling.active_weeks.covered_plan_weeks(periods, plan_year, *, last_week=None)`: returns ABSOLUTE weeks
+  `year_start(plan_year)..last_week` (default `year_end(plan_year + 1)`); identical output for plan_year 2026.
 ## [2026-11-19] P54-T01 — ADR 0064: band rank editable from Project Registration — orchestrator
 
 - The owner asked for the rank inside a priority band to be changeable in Project Registration, like on the Priority board, so that the order inside P1/P2 follows the rank.
@@ -45642,6 +45693,78 @@ No feature code written.
   - eslint on the changed files: 0 errors. The only warning is the existing `useVirtualizer` compiler warning.
   - `vitest --maxWorkers=2` over projects, priority-board, registration and shared priority-move: 371/372. The 1 failure is the P53-T04 schema test noted in the P55-T03 entry.
 
+
+
+## [2026-11-19] P53-T02 — algorithm-engineer — scheduling/ for ADR 0063 (R53-1..R53-9, I57–I63)
+
+**Done (backend/scheduling/ + backend/tests/scheduling/ only; nothing committed).** Interface as published in the
+"P53-T02 interface" note above (unchanged).
+- New `scheduling/weeks.py` (the single backend `year_of`/`week_of_year`, I57; `horizon_for`, `cp_sat_window`,
+  `year_windows`, `plan_until_presets`, `counts_toward_year` (R53-2) / `queue_tier`, `commercialized_within_year`
+  (R53-2b)). New `scheduling/delivery.py` (`delivery_by_year`, `left_out_reason`, `far_finish`, `leader_tails`,
+  `tail_flags`). No module in `scheduling/` reads `WITHIN_YEAR_WEEK` / `HORIZON_WEEKS` any more (AST test).
+- `ScheduleInput.horizon_weeks` / `within_year_week` default 0 → derived (`horizon_for(cw)` N=5, `year_end(year_of(cw))`);
+  `ProjectInput.actual_end_week` (omitted from canonical form at None); `PLAN_WEEK_MAX` / `require_plan_week` /
+  I41 → 1..5200.
+- greedy: sort key 1a = `queue_tier` (order byte-identical), counting = R53-2; `_excluded_outcome(project, cw)` R53-2b.
+- cp_sat: model window `W_cp = min(wy + 26, H)`; hint from a greedy run at `W_cp` (fallback full H when pins/floors
+  lie past `W_cp`); post-solve tail = model-absent counting projects then queue-tier ones in `ctx.ordered` order with
+  `_schedule_one_project` to H; `CpSatSolveInfo.num_tail_walked / model_project_ids / tail_project_ids`; the absent-case
+  upper bound now includes start floors and `within_year_week` (an I57-violating engine input with wy > W_cp was
+  INFEASIBLE). solver_comparison: bucket `CP_SAT_TAIL_WALKED_BY_GREEDY` (explained); metric weights = non-queue-tier.
+- Monte Carlo: unchanged code, already searches to the input's H. whatif: every `dc.WITHIN_YEAR_WEEK/HORIZON_WEEKS`
+  read replaced (year capacity `PLAN_YEAR_WEEKS`, cut-offs = input `within_year_week`, `_lateness` uses input H,
+  remaining = `52 − week_of_year(cw)`, active-weeks window = plan-year window on the absolute line).
+- plan_import (R53-4): horizon = baseline H; `cw ≤ f ≤ u ≤ H`; `plan_year_end_week` = positive multiple of 52 and
+  `cw ≤ preset ≤ H`; windows `y0, y1, …` one per calendar year; `plan_from_label` generic; `PLAN_YEAR_END_WEEKS` and
+  `PLAN_UNTIL_MAX_WEEK` removed; `SPILLOVER_MARGIN_WEEKS` kept = CP-SAT margin only.
+- active_weeks: covered weeks are ABSOLUTE `year_start(Y)..last_week` (default `year_end(Y+1)`, identical for 2026);
+  `MAX_COVERED_WEEK` = 5200.
+- invariants: I9/I50 counting R53-2 + R53-2b; I30/I37a key 1a, I51, I52 on `queue_tier`; I56 → H and generic windows;
+  new `check_i57_run_weeks`, `check_i58_horizon`, `_check_i58_rows_within_horizon` (in `validate_invariants`; frozen
+  projects exempt, I10), `check_i59_delivery`, `check_i60_cp_sat_tail`, `check_i63_tail_flags`. I61 is the I9
+  Commercialized branch; I62 is service-side (nothing to assert on an output).
+- Tests: new `tests/scheduling/test_p53_open_horizon.py` (73 tests: week table 1/47/52/53/104/105/364/365, ISO-53
+  fold, N 1/5/10, clock weeks 47/52/53/104/105/364/365, R53-2b table, CP-SAT tail + I60 negatives, MC to H, delivery
+  table + I59 negatives, tail flags + I63, What-if 2027 supply, N=10 timing). Scheduling suite: **956 passed**, coverage
+  95.5 % (COVERAGE_FILE in scratch). ruff + format clean; mypy: no new errors in product modules (remaining ones are the
+  pre-existing `_selftest*` / ortools-stub ones).
+- **N = 10 timing (R53-2 acceptance):** seed (46 projects) greedy median 5.2 ms at N = 1 / 5 / 10 (H 83 / 291 / 551);
+  flat, as in the pre-work measurement. Dev-DB figure is T05's (no DB access from scheduling/).
+
+**Golden attribution (old/new differential, HEAD copy in the session scratchpad).** Walk order identical in every case.
+- Kept byte-identical by pinning the pre-P53 search explicitly (old-rules-epoch fixtures): overflow scenarios
+  `scenario_left_out_at_horizon` (3 selftests, cw 77 → also `within_year_week=52`), p9 golden `p-late` (cw 60),
+  p12 floor-beyond-reach, p33 wait-to-horizon ×2, p40 lapsed-pin ×3, p37 pre-P37 digests (all three digests unchanged
+  at H = 78).
+- Re-pinned, every changed field attributed: seed greedy (a) 1 [26-00205] + (c) 8 queued P3; seed CP-SAT (a) 1 via
+  the tail + (c) 8; neutral seed greedy (a) 12, CP-SAT (a) 6 via the tail; **0 knock-on (b), 0 unattributed; no
+  CP-SAT model placement changed**. Portfolio fixture: (a) p017, p024; (c) p003, p009, p023 → What-if/analytic loads
+  (+6 design wk) and counts. Plan import: R53-4 (`horizon_weeks` = H; LEFT_OUT text "before week H"; QUEUED issue no
+  longer raised for In Queue P3) plus (a)/(c). Files: `_PRE_P38_HASHES`, `_PRE_P42_NEUTRAL`, `PRE_R49_SHA256`.
+- Semantics updated to R53 in: test_adr0040_vip_order (tier = queue_tier), test_p42_* (queued P3 counts; frozen
+  queued P3 counts), test_whatif (no "queued" class in portfolio), test_p32 (import horizon H; 60-week project is
+  spillover at u=52, LEFT_OUT only with H=78), test_p49 (H bounds, year windows), test_p37 (absolute week domain),
+  test_p38 (absolute covered weeks), test_p9_r01 F2 (tail re-walk).
+
+**Open points for T03 / the auditor.**
+1. `domain_constants.counts_toward_year` still holds R42-4 and `WITHIN_YEAR_WEEK`/`HORIZON_WEEKS` still exist (outside my
+   scope). Services must use `scheduling.weeks` and pass `horizon_weeks=horizon_for(cw, N)` (e.g.
+   `api/routers/workflow_settings.py:295`, `services/schedule_persistence.py`); a default ScheduleInput now searches
+   cw + 260.
+2. A CP-SAT project that the tail cannot place keeps the rows the greedy walk booked before running out (the shared
+   greedy LEFT_OUT convention), not only its anchored rows as before. Consequence of "the tail IS the greedy routine";
+   flag if the auditor wants the pre-P53 clean CP-SAT LEFT_OUT shape back.
+3. I60 wording: frozen and needs-greedy projects are still walked by the shared greedy routine to H *before* the model
+   (unchanged since P2-T06); `check_i60_cp_sat_tail` asserts the model/tail parts only.
+4. Delivery table has an `other` column (counting status-excluded rows whose band is P4/Q/none, e.g. a Commercialized
+   P4 delivered in Y0) so that Y0 Total = the Dashboard WITHIN_YEAR count; `p1+p2+p3+other = total`. Data-error rows are
+   not listed (no bucket, as on the Dashboard). Needs auditor acknowledgement against R53-3's "P1+P2+P3 = Total".
+5. `PlanImportRequest.plan_year_end_week` default is still 104; T03 should pass the served preset (default
+   `year_end(year_of(cw))`) — the engine rejects a preset past H.
+6. Process note: while taking a mypy baseline I ran `git stash` / `git stash pop` on the shared working tree; it
+   restored cleanly (stash list empty, all of backend-builder's modified files back), but for a few seconds their
+   uncommitted edits were not on disk. No file was lost.
 ## [2026-11-19] P54-T02 addendum — `band_rank` / `band_size` on the Projects register rows (`GET /dashboard/projects`) — backend-builder: DONE
 
 - The register reads `GET /dashboard/projects`, not `GET /projects`. `schemas.dashboard.ProjectFilterRow` gains `band_rank: int | None` and `band_size: int | None`, required in the schema and nullable. The values match `ProjectRead`: the full-band rank, and the full-band size (all hubs), null exactly when `band_rank` is null. They are filled in `api/routers/dashboard.analytics_projects` from one `services.band_rank.band_sizes(db)` call per request.
@@ -45654,6 +45777,32 @@ No feature code written.
   - I added `band_rank: null, band_size: null` to the TS row fixtures (`dashboard/test-fixtures.ts` `P13_ROW_DEFAULTS`, `hub-type-section.test.tsx`, `project-breakdown.test.tsx`), so the required form type-checks. `tsc -p tsconfig.app.json` is clean today.
 - Shared files where I edited only my lines (other sessions' P53 WIP): `api/routers/dashboard.py`, `schemas/dashboard.py`, `frontend/src/surfaces/dashboard/api/types.ts` (net: no change from me).
 
+
+
+## [2026-11-19] P53-T04 — frontend: one week line, open horizon, delivery by year — frontend-builder
+
+**Read:** DOMAIN_RULES "One week line, open horizon, delivery by year"; MEMORY R53 ruling + addendum (R53-1..R53-9, I57–I63); "P53-T03 contract" note; `docs/API_CONTRACT_P53.md`; ADR 0063; IMPLEMENTATION_PLAN P53. Cross-checked field names against the in-progress backend schemas (`schemas/session.py`, `delivery.py`, `gantt.py`, `capacity.py`, `whatif_import.py`, `scheduling_settings.py`).
+
+**Built (frontend/ only, no backend file touched, nothing committed):**
+- **Constants removed (I40, R53-8).** `WITHIN_YEAR_WEEK`, `DISPLAY_HORIZON_WEEKS`, `SCHEDULER_HORIZON_WEEKS` deleted from `lib/domain-constants.ts`; every reader moved to served values (`/me.plan_year_start_week` / `plan_year_end_week` / `horizon_weeks`, a run's `within_year_week`). New `lib/week-line.ts` mirrors the backend helpers (`yearOf`, `weekOfYearNumber`, `yearStart`, `yearEnd`, `absWeek`, `roundUpToYearEnd`, `yearSpans`) from the served `week_base_year`; `PLAN_YEAR_WEEKS = 52` is kept as the structural year length only (mirrors backend `PLAN_YEAR_WEEKS`, never a cut-off or search limit). I57 shared table (1, 52, 53, 104, 105, 364, 365) tested in `week-line.test.ts` and `format-week.test.ts`.
+- **Labels (R53-6).** `formatWeek` is generic: "W5" in the plan year, "W5 '28" in any other year (2026 weeks read "W47 '26" once the plan year is 2027), never ≥ 53; `formatWeekWithYear`, `calendarYearOf` added. Header pill: "Week 5 · 2027 · 47 wks left". Closed-year UI removed (`PlanYearClosedNotice`, `PLAN_YEAR_CLOSED` copy, check-in 409 handling, `PlanClock.closed`). `/me` type gains `week_base_year`, `plan_year_start_week`, `plan_year_end_week`, `horizon_years`, `horizon_weeks`; `plan_year_closed` optional/deprecated. Test session fixture serves them (base 2026, 1..52, N 5, H 291).
+- **Date ↔ week (`projects/lib/plan-week-date.ts`).** Generic absolute weeks from the base year (ISO W53 → 52), bounded by the served H, no W78 cap; picker max = Sunday of H's week (a year-end week runs to the Sunday before next ISO W1).
+- **Timeline (R53-6).** Axis from `plan_year_start_week` to served `last_finish_week` rounded up to a year end (`timelineAxisRange`), never to H; year row generated from the range, labelled from the base year, years after the plan year shaded; bars starting before the axis are clipped with "started W.. '26"; year-end line at the served plan-year end; "now" shows the week of its year. Import Gantt: `importScale` from `year_start(year_of(cw))` to the last finish (served `last_finish_week` if present, else the max served step/finish week), not to H. Step-pin boxes show/take the week of the plan year (stored/sent absolute). `far_finish` chip on Timeline rows ("Finishes 2029 — check leader load").
+- **Delivered by year (R53-3, I59).** Shared `components/shared/delivery-by-year/delivery-by-year-table.tsx`: rows/labels/indicative/cumulative/reason split/`other` column all served (browser sums nothing; "Other" column appears only when served non-zero — backend added `other`/`cum_other` for Commercialized without a P1–P3 band). Dashboard Detailed + Executive: `DeliveryByYearCard` with the drill-in dialog (`GET /dashboard/delivery-by-year/projects`, kind × year × band + Dashboard filters, virtualized list); `tail_warnings` counts only (no names). What-if simulate/solve, import results (Executive tab; pre-P53 stored → labelled) and import Compare (per-scenario tables). Pre-P53 runs: table replaced by the served `rules_label`.
+- **Warnings (R53-9).** Capacity engineer heatmap: `leader_overloaded` badge with `leader_tail_week` / `far_finish_count` (engineer data only where utilisation is already shown). Dashboard/Executive counts only.
+- **Copy.** `left-out-reason.ts`: "Cannot be scheduled within {N} years — check resources" and the reason words; LEFT_OUT descriptions updated; P4 → queued P3 move copy constant added (`joins_plan_queued`); QUEUED "after W52" chip no longer compares to 52 (pre-P53 rows only).
+- **Admin N (R53-2).** `workflow-settings/components/scheduling-horizon/scheduling-horizon-card.tsx` on the Workflow page: `GET/PUT /scheduling-settings` with `version`, choices 1–10, Admin/Super Admin write (read-only otherwise), shows served `horizon_weeks_next_run`, offers the standard Recalculate after save (exported `RecalculateButton` from `plan-week-notice.tsx`).
+- **Import pickers (R53-4).** `PlanYearEndWeek = number | null` (null = server default, end of the current plan year — the default changed from 104); "Plan year" select lists served `plan_until_presets`; Plan until bounded by the served `plan_week_choices` (cw..H), `PLAN_UNTIL_MAX_WEEK` removed; zod schema accepts any positive int / null.
+- **Pre-P53 labels (R53-7).** `rules_label` shown in run provenance chips (Dashboard/Capacity), the Gantt provenance line, and Versions & History run items; `/changes` `includes_rule_change` → "includes the scheduling-rule change (P53)"; trigger labels `p53_rules`, `week_rollover`.
+- Other: registration / freeze / stage week inputs lose the 1–52 client cap (server bounds, absolute weeks); completion strip and completion-profile card framed on the served plan-year window.
+
+**Tests.** New: `lib/week-line.test.ts`, `delivery-by-year-table.test.tsx` (5), `delivery-by-year-card.test.tsx`, `scheduling-horizon-card.test.tsx` (2), P53 cases in `format-week`, `app-header`, `gantt-time-axis`, `gantt-coordinates`, `register-lib`, `p50-plan-window`, `CheckInPage`. Updated for the new rules: GanttPage ADR 0062 block (axis to last finish), import store/view/geometry defaults, stage-validation, project-form. `npx tsc -b`: clean for my files (remaining errors are the concurrent P54/P55 sessions' `band_rank` / `project-form.p55` test fixtures). `eslint --quiet` on my files: clean. Full vitest: see the report (only the known app.test Timeline-nav flake expected).
+
+**Open / for T05 and the gate:**
+- Backend contract test (`test_openapi_frontend_contract.py`) may need the new TS fields mirrored (optional `?` on `/me` P53 fields, `ScheduleRunSummary.rules_*`, `GanttResponse.last_finish_week`, `DeliveryByYear`).
+- Plan import has no served `last_finish_week`; the import axis uses the max served step/finish week (geometry). Ask backend to serve it if wanted.
+- "W52" copy ("Past W52", "Spillover (past W52)") kept: W52 is the year-end label of any plan year and never ≥ 53.
+- Registration "Expected completion (week)" is still typed as an absolute week (hint names the plan year's first week); a date picker would be friendlier (follow-up).
 ## [2026-11-19] P54/P55-T04 — workflow gate — workflow-auditor
 
 **PASS** (judged only the P54/P55 hunks; the P53 WIP in the shared tree is out of scope).
@@ -45716,3 +45865,232 @@ No feature code written.
 
 - All three PASSed on the first run. Security: one Low (null project start weeks become common, so future readers must handle null) and Info (band_size is a whole-band count, accepted). Workflow: the ADR 0064 R2 and 0065 §3 wording was amended in a gate amendment. QA: backend 445/445 on a scratch copy of HEAD plus the P54/P55 hunks; frontend 305/305.
 - Commit: built in a clean worktree from `origin/main` plus the builders' P54/P55-only patches (tsc clean, 371/371 targeted). The shared tree's uncommitted P53 work is excluded.
+
+
+- **Test run result (appended same entry, P53-T04):** full `vitest run` 298 files, 2524 passed / 2 failed: the known `app.test.tsx` Timeline-nav flake (pre-existing, see P51/P52 entries) and one new test that was edited mid-run; that file and 5 load-sensitive files re-run in isolation: 6 files / 81 passed. Plan row P53-T04 marked done.
+
+## [2026-11-19] P53-T03 — Backend: one absolute week line, open search limit, delivery by year, weekly rollover (ADR 0063, R53-1..R53-9) — backend-builder: DONE (not committed)
+
+**Read:** DOMAIN_RULES (last section + Horizon constants / rollover / I38–I41), R53 ruling + addendum, P37 ruling (R37-6..R37-9), IMPLEMENTATION_PLAN P53/P37-T05, T02's `scheduling/weeks.py` and `scheduling/delivery.py` (and the "P53-T02 interface" note once published; names used: `year_of`, `week_of_year`, `year_start`, `year_end`, `abs_week`, `horizon_for`, `plan_year_end_week`, `plan_until_presets`, `delivery_by_year`, `DeliveryRow`, `left_out_reason`, `outcome_left_out_reason`, `far_finish`, `leader_tails`). Nothing under `backend/scheduling/` was edited.
+
+**Contract:** `docs/API_CONTRACT_P53.md` (published first, see "P53-T03 contract" note above; refined with the `other` column, stored `left_out_reason`, What-if reason limits, `YEAR_REQUIRED`).
+
+**Built**
+- Clock (`services/plan_clock.py`): `week = pin or abs_week(iso_year, iso_week)` (Europe/Athens, ISO W53 → 52, 1 before 2026); `plan_year`, `week_of_year`, `plan_year_start/end_week`, `weeks_left_in_year` derived; `plan_year_closed` always False. `RPD_CURRENT_WEEK` 1..5200; `RPD_PLAN_YEAR` unset = normal, `2026` = deprecation log, anything else → `PlanClockConfigError` at startup. `compute(instant, *, pin)` (the `plan_year` argument is gone; `read_plan_year` retired).
+- `/me`: `week_base_year`, `plan_year_start_week`, `plan_year_end_week`, `horizon_years`, `horizon_weeks`; `current_week` absolute (le 5200); `plan_year_closed=false`. `plan_week.status = "failed"` now real.
+- Check-ins: 409 `PLAN_YEAR_CLOSED` removed.
+- Year-relative engineer tables (deactivation, inactive periods, leader history) are written as `(plan_year, week_of_year)`; supply readers (`capacity_supply.calendar_figures`, `lab_remaining_fraction`, `engineer_supply.hub_design_supply`) use `week_of_year(cw)` (identical in 2026).
+- N setting: table `scheduling_settings` (one row, 1..10, default 5), `GET /scheduling-settings` (any role), `PUT` (Admin / Super Admin, optimistic version → 409 `VERSION_CONFLICT`, audit `settings.scheduling_horizon_updated`, rate-limited, dispatches nothing).
+- Horizon: `build_schedule_input_from_db(horizon_weeks=None, within_year_week=None)` → `cw + 52 × N` from the setting and `year_end(year_of(cw))`; `create_queued_schedule_run` reads N with the week; the worker builds with the row's stored horizon. It is the only `ScheduleInput` constructor, so live, CP-SAT, Monte Carlo, What-if, import, previews and the template preview all take H from it. `ProjectInput.actual_end_week` is passed (R53-2b).
+- Persistence: `schedule_runs.rules_epoch = 'p53'` on every new/queued run; outcome rows store `priority_at_run` and `left_out_reason` (the scheduler's diagnostics are not otherwise stored, so the reason is persisted — an extra nullable additive column beyond the ruling's list; pre-P53 rows NULL).
+- Pre-P53 labelling: `ScheduleRunSummary` + `rules_epoch`, `within_year_week`, `pre_p53`, `rules_label`; `/changes` + `includes_rule_change`; Dashboard `rules_label`.
+- Delivery by year (`services/delivery_serving.py` → `schemas/delivery.py`): `/dashboard/completing-within-year` (Dashboard + Executive) serves `delivery_by_year` over exactly its scoped/filtered rows (null + `pre_p53_run` / `no_active_run`), row fields `priority_at_run`, `delivery_year`, `left_out_reason`, `far_finish`, and `tail_warnings` counts only; drill-in `GET /dashboard/delivery-by-year/projects`; What-if simulate (+ solve `achieved`); import simulate; saved scenarios (pre-P53 → `pre_p53_run`, never recomputed); dashboard export sheet "Delivery by year".
+- Leader tails (R53-9): only on `/capacity/engineer-utilization` rows (`leader_tail_week`, `leader_overloaded`, `far_finish_count`), from the run's stored design rows; Gantt rows `far_finish`.
+- Fixed bounds: Gantt `weekly_active_counts` over `year_start(Y0)..last_finish_week` (+ served `plan_year_start_week`, `plan_year_end_week`, `last_finish_week`); engineer heatmap and VIP windows on the run's plan year; health badge off-track at the run's plan-year end; workflow-settings `horizon_weeks`/`within_year_week` from the setting; What-if chat year end; xlsx Gantt axis to the last finish rounded to a year end, year band from `PLAN_YEAR_WEEKS`, base year 2026; queued labels; step pins `CW ≤ ms ≤ me ≤ plan_year_end_week(CW)` (message labels "W8 2027"); `target_end_week ≤ cw + 520` (422 `TARGET_END_OUT_OF_RANGE`, schema cap 5200); import `plan_year_end_week` int|null (multiple of 52, default `year_end(year_of(cw))`), `plan_from/until ≤ H`, `start_not_before_week ≤ 5200`, `PLAN_UNTIL_LOWERED` on re-run, `plan_until_presets`, picker choices cw..H, breakdown years from `year_of(cw)`.
+- Commercialized stamp: a status move to Commercialized with no `actual_end_week` (and none in the same write) stamps the calendar week (single PATCH and register batch, `stage_project_update`).
+- P37-T05 rollover (`services/week_rollover.py`): `ensure_week_rollover` under the dispatch lock: not_needed / deferred (follow-up) / queued (greedy, activate, `week_rollover`, system actor) / failed (3 failed queued attempts, ≥ 30 min apart). Table `plan_week_rollovers` keyed by absolute week, audit `schedule.week_rollover` only when the week's outcome changes. In-app ticker in the API lifespan (`RPD_WEEK_ROLLOVER_TICKER`, set false in `tests/conftest.py`); Celery beat every 15 min + Mondays 00:05 Europe/Athens (`workers/week_rollover_tasks.py`).
+- Migration `p53a_week_line` (revises `p35b_step_excluded`): two new tables (+ the settings row), three nullable columns, two CHECK relaxations; downgrade restores the old CHECKs NOT VALID. No UPDATE/DELETE of an existing row. `tests/test_p53_migration_checksum.py` checksums every row of the 10 week-bearing tables (seed + one persisted run) before/after upgrade and downgrade: identical. Not run against any hosted or dev DB.
+- Deploy script `scripts/p53_rules_run.py`: one greedy `p53_rules` run (system actor, activate, never CP-SAT, no `schedule_stale`), idempotent (`already_dispatched` when the active run is already P53). Not run. The orchestrator tells the owner before it is run (headline counts move).
+
+**Checks:** ruff clean on every file I touched (one pre-existing E501 in `services/whatif_import.py`); `ruff format` applied only to files that were formatted at HEAD; mypy clean on touched files except the pre-existing celery-stub / `_has_stage_progress` errors. pytest (COVERAGE_FILE in scratchpad): `test_p53_backend.py` 13/13 (incl. a pin-53 run: week 53, H 313, table from 2027, Gantt axis from 53), `test_p37_plan_clock.py` (updated to P53: no closed year, absolute week line incl. 28 Dec 2026 / 3–4 Jan 2027 / 2 Jan 2028 / 27 Dec 2032 / 3 Jan 2033, pin 1..5200, `RPD_PLAN_YEAR` retired, check-in in 2027 not refused), `test_p53_migration_checksum.py` 1/1, scheduling tests that import services 96/96. Full non-scheduling suite: 2972 passed / 41 failed on the first pass; after fixes the 41 are down to the items below (every previously failing file re-run: 814 passed, then the remaining edits re-run green).
+- Tests updated to P53 behaviour (each assertion annotated "P53"): `test_p37_plan_clock.py`, `test_p12_board_vip.py` (next = 53..104), `test_p12_hub_filter.py`, `test_p13_slice_c.py` (counts to `last_finish_week`), `test_p31_multi_select_filters.py` (delivery metadata/cumulative not additive), `test_p32_whatif_import_api.py`, `test_p33_categories_table.py` (`actual_end_week` omitted at None), `test_p38_engineer_deactivation.py` (2027 deactivation stores (2027, 3)), `test_p40_step_pins_backend.py` (CHECK no longer caps 52), `test_p41_import_scenarios.py`, `test_p41_qa_gate.py`, `test_p42_band_backend.py` (no QUEUED in a P53 run; move copy), `test_p42_migration_and_rollout.py`, `test_p43_exports.py`, `test_p43_qa_gate.py` (new sheet), `test_p50_plan_import_bands_window.py` (default u = year_end(year_of(cw)), choices cw..H, schema cap 5200).
+- Coordinator follow-ups (after T02 landed): `api/routers/reference.py` `queued_when_in_queue` now `queue_tier` (the Board badge, not counting); priority preview R53-2 move copy "joins the plan — scheduled after P1/P2 and started P3" (key `joins_queue` kept) only when the target is the queue tier; `engineer_supply.hub_design_supply` reads T02's ABSOLUTE `covered_plan_weeks` over the plan-year window of the absolute week; `PlanImportRequest.plan_year_end_week` gets the resolved preset; `ProjectInput.actual_end_week` filled; `last_finish_week` is over the whole run (one axis for every filtered slice). All my uncommitted edits were checked present after the algorithm-engineer's stash/pop.
+- Still failing, not mine to fix: `test_openapi_frontend_contract` (MeResponse / ScheduleRunSummary new fields are required on the backend but `?` in the frontend's in-progress TS — P53-T04 should make them required); `test_p20_fte_followups::test_gantt_step_row_contract` (`pin_clearable`, `pin_lapsed` added to GanttStepRow by another session); `test_migrations::test_migration_up_down_up_down_cycle` table count (known; was 42 vs 38 before P53, now 44 with my two tables).
+
+**Not done / for others:** the R53-8 grep test for literal week bounds (left for T05/QA); xlsx Gantt export still starts its axis at W1 (not `year_start(Y0)`; correct in 2026); What-if serves `not_placed` reasons `data_error` / `beyond_horizon` only (the engine's `ProjectResult` has no leader/chamber diagnostics); IMPLEMENTATION_PLAN P53-T03 row left for the orchestrator to mark.
+
+## [2026-11-19] P53-T04 follow-up — contract alignment — frontend-builder
+- `/me` TS fields `week_base_year`, `plan_year_start_week`, `plan_year_end_week`, `horizon_years`, `horizon_weeks` and `ScheduleRunSummary` `within_year_week`, `pre_p53`, `rules_label` (dashboard, capacity, planning, `types/schedule.ts`) are now required, matching the served schema (`rules_epoch` stays optional; the backend gives it a default). Fixtures updated: `schedule-run-provenance.test.tsx`, `apply-logic-panel.test.tsx`, `use-planning.test.tsx` (test session `makeMe` already served the /me fields).
+- `backend/tests/test_openapi_frontend_contract.py`: 271 passed (was 4 failed). `npx tsc -b`: 0 errors. eslint --quiet clean on touched files. vitest on touched files + lib/layout/check-in: 35 files, 256 passed.
+
+## [2026-11-19] P53 gate — security review — security-auditor
+
+**Verdict: PASS (P53).** No Critical/High/Medium findings. Reviewed P53 files only (uncommitted tree).
+- `PUT /scheduling-settings`: `require_roles(ADMIN, SUPER_ADMIN)`; strict Pydantic, `extra="forbid"`, N bounded 1..10 (+ `check_horizon_years` + DB CHECK); `SELECT ... FOR UPDATE` + version check → 409 `VERSION_CONFLICT`; one audit row per change; per-user token bucket (10, 1/6s) → 429. GET is any authenticated principal (non-sensitive).
+- `GET /dashboard/delivery-by-year/projects`: reuses `_dashboard_filter` → `narrowed_hub_filter` (RBAC scope ANDed, never widens) so `hub_id`/`region` tampering cannot escape scope; year bounded 2026..2126, band Literal; rows carry project/hub/band/weeks only — no engineer names (OQ #8 respected). Aggregate exposes `leader_overloaded_count` only; `leader_overloaded` bool only on `/capacity/engineer-utilization` (existing gating).
+- Migration `p53a`: only a seed INSERT into the new `scheduling_settings` table; CHECK drop/recreate on step pins / scenarios relaxes week caps (schema caps 5200 remain); no UPDATE/DELETE on existing rows. All SQL parameter-free `sa.text` / ORM; no interpolation.
+- Rollover: in-app ticker and Celery beat both call `ensure_week_rollover`, which only queues a greedy run via `dispatch_greedy` (Celery) — no CP-SAT in FastAPI; dispatch lock + per-week row make it idempotent; `MAX_ATTEMPTS` + `RETRY_SPACING` bound retries.
+- `scripts/p53_rules_run.py`: manual `python -m` only, not referenced by entrypoints; advisory lock. `RPD_PLAN_YEAR` retired (no non-test reads). `target_end_week` bounded 1..5200.
+- Frontend P53 files: no `dangerouslySetInnerHTML`; delivery types carry project names only.
+**Info:** settings rate limiter is in-process (per worker) — acceptable, consistent with existing limiters. Not re-run: pip-audit/npm audit/Trivy/TLS (no dependency or proxy changes in P53).
+
+## [2026-11-19] P53-T05 — workflow-auditor (domain referee): **FAIL** (ADR 0063; R53-1..R53-9; I57–I63) — 2 blocking items, 6 rulings
+
+**Method.** Disposable copy only: `pg_dump` of local `rpd` → throwaway `rpd_p53audit` in `rpd-pg-dev`; `alembic upgrade head` on the copy; HEAD (`bea4707`) in a scratch git worktree as the pre-P53 baseline on the same copy and the same pin (the dev active run is at W42, so it is stale vs pin 47 and is not a valid baseline). Client file copied read-only into the scratchpad. The copy was dropped and the worktree removed afterwards. Dev DB checked untouched (still `p35b_step_excluded`, 14 runs). The hosted DB was not touched. No feature code.
+
+**Verified (PASS items).**
+- **Migration (I57/I62):** a checksum over every row of all 41 pre-existing tables, on their pre-existing columns, is identical before and after `p53a` (only `alembic_version` changed). The settings row is N=5, both CHECKs are relaxed as ruled, and the new columns are NULL on old rows.
+- **Deploy script (`scripts/p53_rules_run.py`, pin 47):** status `queued`, then COMPLETED, giving one greedy run with `p53_rules`, `rules_epoch='p53'`, H=307, active, system actor. A second invocation returns `already_dispatched`.
+  - All 14 stored runs' outcome rows, step rows and run fields are byte-identical; only the previous run's `is_active` flipped.
+  - The persisted run equals the in-process P53 greedy run row for row. `priority_at_run` matches the input band on 330/330 rows, and `left_out_reason` is `no_leader` ×1.
+  - Side effects are pre-existing activation behaviour (P9-T03 / P5-T06), not P53: `schedule_stale` cleared on 72 projects, `planned_start/end_week` mirrored on about 1,060 live steps, and 971 notifications created (inflated by the W42→47 jump on this copy).
+- **Greedy W47, HEAD vs P53:** walk order identical (149). LEFT_OUT 14 → 1. Within-year 114 → 114. 14 changed outcomes, every one attributed:
+  - (a) 13 formerly LEFT_OUT now placed (P1 ×7, P2 ×2, P3 ×4; finishes W80–W169);
+  - (b) 1 knock-on: fa740618 (walk pos 111). Its PDD-K moves W69→W79 because (a)-project 312fc3e2 (pos 41) now books the same leader 025e7034 in W69–78;
+  - (c) 0 (the DB has no queued P3);
+  - (d) R53-2b: 0;
+  - unattributed: **0**.
+  The remaining LEFT_OUT is ccf12f0a, `no_leader` (data, as the R53 addendum predicted).
+- **CP-SAT W47 (deterministic; a second run is byte-equal, I8):** status FEASIBLE with objective 1549, the same as HEAD. All 121 model projects have placements identical to HEAD's CP-SAT. The tail walked 11 projects, in `ctx.ordered` order, which are exactly HEAD-CP-SAT's LEFT_OUT minus the no_leader one, all now spillover. Non-tail changes vs HEAD: 0. `check_i60_cp_sat_tail` is clean.
+  - Greedy vs CP-SAT divergence: 15 P3 projects are within-year in CP-SAT and spillover in greedy, all model placements. This is the ADR 0005 objective and the same set as before P53, so it is explained.
+- **Invariants:** `validate_invariants` (live_state, with I8) is empty for greedy at W47/52/53/104/105/364/365 and for CP-SAT at W47. `check_i57/i58/i59/i60/i63` are empty.
+  - H = cw+260 at every week; `within_year_week` = 52/52/104/104/156/364/416; max step end ≤ H (169…487).
+  - R53-2b: all 51 Commercialized projects (none has an `actual_end_week`) count at W47/52 and stop counting from W53, as ruled (I61).
+  - N timing: greedy takes 0.043 s at both H=99 (N=1) and H=567 (N=10), so it is flat.
+- **I59 / I9 (API on the copy):** the table is: by end of 2026 = 114 (P1 9 / P2 1 / P3 53 / Other 51), 2027 = 79, 2028 = 4 (indicative), 2029 = 2 (indicative), not placed = 1 (`no_leader`), blocked = 0.
+  - Row 1 equals `within_year_count` (114). The sum of later years equals `spillover_count` (85). Not placed equals `left_out_count`.
+  - Band sums hold, cumulative totals never decrease, years are contiguous, and the indicative flag is set exactly when year > Y0+1.
+  - Every drill-in count equals its cell, for every band, and each project appears in exactly one row. 0 QUEUED rows (I53).
+  - Executive's table is byte-equal to the Dashboard's. A hub-scoped Hub Planner gives I59 equality on all 6 hubs tested.
+  - At engine level, I59 holds at W47/53/105/365.
+  - A What-if empty scenario gives the same years and counts as the Dashboard (but see F53-1).
+- **I63 / OQ #8:** `far_finish` (6) is identical on the Dashboard `tail_warnings`, the rows and Gantt (6/330), and its semantics are exact. `leader_overloaded` = 2 on the Dashboard (a count only) equals the overloaded rows on `/capacity/engineer-utilization`.
+  - The input and output hashes are unchanged by `tail_flags`, no solver module reads the flags, and the drill-in rows carry no engineer field.
+  - Engineer-level tail fields exist only on the utilisation endpoint, whose `_read` dependency is unchanged from HEAD, and its rows are hub-scoped.
+- **Plan import (client file, merge, pin 47):** H = 307 (the live H). u=308 and preset 312 give 422 `INVALID_IMPORT`. The presets run from 2026 to 2030. The delivery table is identical across u = 52/104/307 (calendar years, R53-3), and row 1 equals within only at u = 52.
+  - HEAD vs P53 at u=104: 52 changed outcomes. 34 are (a) LEFT_OUT now placed (finishes up to W247). 18 are (c) queued P3 now counted; 6 of them finish ≤ W104, which accounts for the whole +6 within (161 → 167). 0 knock-on, 0 unattributed. The queued-P3 tail reaches W294–W300 (the single-leader tail predicted in the pre-work).
+
+**Blocking (FAIL) — remediation P53-R01:**
+- **F53-1 (I58 served reason, cross-surface I9-type inconsistency):** What-if `simulate` / `solve` build delivery rows with no diagnostics (`services/whatif.py::with_delivery` → `result_row(...)` without `no_leader` / `no_chamber_step_id` / `data_error`).
+  - So on the same data, the empty-scenario What-if serves ccf12f0a as `beyond_horizon` ("Cannot be scheduled within 5 years — check resources"), while the Dashboard serves `no_leader`.
+  - I58 allows `beyond_horizon` only when there is no diagnostic reason, and the R53 addendum named this exact project as "shown with that reason, not beyond_horizon".
+  - Fix: the What-if engine result carries `no_leader` / `no_chamber_step_id` (algorithm-engineer, `scheduling/whatif.py`), and the service passes them with `data_error`.
+  - Acceptance: with an empty scenario, the What-if `delivery_by_year` is byte-equal to the Dashboard's, `left_out_reasons` included.
+- **F53-2 (I59 "export serves the function's output"):** the dashboard export's "Delivery by year" sheet (`services/export_builder.py::delivery_by_year_blocks`) drops `cum_other`. On the by-end-of-2026 row, cumulative P1+P2+P3 = 63 against a cumulative total of 114.
+  - Fix: add a "Cumulative other" column.
+  - Acceptance: every served field of each row appears on the sheet.
+
+**Rulings on the open points.**
+- **(a) CP-SAT project the tail cannot place keeps its partial greedy rows: ACCEPT.** The tail is the shared greedy routine, so a CP-SAT LEFT_OUT from the tail has exactly the greedy LEFT_OUT shape (greedy has kept partial rows since before P53; HEAD's 312fc3e2 had rows to W68). This keeps greedy and the CP-SAT tail comparable.
+  - The rows are ≤ H (I58) and count as booked load exactly as in a greedy run.
+  - A LEFT_OUT that the model resolves before the solve (no_leader / data_error) keeps its old shape: no rows, verified on ccf12f0a.
+  - DOMAIN_RULES I60 gains: "a project the tail cannot place carries the rows the shared routine booked before it ran out."
+- **(b) Frozen and needs-greedy projects walked before the model: ACCEPT. This is P2-T06 behaviour, unchanged; only their search limit is now H.**
+  - Amend the I60 first bullet to: "…comes from the model inside W_cp, from the shared greedy routine in the pre-model walk of frozen, needs-greedy, no_leader and data_error projects (P2-T06), or from the single post-solve walk in `ctx.ordered` order."
+  - Advisory: `check_i60_cp_sat_tail` should also assert that the pre-model set is exactly frozen ∪ `_needs_greedy` ∪ no_leader ∪ data_error. On this data, 27 projects were placed outside the model and the tail; they are needs-greedy (anchored or held), as expected.
+- **(c) `other` column: ACCEPT. It is required: on the dev data Other = 51 of the 114 within-year (Commercialized projects without a P1–P3 band).** Without it, the two I59 clauses (row 1 = I9 count, bands sum to total) cannot both hold.
+  - I59 is amended to: in every row, P1 + P2 + P3 + Other = Total, where Other is a counting row whose band is not P1–P3 (in practice, Commercialized projects delivered in Y0).
+  - The column must be shown whenever it is non-zero. The frontend does this, and its tooltip names Commercialized.
+  - See F53-2 for the export.
+- **(d) Nullable `left_out_reason` column on outcomes: ACCEPT.** The ruling's "derived from the stored row" is impossible without it, because the diagnostics are not otherwise stored.
+  - It is additive and NULL on every pre-P53 row (checksum verified). It is written only at persist time from the engine's diagnostics, and it equals the in-process value.
+  - Advisory A1: `stored_left_out_reason` returns `beyond_horizon` for a pre-P53 LEFT_OUT, but a pre-P53 run had a 78-week search. Serve `null` for pre-P53 rows. Today this is not rendered, because the drill-in is unavailable for pre-P53 runs.
+- **(e) Import preset default `year_end(year_of(cw))` (52 in 2026): ACCEPT, since R53-4 and the amended I56 document it, so it is not an undocumented divergence.** However, it silently reverses ADR 0044 §7 ("104, default for an import").
+  - Required doc action (orchestrator): add an amendment note to ADR 0044 §7.
+  - New OQ for the owner: "Until 3 Jan 2027 an import measures 'within' to end-2026 unless 'End of 2027' is picked — keep, or default to next year in Q4?" Saved scenarios are unaffected, because they store the resolved u.
+- **(f) What-if not-placed reasons limited to `data_error` / `beyond_horizon`: REJECT** (F53-1). The plan import already carries all four reasons. What-if must do the same.
+
+**Advisories (non-blocking):**
+- A1 (above).
+- A2: `services/step_pins.PIN_MAX_WEEK = 52` is dead. The R53-8 literal-week-bound grep test is still unwritten (for QA at T06). My scan found only durations (lead times ≤ 104, maintenance ≤ 52), not week bounds.
+- A3: when the hosted deploy run activates, it will clear stale flags, re-mirror planned weeks and send schedule-change notifications. This is the standard activation behaviour; the orchestrator should include the notification volume in the owner notice.
+- A4: the xlsx Gantt export axis still starts at W1 (T03 noted this; correct in 2026, wrong from 2027).
+- The weekly rollover (P37-T05) was not exercised in this audit; it is covered by `test_p53_backend` / `test_p37_plan_clock`.
+
+**Re-check scope after P53-R01:** F53-1 (What-if empty scenario equals the Dashboard table, reasons included, on a disposable copy) and F53-2 (the sheet columns). The rest of this audit stands unless `scheduling/` changes beyond the What-if result fields.
+
+## [2026-11-19] P53-R01 engine interface (F53-1) — algorithm-engineer
+- `scheduling.whatif.ProjectResult` (in `SimulationResult.projects`, and so in `MinimumAdditionsResult.achieved.projects`) gains five fields copied from the run's `ProjectScheduleOutcome`, all defaulted:
+  - `left_out: bool` (the raw outcome flag; the `outcome` class ranks `data_error` above it),
+  - `no_leader: bool`,
+  - `no_chamber_step_id: str | None`,
+  - `data_error: str | None`,
+  - `left_out_reason: str | None` = `scheduling.delivery.outcome_left_out_reason(outcome)`, the Dashboard's value.
+- `services/whatif.py::with_delivery` can pass `no_leader` / `no_chamber_step_id` / `data_error` to `result_row`, or use `left_out_reason` directly. `ProjectResultOut` is built from its own `model_fields`, so the served shape is unchanged until the schema adds them.
+- Placements are unchanged.
+
+## [2026-11-19] P53-T06 — qa gate — qa-inspector: FAIL (one blocker: week labels ≥ W53 in exports)
+
+Judged P53 files only (shared tree has P54/P55 WIP). Nothing committed, no feature code edited.
+- **Scheduling suite** (`pytest -c pytest-scheduling.ini`): 956 passed; `scheduling/` coverage **95.51%** (bar 85%). `weeks.py` 95%, `delivery.py` 99%, `greedy.py` 93%, `invariants.py` 93%, `cp_sat.py` 98%.
+- **Full backend** (COVERAGE_FILE in scratchpad): 3972 passed / 2 failed, total coverage **96.97%** (bar 70%). The 2 failures are the known pre-existing ones: `test_migrations::test_migration_up_down_up_down_cycle` (table count) and `test_p20_fte_followups::test_gantt_step_row_contract`. No other failures.
+- `test_p53_backend.py`, `test_p53_migration_checksum.py`, `test_openapi_frontend_contract.py`, `test_p37_plan_clock.py`: 335/335 passed.
+- **Frontend:** `tsc -b` 0 errors; `eslint --quiet .` 0 errors; vitest 298 files, 2525 passed / 1 failed. The failure is the known `app.test.tsx` Timeline-nav flake (zoom slider `findByRole` timeout).
+- **Migration `p53a_week_line`:** additive. It has no UPDATE and no DELETE. Its only INSERT seeds the singleton row of the new `scheduling_settings` table. The two CHECK drop/create pairs only relax the checks, and downgrade restores them NOT VALID. The checksum test passes.
+- **Clock self-tests:** `tests/scheduling/test_p53_open_horizon.py` `CLOCK_WEEKS = (47, 52, 53, 104, 105, 364, 365)`, parametrised (lines 156, 219), plus `abs_week` edges (2026 W53→52, 2032 W53→364, 2027 W1→53). Backend clock at 28 Dec 2026 / 3–4 Jan 2027 / 27 Dec 2032 is covered in `test_p37_plan_clock.py`. Present.
+- **Week labels ≥ 53, FAIL.** Frontend `formatWeek` / `formatWeekWithYear`, the Gantt axis, the import `week-labels.ts`, backend `week_labels.py`, `outcome_buckets.py`, `plan_import.plan_from_label` and xlsx year bands all go through `week_of_year`. These backend strings still print the raw absolute week and will show W53+ from 4 Jan 2027:
+  1. `backend/services/xlsx_writer.py:1273` `f"Current week (W{chart.current_week})"` (Gantt export legend; fed absolute `si.current_week` from `whatif_export.py:212`, `export_builder.py`).
+  2. `backend/services/xlsx_writer.py:1277` `f"... red line after W{chart.within_year_week}"`. Its value is 104 in 2027.
+  3. `backend/services/xlsx_writer.py:1300` `generated_line`: `f"plan week W{clock_week}"`. It has no callers that pass a week today, but it is a latent defect.
+  4. `backend/services/whatif_import_scenarios.py:790` `f"Simulated at W{result.current_week} of {result.base_year}"`. It would read "W53 of 2026" for 4 Jan 2027.
+  5. `backend/services/whatif_import_scenarios.py:933` `f"Simulated at W{r.simulated_week}"`.
+  **Remediation (backend-builder):** route all five through `services/week_labels.py` (`W{week_of_year} {year_of}`). Add a test with an export or scenario context at cw = 53 and 105 that asserts no `W(5[3-9]|[6-9]\d|\d{3})` token appears. Optionally, add the R53-8 grep test that T03 left open.
+- Axe: not rerun. This gate is about engine, API and labels. T04's surface changes were covered by its own vitest; the security and workflow gates are separate.
+
+**Verdict: FAIL** on item 5 only. Every other bar passes. Re-gate needs only the fix above plus the targeted tests.
+
+## [2026-11-19] P53-R01 (F53-1, engine half) + I60 advisory — algorithm-engineer: DONE (not committed)
+- **Engine (`scheduling/whatif.py`).** Each `ProjectResult` now carries `left_out`, `no_leader`, `no_chamber_step_id`, `data_error` and `left_out_reason`. They are copied from the run's outcome, and the reason comes from `delivery.outcome_left_out_reason`, the Dashboard's function (see the "P53-R01 engine interface" note above).
+  - Placements are unchanged.
+  - The pinned pre-P38 / pre-P42 What-if hashes (`test_p38_active_weeks`, `test_p42_band_meaning`) still match once the five fields are stripped (new helper `tests/scheduling/_whatif_fixtures.without_p53_r01_fields`). So the outputs are byte-identical apart from the added fields.
+  - Golden files are unchanged.
+- **I60 advisory (ruling (b)).** `CpSatSolveInfo.pre_model_project_ids` (new, defaulted) lists the pre-model walk in walk order: frozen first, then the non-frozen counting data_error / no_leader / needs-greedy projects.
+  - `check_i60_cp_sat_tail` now asserts this set is exactly the scheduled projects (`scheduling_order`) minus the model minus the non-frozen queue tier, with no duplicates.
+  - It also asserts the set holds every frozen project and every non-frozen counting no_leader / data_error project, and that the tail never walks a pre-model project.
+  - Status-excluded projects are not in `ctx.ordered`, so they are outside the set.
+  - Placements are unchanged.
+  - The orchestrator still owns the DOMAIN_RULES I60 text amendment.
+- **Tests.** New `backend/tests/scheduling/test_p53_r01_whatif_reasons.py` (7 tests):
+  - an empty scenario gives per-project reasons equal to the live greedy run for no_leader, data_error (leader FTE 0), no_chamber and beyond_horizon (served only with no diagnostic), and on the seed;
+  - the added fields are present, finish/within are unchanged, and output is deterministic;
+  - the I60 pre-model set holds on a fixture and on the seed, and forged sets are flagged.
+- **Checks.**
+  - `pytest -c pytest-scheduling.ini`: 963 passed, coverage 95.50 %.
+  - The What-if/import hashing service tests (p32/p41/p50) pass: 105.
+  - ruff check and format are clean.
+  - mypy reports no new errors (only the pre-existing ortools-stub errors in cp_sat.py).
+- **Service follow-up (backend-builder).** `with_delivery` must pass the fields through. Note that `result_row` derives `left_out` from the outcome class, so prefer the engine's `left_out_reason`, or pass `left_out`, to match the Dashboard exactly.
+
+## [2026-11-19] P53-R01 (F53-1 service half, F53-2, A1) + QA-gate week labels / R53-8 grep test — backend-builder: DONE (not committed)
+- **F53-1.** `services/whatif.py::with_delivery(resp, ctx, raw)` now gets the unscoped engine result. Each delivery row carries that project's `no_leader`, `no_chamber_step_id`, `data_error` and its raw `left_out` flag, using the fields named in the "P53-R01 engine interface" note.
+  - `services/delivery_serving.py::result_row` gains an optional `left_out` override. Without it, the flag is still derived from the outcome class, and the plan import is unchanged because it already passed the diagnostics, so it had no gap.
+  - The diagnostics stay off the wire: `ProjectResultOut` is unchanged and no frontend contract changes. The table carries the reason counts.
+  - Solve's `achieved` table uses `raw.achieved`.
+  - Test `tests/test_p53_r01.py::test_empty_whatif_delivery_equals_dashboard_reasons_included`: on the seed with one leaderless In-Development project, the empty-scenario `/whatif/simulate` `delivery_by_year` equals `/dashboard/completing-within-year`'s, and `no_leader` ≥ 1.
+- **F53-2.** `export_builder.delivery_by_year_blocks` adds a "Cumulative other" column between "Cumulative P3" and "Cumulative total" ("Other" was already there). Unit test checks the headers, and that P1+P2+P3+Other equals Total cumulatively.
+- **A1.** `stored_left_out_reason` returns null for a pre-P53 run (`rules_epoch` null), never a derived `beyond_horizon`. For a P53 run it returns the stored column.
+- **QA gate (raw W53+ labels).** These now go through `services.week_labels.week_label` ("W1 2027"):
+  - in `xlsx_writer`: the legend's "Current week (…)" and "red line after …", and `generated_line`'s "plan week …" (its `plan_year` argument is now unused);
+  - in `whatif_import_scenarios`: "Simulated at …", in both the scenario export and the compare Gantt context.
+  - Beyond the five listed: the Gantt xlsx Start/End week cells keep their absolute number as the value, but their number format now displays `week_label(w)` (it was `"W"0`, which shows W60). The Gantt week header cells display `week_of_year` through a number format; the values stay absolute.
+  - Test `test_no_raw_absolute_week_in_scenario_exports[53, 105]`: the saved, current and compare workbooks have no `W53+` in any cell value or number format, and they read "Simulated at W1 2027 / W1 2028" and "Current week (W1 …)".
+- **R53-8 grep test.** `tests/test_p53_r53_8_week_bounds.py` is token-based, so comments and docstrings are ignored. It scans `services/` and `api/`.
+  - It fails on any NUMBER 52/53/78/79/104/105, and on any f-string `W{expr}` where `expr` is not `week_of_year(...)`, unless the hit is on the allowlist.
+  - The allowlist is keyed by (path, stripped line), each entry with a reason. It holds durations and counts (weeks per year, `MAX_LEAD_WEEKS`, `HISTORY_LIMIT`), dataclass and fallback defaults (`whatif_import.year_end_week`, `whatif_chat`, `outcome_buckets` pre-P53 QUEUED), the dead `step_pins.PIN_MAX_WEEK` (A2), and `plan_week_short`'s `W{w}`.
+  - Stale allowlist entries also fail the test.
+  - A probe self-test proves that the scanner catches a bound and a raw label.
+- **Checks.**
+  - ruff is clean on the touched files. `ruff format` was applied to `xlsx_writer.py`, which was formatted at HEAD. `services/whatif.py` has one pre-existing format diff at line 542 from another session, which I left alone.
+  - mypy reports no errors in the touched files.
+  - pytest (`--no-cov`, scratch `COVERAGE_FILE`): the new files pass 7/7. Whatif / p53 / export / p41 / p43 / gantt / p32 / p50 / p37 clock / p40 pins pass 449/449. The earlier whatif+export+p53 run passed 186/186.
+- Nothing under `backend/scheduling/` was edited. IMPLEMENTATION_PLAN is not marked.
+
+## [2026-11-19] P53-T05 re-check after P53-R01 — workflow-auditor (domain referee): **PASS**
+- **F53-1 (resolved).** Disposable copy `rpd_r01check` (pg_dump of rpd-pg-dev, `alembic upgrade head` → `p53a_week_line`). A fresh greedy `p53` run at pin 47 was activated in the copy. The empty-scenario `/whatif/simulate` `delivery_by_year` is byte-equal to `/dashboard/completing-within-year`'s (sorted-key JSON compare), with identical `left_out_reasons` `{no_leader: 1, no_chamber: 0, data_error: 0, beyond_horizon: 0}`. Project ccf12f0a (P3, In Development, no leader) is `left_out` in What-if and is the counted `no_leader` row, not `beyond_horizon`. Per-project `ProjectResultOut` still carries no reason field, which matches the R01 design: the reasons are served at table level.
+- **F53-2 (resolved).** The export's "Delivery by year" sheet has a "Cumulative other" column, and P1+P2+P3+Other = Total cumulatively (I59 as amended), covered by `tests/test_p53_r01.py`.
+- **A1 (resolved).** A pre-P53 run (`rules_epoch` null) serves `left_out_reason = null`, as tested.
+- **I60.** `scheduling/invariants.py::check_i60_cp_sat_tail` now names the pre-model walk as a placement source. It checks that the walk has no duplicates, that its set is frozen ∪ needs-greedy ∪ no_leader ∪ data_error, and that the tail never walks it again.
+- `tests/test_p53_r01.py` + `tests/scheduling/test_p53_r01_whatif_reasons.py`: 12/12 pass. The throwaway DB was dropped. Dev and hosted DBs were not touched. The rest of the P53-T05 audit stands. No feature code was written.
+
+## [2026-11-19] P53 QA gate RE-CHECK (after P53-R01) — qa-inspector: PASS
+- **Week labels verified in code.**
+  - `xlsx_writer.py`: the legend "Current week (…)", "red line after …" and `generated_line` "plan week …" all use `week_label(...)`.
+  - `whatif_import_scenarios.py:791,934`: both "Simulated at" strings use `week_label(...)`.
+  - The Gantt xlsx Start/End cells use `_week_format(w)`, which displays `"{week_label(w)}"` and keeps the absolute value. The fallback `"W"0` applies only when the week is None.
+  - The Gantt week header number format is `week_of_year(week)` (xlsx_writer:1045).
+- **Backend (`--no-cov`, scratch COVERAGE_FILE): 259 passed, 0 failed.** The run covered:
+  - test_p53_r53_8_week_bounds, test_p53_r01, test_p53_backend, scheduling/test_p53_r01_whatif_reasons;
+  - test_export_api, test_export_worker_task;
+  - test_p18_whatif_api, test_p18_whatif_chat, test_p32_whatif_import_api;
+  - test_p41_*, test_p43_*.
+- `test_no_raw_absolute_week_in_scenario_exports[53, 105]`: 2/2 passed.
+- **Frontend:** `tsc -b` exits 0 with no errors.
+- **Not re-run here:** coverage numbers (no-cov run) and axe (no frontend surface changed in R01). Coverage was last reported by algorithm-engineer as 95.50 % on scheduling.
+- The earlier P53 QA FAIL findings are resolved. Not committed.
+
+## [2026-11-19] P53 — gate closed (orchestrator)
+
+- P53-T02/T03/T04 built; T05 domain audit FAIL (F53-1 What-if not-placed reasons, F53-2 export cum_other) and QA FAIL (five raw W{abs} labels) → remediation P53-R01 (engine + backend) → domain re-check PASS, QA re-check PASS; security PASS. P53 closed.
+- Rulings folded: I59 (P1+P2+P3+Other = Total), I60 (pre-model walk, greedy tail partial rows), pre-P53 runs serve left_out_reason null; ADR 0044 §7 amended; OQ #121.
+- Deploy: Render runs `alembic upgrade head` (p53a additive, checksum-tested). `scripts/p53_rules_run.py` is NOT run on hosted without owner OK. Activating a P53 run (by script, recalc, or the Monday weekly rollover) re-copies planned weeks and sends schedule-change notifications (~970 on the dev copy) — owner told.
+- Commit coordination: P54/P55 (frigoglass-75) already pushed as ee6241b; P53 committed then rebased onto it.

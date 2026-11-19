@@ -23,7 +23,8 @@ export type ResultsTab = 'executive' | 'gantt' | 'capacity' | 'projects' | 'comp
 
 export const DEFAULT_IMPORT_OPTIONS: ImportOptions = {
   mode: 'merge',
-  planYearEndWeek: 104,
+  // P53 (R53-4): null = the server's default, the end of the current plan year.
+  planYearEndWeek: null,
   // Owner rule 2026-11-04 (P32-R03): "Num of Projects" is a project count, on by default.
   expandMulti: true,
 };
