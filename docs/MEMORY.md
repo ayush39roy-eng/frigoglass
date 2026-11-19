@@ -46164,3 +46164,13 @@ The owner asked to push fast, so this was pushed before the P56-T04 gate; the ga
 - No migration, existing '' row untouched (hosted data rule); a PATCH with blank code turns it NULL.
 - Frontend: project-form sends `external_code?.trim() || null`; error copy added to API_ERROR_MESSAGES.
 - Tests: `backend/tests/test_external_code_blank.py` (5). 553 backend tests in the external_code/registration/P56 set pass; registration + lib/api vitest 151 pass; tsc, ruff, mypy (touched files) clean. Not committed.
+
+## 2026-11-19 — P53 live on hosted Render (owner approved)
+
+- Owner OK'd going live. Backend + frontend auto-deployed from main (78862a4, then P56 d44f1f2).
+  `scripts/p53_rules_run.py` was NOT needed and NOT run: client edits after the deploy had already
+  produced P53 runs (v48 onward, `rules_epoch=p53`); active run v97, horizon 307 weeks, N=5, CURRENT_WEEK 47.
+- Hosted delivery by year (v97): by end 2026 131 (P1 20), 2027 53, 2028 12, 2029 5, 2030 5, 2031 2;
+  not placed within 5 years 1 (no_leader). Warnings: far_finish 24, leader_overloaded 2. No data rewritten.
+- Failed runs v92/v94/v96 (register_edit) each followed by a completed run; same pattern as pre-P53
+  runs (v26, v44) — abandoned/dispatch failures around redeploys, not a P53 regression. Not investigated further.
