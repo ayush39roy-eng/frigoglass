@@ -6,7 +6,7 @@ import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
 import { saveBlob } from '@/lib/download';
 
-import { useImportPlan } from '../import-store';
+import { DEFAULT_IMPORT_OPTIONS, useImportPlan } from '../import-store';
 import type { ImportSimulateRequest, SavedScenario } from '../import-types';
 import { useImportScenarios } from '../scenarios-store';
 import { PARSE_RESPONSE } from '../test-fixtures';
@@ -100,6 +100,7 @@ function startAtResults(sha: string | null = SHA_A) {
     rows: PARSE_RESPONSE.rows.map((r) => ({ ...r })),
     result: P41_RESPONSE,
     step: 'results',
+    options: { ...DEFAULT_IMPORT_OPTIONS, mode: 'merge' },
     source: { file_name: 'synthetic-plan.xlsx', sha256: sha, imported_at: '2026-11-17T09:00:00Z' },
   });
 }

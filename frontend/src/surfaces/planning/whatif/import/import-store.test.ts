@@ -16,7 +16,7 @@ describe('import store (session only)', () => {
     expect(s().rows).toEqual(PARSE_RESPONSE.rows);
     expect(s().rows[0]).not.toBe(PARSE_RESPONSE.rows[0]);
     expect(s().options).toEqual({
-      mode: 'merge',
+      mode: 'file_only',
       planYearEndWeek: null,
       expandMulti: true,
     });
@@ -76,6 +76,7 @@ describe('import store (session only)', () => {
 
   it('prunes edits that no longer apply', () => {
     s().setParsed(PARSE_RESPONSE);
+    s().setOptions({ mode: 'merge' });
     s().applyEdit('plan-9', 'PDD-E', { start_not_before_week: 50 }, {});
     s().applyEdit('plan-1', 'PDD-E', { start_not_before_week: 50 }, {});
     s().applyEdit('row-6', 'PDD-E', { start_not_before_week: 50 }, {});

@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
 
-import { useImportPlan } from '../import-store';
+import { DEFAULT_IMPORT_OPTIONS, useImportPlan } from '../import-store';
 import type { ImportRow, ImportSimulateRequest, ImportSimulateResponse } from '../import-types';
 import { useImportScenarios } from '../scenarios-store';
 import { PARSE_RESPONSE, SIMULATE_RESPONSE } from '../test-fixtures';
@@ -28,6 +28,7 @@ function startAtResults(rows: ImportRow[] = PARSE_RESPONSE.rows, result: ImportS
     rows: rows.map((r) => ({ ...r })),
     result,
     step: 'results',
+    options: { ...DEFAULT_IMPORT_OPTIONS, mode: 'merge' },
   });
 }
 

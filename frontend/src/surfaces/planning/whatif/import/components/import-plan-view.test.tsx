@@ -250,6 +250,7 @@ describe('Import plan (Excel)', () => {
     const user = userEvent.setup();
     renderWithProviders(<ImportPlanView />);
     await uploadAndParse(user);
+    useImportPlan.getState().setOptions({ mode: 'merge' });
     await user.click(screen.getByRole('button', { name: 'Compute plan' }));
     await screen.findByTestId('import-results');
     const st = useImportPlan.getState();
