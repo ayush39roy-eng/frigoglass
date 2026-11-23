@@ -11,7 +11,7 @@ import { usePriorityMoveHost, type PriorityMoveOutcome } from '@/components/shar
 import { PriorityMoveProvider } from '@/components/shared/priority-move/priority-move-provider';
 import { Skeleton } from '@/components/ui/skeleton';
 import { usePermission, useSession } from '@/stores/session';
-import { hasHubSelection, useHubSelection } from '@/stores/hub-filter';
+import { hasHubSelection, isSingleHubSelection, useHubSelection } from '@/stores/hub-filter';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { Badge } from '@/components/ui/badge';
@@ -212,7 +212,8 @@ export function PriorityBoardView({
   const isFiltered = Object.values(filters).some((v) => v !== undefined);
   const query = usePriorityBoard(hub, filters);
   /** P60 (ADR 0068): a hub / country filter is on — ranks show the hub rank only, drops send `hub_rank`. */
-  const hubFiltered = hasHubSelection(hub);
+  // ADR 0068: hub rank alone only when exactly one hub is in view.
+  const hubFiltered = isSingleHubSelection(hub);
   const canReadDashboard = usePermission('dashboard').read;
   const canReadCapacity = usePermission('capacity').read;
   const facets = useBoardLeaderFacets(hub, canReadDashboard);

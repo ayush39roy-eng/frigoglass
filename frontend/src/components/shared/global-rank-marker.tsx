@@ -20,7 +20,7 @@ export function GlobalRankMarker({
   if (hidden || typeof bandRank !== 'number') return null;
   return (
     <span
-      className={cn('shrink-0 font-mono text-[0.625rem] leading-none tabular-nums text-text-subtle', className)}
+      className={cn('shrink-0 font-mono text-2xs font-semibold leading-none tabular-nums text-text-muted', className)}
       aria-hidden="true"
       data-numeric=""
       data-testid="global-rank-marker"

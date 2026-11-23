@@ -1163,7 +1163,7 @@ export default function ProjectsPage(): React.JSX.Element {
                 hiddenColumns={columnPrefs.prefs.hidden}
                 columnWidths={columnPrefs.prefs.widths}
                 onColumnWidth={columnPrefs.setWidth}
-                hubFiltered={hubIds.length > 0 || regions.length > 0}
+                hubFiltered={hubIds.length === 1 && regions.length === 0}
               />
             </PriorityMoveContext.Provider>
           </>

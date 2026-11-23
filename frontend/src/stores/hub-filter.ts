@@ -214,6 +214,13 @@ export function hasHubSelection(sel: HubSelection): boolean {
   return sel.hubIds.length > 0 || sel.regions.length > 0;
 }
 
+/** ADR 0068: exactly one hub in view (one hub picked, no country), so a hub
+ *  rank alone is unambiguous. A country or several hubs mix hubs in one list:
+ *  the global rank is shown too. */
+export function isSingleHubSelection(sel: HubSelection): boolean {
+  return sel.hubIds.length === 1 && sel.regions.length === 0;
+}
+
 /** The current selection as plain lists, stable across unrelated renders. */
 export function useHubSelection(): HubSelection {
   const hubIds = useHubFilterStore((s) => s.hubIds);
