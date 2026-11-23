@@ -157,3 +157,35 @@ def test_scanner_catches_a_raw_label_and_a_bound(tmp_path: Path) -> None:
         BACKEND = saved
     assert numbers == [("probe.py", "if cw > 52:")]
     assert labels == [("probe.py", "cw")]
+
+
+def test_export_cells_never_hold_a_raw_absolute_week() -> None:
+    """2026-11-23 audit A1: a week column of any table export (CSV and xlsx,
+    e.g. the Dashboard "End (week)" or the Gantt data planned weeks) is written
+    as its label, never as the absolute number (96 is "W44 2027"). Durations
+    (`*_weeks`) and rates (`*_per_week`) stay numbers."""
+
+    import csv as _csv
+
+    from services.export_builder import csv_bytes, xlsx_bytes
+    from services.xlsx_writer import SheetBook
+    from tests.export_read import xlsx_table
+
+    headers = ["project_name", "end_week", "planned_start_week", "delay_weeks", "weekdays_per_week"]
+    rows = [
+        {
+            "project_name": "P",
+            "end_week": 96,
+            "planned_start_week": 31,
+            "delay_weeks": 96,
+            "weekdays_per_week": 5,
+        },
+        {"project_name": "Q", "end_week": None},
+    ]
+    text = csv_bytes(headers, rows).decode("utf-8-sig")
+    (_, first, second) = list(_csv.reader(io.StringIO(text)))
+    assert first == ["P", "W44 2027", "W31 2026", "96", "5"]
+    assert second[1] == ""
+    _, data = xlsx_table(xlsx_bytes(SheetBook({"Data": (headers, rows)})), "Data")
+    assert data[0]["end_week"] == "W44 2027" and data[0]["planned_start_week"] == "W31 2026"
+    assert data[0]["delay_weeks"] == 96 and data[0]["weekdays_per_week"] == 5

@@ -32,6 +32,7 @@ from services.export_builder import csv_bytes, xlsx_bytes
 from services.import_format import template_xlsx
 from services.plan_import_xlsx import read_workbook
 from services.rate_limit import TokenBucketLimiter
+from services.week_labels import week_label
 from services.xlsx_writer import (
     CHART_FIRST_WEEK_COLUMN,
     CHART_FIXED_COLUMNS,
@@ -358,9 +359,13 @@ async def test_gantt_export_draws_exactly_the_served_weeks(db_session: Any) -> N
         assert ("(pinned)" in ws.cell(row=r, column=1).value) is step["pinned"]
     assert _weeks_with(ws, project_row, "64748B", 78) == set(range(31, 38))
     assert f"Schedule run v{served['schedule_run_version']}" in str(ws["A2"].value)
-    # The numeric table is kept, and CSV is that table with human headers.
+    # The table is kept (weeks written as labels, 2026-11-23 audit A1), and
+    # CSV is that table with human headers.
     _, data = xlsx_table(resp.content, "Gantt data")
-    assert [(d["step_id"], d["planned_start_week"]) for d in data] == [("PDD-A", 31), ("PDD-B", 33)]
+    assert [(d["step_id"], d["planned_start_week"]) for d in data] == [
+        ("PDD-A", week_label(31)),
+        ("PDD-B", week_label(33)),
+    ]
     assert "Planned start (week)" in csv_header(csv_resp.content)
 
 
@@ -459,7 +464,8 @@ async def test_planner_export_sheets_and_weeks_match_the_simulation(db_session: 
     _, data = xlsx_table(resp.content, "Gantt data")
     finish = {(d["project_name"]): d["finish_week"] for d in data}
     for p in sim["projects"]:
-        assert finish[p["name"]] == p["finish_week"], p["name"]
+        want = None if p["finish_week"] is None else week_label(p["finish_week"])
+        assert finish[p["name"]] == want, p["name"]
 
     # Every drawn bar is the engine's own schedule of this scenario.
     ctx = await load_context(
@@ -476,7 +482,9 @@ async def test_planner_export_sheets_and_weeks_match_the_simulation(db_session: 
     for o in out.project_outcomes:
         for st in o.steps:
             d = by_key[(names[o.project_id], st.step_id)]
-            assert (d["start_week"], d["end_week"]) == (st.start_week, st.end_week)
+            assert (d["start_week"], d["end_week"]) == tuple(
+                None if w is None else week_label(w) for w in (st.start_week, st.end_week)
+            )
             checked += 1
     assert checked > 0
     # The drawn row of the first project's first placed step.

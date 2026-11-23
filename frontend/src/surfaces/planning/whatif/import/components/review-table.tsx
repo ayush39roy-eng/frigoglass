@@ -38,8 +38,12 @@ const VIRTUALIZE_OVER = 100;
 /** PRIORITY "Running" (P32-R06): P1, rank 0, placed before rank 1. */
 const RUNNING_LABEL = 'Running — schedules first';
 
-function priorityHint(row: ImportRow, original: ImportRow | undefined): string {
+function priorityHint(row: ImportRow, original: ImportRow | undefined, projectsList = false): string {
   if (original && original.priority !== row.priority) return 'edited';
+  // A Projects list download carries one Priority column (no Must Do / band columns).
+  if (projectsList && row.priority_source === 'band') {
+    return row.rank === null ? 'From Priority column' : `From Priority column · rank ${String(row.rank)}`;
+  }
   // P50 (ADR 0061 R49-3): a Yes in a "Must Do" / band column; a rank under it orders the row in its band.
   if (row.priority_source === 'band') return bandHint(row.rank);
   if (row.priority_source === 'rank') return row.rank === null ? 'ranked' : `rank ${String(row.rank)}`;
@@ -221,8 +225,8 @@ function StatusCell({ row: { original: r } }: Cell): React.JSX.Element {
 }
 
 function PriorityCell({ row: { original: r } }: Cell): React.JSX.Element {
-  const { originals, update } = useCtx();
-  const hint = priorityHint(r, originals.get(r.key));
+  const { originals, update, parsed } = useCtx();
+  const hint = priorityHint(r, originals.get(r.key), parsed.file_format === 'projects_list');
   // P57 (ADR 0067): no priority for a Commercialized / Cancelled row. The row's
   // priority is left as parsed (sent unchanged) and applies again if the status
   // is changed back to a mapped one.

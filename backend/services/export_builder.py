@@ -88,6 +88,7 @@ from services.xlsx_writer import (
     header_labels,
     humanize,
     stringify,
+    week_cell,
     write_workbook,
 )
 from services.xlsx_writer import neutralise_formula as neutralise_formula
@@ -276,7 +277,7 @@ def csv_bytes(
     writer = csv.writer(buffer)
     writer.writerow(header_labels(headers, labels))
     for row in rows:
-        writer.writerow([_stringify(row.get(h)) for h in headers])
+        writer.writerow([_stringify(week_cell(h, row.get(h))) for h in headers])
     return buffer.getvalue().encode("utf-8-sig")
 
 

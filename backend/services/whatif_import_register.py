@@ -36,6 +36,7 @@ file.
 
 from __future__ import annotations
 
+import dataclasses
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -69,6 +70,7 @@ from services.plan_import_xlsx import (
     ParsedRow,
     ParseIssue,
     ParseResult,
+    RosterEntry,
     RowChange,
     _hub_token,
     _norm,
@@ -78,7 +80,11 @@ from services.plan_import_xlsx import (
     _text,
     _workflow_of,
 )
-from services.priority_applicability import PRIORITY_NOT_APPLICABLE_LABEL
+from services.priority_applicability import (
+    PRIORITY_NOT_APPLICABLE_CODE,
+    PRIORITY_NOT_APPLICABLE_LABEL,
+    priority_applicable,
+)
 from services.register_export import (
     COLUMN_BY_KEY,
     HEADER_ALIASES,
@@ -95,14 +101,18 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from core.principal import Principal
+    from scheduling.plan_import import ImportNewEngineer, PlanImportRequest, PlanImportResult
+    from scheduling.types import ProjectInput
+    from scheduling.whatif import WhatIfBaseline
+    from schemas.whatif_import import ImportRow, ImportSimulateRequest
     from services.whatif_baseline import WhatIfContext
 
 FILE_FORMAT = "projects_list"
 _RAW = 100
-#: Columns whose change alters the simulation.
+#: Columns whose change alters the simulation. The name is listed but not
+#: simulated (2026-11-23 audit B2): a rename alone keeps the plan project.
 SIMULATED_KEYS: frozenset[str] = frozenset(
     {
-        "project",
         "hub",
         "category",
         "status",
@@ -153,6 +163,10 @@ class RegisterProject:
 @dataclass(frozen=True)
 class RegisterContext:
     projects: tuple[RegisterProject, ...] = ()
+    #: Every engineer of the plan with FTE > 0, counted in capacity or not.
+    #: A Projects list names the plan's own leaders, so a leader that does not
+    #: count in capacity is matched (and kept), never read as missing.
+    engineers: tuple[RosterEntry, ...] = ()
 
 
 async def build_register_context(
@@ -246,7 +260,18 @@ async def build_register_context(
                 started=started,
             )
         )
-    return RegisterContext(projects=tuple(out))
+    engineers = tuple(
+        RosterEntry(
+            engineer_id=e.engineer_id,
+            name=e.name,
+            hub=e.hub,
+            capacity_hub=dc.capacity_hub_name(e.hub),
+            fte=float(e.fte),
+        )
+        for e in sorted(si.engineers, key=lambda e: (e.hub, e.name))
+        if e.fte > 0
+    )
+    return RegisterContext(projects=tuple(out), engineers=engineers)
 
 
 # --- reading -------------------------------------------------------------------------------
@@ -486,8 +511,9 @@ def _step_weeks(
 
 def _map(sheet: _RegisterSheet, ctx: ParseContext, rctx: RegisterContext) -> ParseResult:
     issues: list[ParseIssue] = []
-    roster = _Roster(ctx.roster)
-    roster_by_id = {e.engineer_id: e for e in ctx.roster if e.fte > 0}
+    pool = rctx.engineers or ctx.roster
+    roster = _Roster(pool)
+    roster_by_id = {e.engineer_id: e for e in pool if e.fte > 0}
     by_id = {p.project_id: p for p in rctx.projects}
     by_code: dict[str, list[RegisterProject]] = {}
     by_name: dict[str, list[RegisterProject]] = {}
@@ -501,6 +527,7 @@ def _map(sheet: _RegisterSheet, ctx: ParseContext, rctx: RegisterContext) -> Par
     claimed: dict[str, int] = {}
     rows: list[ParsedRow] = []
     matched_engineers: set[str] = set()
+    in_place_keys: set[str] = set()
 
     for file_row, v in sheet.rows:
         key = f"row-{file_row}"
@@ -796,17 +823,48 @@ def _map(sheet: _RegisterSheet, ctx: ParseContext, rctx: RegisterContext) -> Par
             issue=issue,
         )
 
+        # B2 (d): a project that stays out of the run (status not schedulable
+        # and not edited) simulates nothing; its priority is "Not applicable"
+        # for Commercialized / Cancelled (ADR 0067), so an edit there is listed only.
+        if m is not None and status not in _SCHEDULABLE and "status" not in changed:
+            if "priority" in changed and not priority_applicable(status):
+                issue(
+                    "priority",
+                    SEV_INFO,
+                    PRIORITY_NOT_APPLICABLE_CODE,
+                    f"Priority is Not applicable for a {status} project (ADR 0067); the edit "
+                    "is not simulated.",
+                )
+            changes = [
+                RowChange(c.field, c.label, c.before, c.after, False) if c.simulated else c
+                for c in changes
+            ]
         simulated_change = any(c.simulated for c in changes)
         if m is None:
             kind_of_row = "new"
         else:
             kind_of_row = "changed" if simulated_change else "unchanged"
+        # B2 (b): a changed row whose current step is not edited updates its
+        # plan project in place (progress, effort, exclusions, pins kept).
+        in_place = (
+            m is not None
+            and m.in_plan
+            and simulated_change
+            and status in _SCHEDULABLE
+            and "current-step" not in changed
+            and m.workflow == wf
+        )
         if m is not None and simulated_change:
             issue(
                 "name",
                 SEV_INFO,
                 "CHANGED",
-                f"Replaces {m.name!r} (matched by {match_by}); changed: "
+                (
+                    f"Updates {m.name!r} in place (matched by {match_by}); its recorded progress "
+                    "is kept; changed: "
+                    if in_place
+                    else f"Replaces {m.name!r} (matched by {match_by}); changed: "
+                )
                 + "; ".join(
                     f"{c.label} {c.before or '—'} → {c.after or '—'}"
                     for c in changes
@@ -820,8 +878,13 @@ def _map(sheet: _RegisterSheet, ctx: ParseContext, rctx: RegisterContext) -> Par
                 None,
                 SEV_INFO,
                 "NOT_SIMULATED",
-                f"{', '.join(quiet)} changed; not a scheduling input, so the simulation does not "
-                "use it.",
+                f"{', '.join(quiet)} changed; "
+                + (
+                    "not a scheduling input"
+                    if status in _SCHEDULABLE or "status" in changed
+                    else f"the project is not scheduled ({status})"
+                )
+                + ", so the simulation does not use it.",
             )
 
         rows.append(
@@ -862,6 +925,8 @@ def _map(sheet: _RegisterSheet, ctx: ParseContext, rctx: RegisterContext) -> Par
                 changes=tuple(changes),
             )
         )
+        if in_place:
+            in_place_keys.add(key)
 
     new_designers = {
         (_norm(r.leader.name), dc.capacity_hub_name(r.hub)) for r in rows if r.leader.kind == "new"
@@ -876,12 +941,16 @@ def _map(sheet: _RegisterSheet, ctx: ParseContext, rctx: RegisterContext) -> Par
         new=len(rows) - matched_n,
         auto_assign=sum(1 for r in rows if r.leader.kind == "auto"),
         new_designers=len(new_designers),
-        # Merge mode: an unchanged row keeps its plan project, so only the
-        # changed and new schedulable rows become file projects.
+        # Merge mode: an unchanged row keeps its plan project and a changed
+        # row whose current step is kept edits it in place, so only the other
+        # changed and the new schedulable rows become file projects.
         projects_after_expansion=sum(
             1
             for r in rows
-            if r.include and r.status in _SCHEDULABLE and r.change_kind != "unchanged"
+            if r.include
+            and r.status in _SCHEDULABLE
+            and r.change_kind != "unchanged"
+            and r.key not in in_place_keys
         ),
         changed=sum(1 for r in rows if r.change_kind == "changed"),
         unchanged=sum(1 for r in rows if r.change_kind == "unchanged"),
@@ -900,11 +969,196 @@ def _map(sheet: _RegisterSheet, ctx: ParseContext, rctx: RegisterContext) -> Par
     )
 
 
+# --- simulate: a changed row edits its plan project in place (B2) ----------------------------
+
+#: Fields a changed row may override on its plan project (the Projects table
+#: column ids). Everything else of the plan project is kept: step progress,
+#: Done / In Progress states and %, remaining effort, exclusions, own lead
+#: times, pins, frozen, VIP.
+_IN_PLACE_FIELDS: frozenset[str] = frozenset(
+    {"hub", "category", "status", "priority", "rank", "leader", "design-time", "lab-time"}
+)
+
+
+def _wf_of_hub(hub: str) -> str:
+    return dc.WORKFLOW_ID_FOR_OEM_HUB if hub in dc.OEM_HUBS else dc.WORKFLOW_ID_FOR_NON_OEM_HUB
+
+
+def edits_in_place(r: ImportRow, mode: str, base: Mapping[str, ProjectInput]) -> bool:
+    """2026-11-23 audit B2: a "changed" Projects list row in merge mode whose
+    Current step was not edited (and whose workflow stays) is no file project.
+    Its plan project stays in the run with only the edited fields overridden
+    (`plan_overrides`), so its recorded progress is never rebuilt. Only an
+    edited Current step (or a hub move to the other workflow) rebuilds the
+    project from the list, as a file project."""
+
+    if mode != "merge" or r.change_kind != "changed" or not r.include:
+        return False
+    if r.status not in dc.SCHEDULABLE_STATUS_ORDER or r.matched_project_id is None:
+        return False
+    p = base.get(r.matched_project_id)
+    if p is None or p.category is None or p.workflow_id != _wf_of_hub(r.hub):
+        return False
+    return not any(c.field == "current-step" and c.simulated for c in r.changes)
+
+
+def plan_overrides(
+    ctx: WhatIfContext,
+    body: ImportSimulateRequest,
+    new_engineers: Sequence[ImportNewEngineer],
+) -> tuple[dict[str, ProjectInput], tuple[ImportNewEngineer, ...]]:
+    """The plan projects edited in place (project_id -> the edited input) and
+    the request's new designers (extended by a new leader named on such a
+    row). `ValueError` for an invalid row (the caller answers 422
+    `INVALID_IMPORT`; an id outside the caller's scope reads as unknown)."""
+
+    from scheduling import hubs as hub_names
+    from scheduling.plan_import import ImportNewEngineer as _NewEng
+    from scheduling.types import StepTimingInput
+    from schemas.whatif_import import LeaderExisting, LeaderNew
+
+    si = ctx.baseline.schedule
+    base = {p.project_id: p for p in si.projects}
+    category_workflow = {c.code: c.workflow_id for c in si.categories}
+    roster_ids = {e.engineer_id for e in si.engineers if e.fte > 0}
+    kinds = {(t.workflow_id, t.step_id): t.kind for t in si.workflow_steps}
+    new_engs = list(new_engineers)
+    new_key = {(" ".join(ne.name.split()).casefold(), ne.hub): ne.key for ne in new_engs}
+    out: dict[str, ProjectInput] = {}
+    for r in body.rows:
+        if not edits_in_place(r, body.mode, base):
+            continue
+        where = f"row {r.key!r}"
+        pid = str(r.matched_project_id)
+        hub_of = ctx.project_hub.get(pid)
+        if hub_of is None or not ctx.scope.hub_ok(hub_of) or pid in out:
+            raise ValueError(f"{where}: unknown project id {pid!r}")
+        p = base[pid]
+        edited = {c.field for c in r.changes if c.simulated} & _IN_PLACE_FIELDS
+        upd: dict[str, Any] = {}
+        if "hub" in edited:
+            upd["hub"] = r.hub
+            upd["capacity_hub"] = dc.capacity_hub_name(hub_names.constants_hub_name(r.hub))
+        if "category" in edited:
+            if category_workflow.get(r.category) != p.workflow_id:
+                raise ValueError(f"{where}: category {r.category} does not fit hub {r.hub}")
+            upd["category"] = r.category
+        if "status" in edited:
+            upd["status"] = r.status
+        if "priority" in edited:
+            upd["priority"] = r.priority
+        if edited & {"priority", "rank"}:
+            # ADR 0050: a new band is unranked unless a rank is given.
+            upd["band_rank"] = r.rank if r.rank is not None and r.rank >= 1 else None
+        if "leader" in edited:
+            if isinstance(r.leader, LeaderExisting):
+                if r.leader.engineer_id not in roster_ids:
+                    raise ValueError(f"{where}: unknown engineer id {r.leader.engineer_id!r}")
+                upd["leader_engineer_id"] = r.leader.engineer_id
+            elif isinstance(r.leader, LeaderNew):
+                name = " ".join(r.leader.name.split())
+                if not name:
+                    raise ValueError(f"{where}: a new designer needs a name")
+                cap = dc.capacity_hub_name(r.hub)
+                dk = (name.casefold(), cap)
+                if dk not in new_key:
+                    ne = _NewEng(key=f"new:{len(new_engs) + 1}", name=name, hub=cap, fte=1.0)
+                    new_engs.append(ne)
+                    new_key[dk] = ne.key
+                upd["leader_engineer_id"] = new_key[dk]
+            else:
+                upd["leader_engineer_id"] = None
+        timed = {k for col, k in _EFFORT_KEYS if col in edited}
+        if timed:
+            timing = {t.step_id: t for t in p.step_timing}
+            for sid, weeks in sorted(r.step_weeks.items()):
+                if kinds.get((p.workflow_id, sid)) not in timed or weeks <= 0:
+                    continue
+                t = timing.get(sid)
+                weeks = min(int(weeks), EFFORT_STEP_MAX_WEEKS)
+                timing[sid] = (
+                    StepTimingInput(sid, weeks, None)
+                    if t is None
+                    else dataclasses.replace(t, duration_override_weeks=weeks)
+                )
+            upd["step_timing"] = tuple(timing[k] for k in sorted(timing))
+        out[pid] = dataclasses.replace(p, **upd) if upd else p
+    return out, tuple(new_engs)
+
+
+def with_plan_overrides(ctx: WhatIfContext, overrides: Mapping[str, ProjectInput]) -> WhatIfContext:
+    """`ctx` whose baseline carries the in-place edits (the "after" plan). The
+    original is untouched; the live plan stays the "before" run."""
+
+    if not overrides:
+        return ctx
+    si = ctx.baseline.schedule
+    schedule = dataclasses.replace(
+        si, projects=tuple(overrides.get(p.project_id, p) for p in si.projects)
+    )
+    return dataclasses.replace(ctx, baseline=dataclasses.replace(ctx.baseline, schedule=schedule))
+
+
+def run_plan_import_in_place(
+    live: WhatIfBaseline,
+    after: WhatIfBaseline,
+    req: PlanImportRequest,
+    *,
+    deadline_s: float | None = None,
+) -> PlanImportResult:
+    """`scheduling.plan_import.run_plan_import` with the "before" run on the
+    live plan and the simulated run on `after` (the plan with its in-place
+    edits). The engine's own steps, called in the engine's order; nothing is
+    scheduled here. With `after is live` it is `run_plan_import` (pinned by
+    `test_p58_projects_list_round_trip`)."""
+
+    from scheduling import plan_import as pi
+    from scheduling.greedy import prepare_run, run_greedy_sgs
+    from scheduling.whatif import _Budget
+
+    if after is live:
+        return pi.run_plan_import(live, req, deadline_s=deadline_s)
+    budget = _Budget(deadline_s, None)
+    built = pi._build(after, req, budget)
+    run_si = built.run_si
+    pyew = pi.resolve_plan_until_week(req)
+    before: Mapping[str, Any] = {}
+    if req.mode == "merge":
+        budget.check()
+        base_out = run_greedy_sgs(
+            dataclasses.replace(
+                live.schedule, horizon_weeks=run_si.horizon_weeks, within_year_week=pyew
+            )
+        )
+        before = {o.project_id: o for o in base_out.project_outcomes}
+    budget.check()
+    out = run_greedy_sgs(run_si)
+    budget.check()
+    plans = prepare_run(run_si).plans
+    budget.check()
+    return pi._assemble(
+        baseline=after,
+        req=req,
+        run_si=run_si,
+        out=out,
+        plans=plans,
+        before=before,
+        metas=built.metas,
+        auto_assigned=set(built.auto_assigned),
+        new_eng_ids=set(built.new_eng_ids),
+        edited_plan_ids=built.edited_plan_ids,
+    )
+
+
 __all__ = [
     "FILE_FORMAT",
     "SIMULATED_KEYS",
     "RegisterContext",
     "RegisterProject",
     "build_register_context",
+    "edits_in_place",
     "parse_register_workbook",
+    "plan_overrides",
+    "run_plan_import_in_place",
+    "with_plan_overrides",
 ]

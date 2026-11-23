@@ -93,6 +93,24 @@ def stringify(value: Any) -> Any:
     return value
 
 
+def is_week_key(key: object) -> bool:
+    """A column (or report item) holding an absolute week of the one week line
+    (R53-1): `week` or `*_week`, never a rate (`*_per_week`)."""
+
+    return isinstance(key, str) and (
+        key == "week" or (key.endswith("_week") and not key.endswith("_per_week"))
+    )
+
+
+def week_cell(key: object, value: Any) -> Any:
+    """2026-11-23 audit A1: an absolute week in a table cell is written as its
+    label ("W44 2027"), never as the raw number (96 reads as "week 96")."""
+
+    if is_week_key(key) and isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return week_label(value)
+    return value
+
+
 # --------------------------------------------------------------------------
 # Human headers
 # --------------------------------------------------------------------------
@@ -765,7 +783,7 @@ def _write_table(
         ]
     )  # fmt: skip
     for row in rows:
-        ws.append([_data_cell(ws, row.get(k)) for k in keys])
+        ws.append([_data_cell(ws, week_cell(k, row.get(k))) for k in keys])
     if keys:
         last = get_column_letter(len(keys))
         ws.auto_filter.ref = f"A{header_row}:{last}{header_row + max(len(rows), 0)}"
@@ -821,7 +839,7 @@ def _write_report(
         shown_item: Any = label_for(item, labels) if isinstance(item, str) else item
         line = [_cell(ws, shown_item, font=_BOLD)]
         for k in keys[1:]:
-            value = row.get(k)
+            value = week_cell(item, row.get(k))
             if value is None:
                 line.append(None)
             elif isinstance(value, (int, float)) and not isinstance(value, bool):

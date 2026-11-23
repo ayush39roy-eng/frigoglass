@@ -249,17 +249,18 @@ async def test_edited_rows_and_a_new_row_are_the_changes(db_session):
     codes = {(i["row_key"], i["code"]) for i in body["issues"]}
     assert (alpha["key"], "CHANGED") in codes and (beta["key"], "NOT_SIMULATED") in codes
 
+    # B2 (2026-11-23 audit): Alpha and Gamma keep their current step, so they
+    # are edited in place (plan projects); only the new row is a file project.
+    assert counts["projects_after_expansion"] == 1
     assert sim.status_code == 200, sim.text
     s = sim.json()
     files = [p for p in s["projects"] if p["source"] == "file"]
-    assert {p["name"] for p in files} == {"Alpha Cooler", "Gamma Cooler", "Brand New Cooler"}
-    assert s["kpis"]["file_projects"] == 3
-    plan_refs = {p["ref"] for p in s["projects"] if p["source"] == "plan"}
-    assert str(world.beta.id) in plan_refs
-    assert str(world.alpha.id) not in plan_refs and str(world.gamma.id) not in plan_refs
-    alpha_sim = next(p for p in files if p["name"] == "Alpha Cooler")
-    assert alpha_sim["replaces_project_id"] == str(world.alpha.id)
-    assert alpha_sim["priority"] == "P1"
+    assert {p["name"] for p in files} == {"Brand New Cooler"}
+    assert s["kpis"]["file_projects"] == 1
+    plan = {p["ref"]: p for p in s["projects"] if p["source"] == "plan"}
+    assert {str(world.alpha.id), str(world.beta.id), str(world.gamma.id)} <= set(plan)
+    assert plan[str(world.alpha.id)]["priority"] == "P1"
+    assert plan[str(world.gamma.id)]["category"] == "B"
 
 
 async def test_project_id_match_survives_a_rename_and_unknown_id_is_new(db_session):
@@ -275,7 +276,9 @@ async def test_project_id_match_survives_a_rename_and_unknown_id_is_new(db_sessi
     by = {r["name"]: r for r in resp.json()["rows"]}
     mk2 = by["Alpha Cooler Mk2"]
     assert mk2["matched_project_id"] == str(world.alpha.id) and mk2["match_by"] == "id"
-    assert [x["field"] for x in mk2["changes"]] == ["project"]
+    assert [(x["field"], x["simulated"]) for x in mk2["changes"]] == [("project", False)]
+    # B2 (a): a rename is listed, never simulated; the plan project is kept.
+    assert mk2["change_kind"] == "unchanged"
     assert by["Gamma Elsewhere"]["change_kind"] == "new"
     codes = {i["code"] for i in resp.json()["issues"]}
     assert "PROJECT_ID_UNKNOWN" in codes
@@ -301,7 +304,9 @@ async def test_hub_planner_sees_only_their_projects_in_the_round_trip(db_session
 
 
 async def _start(db_session, project: Any) -> None:
-    """Give `project` its 14 PDD step rows: A to C Done, D In Progress."""
+    """Give `project` its 14 PDD step rows as recorded progress the list
+    cannot carry: A to C Done, D In Progress at 50 %, and E already Done
+    out of order (the audit's b275a1c3 shape)."""
 
     from models.enums import ProjectStatus, WorkflowStepStatus
     from models.workflow import ProjectWorkflowStep
@@ -309,7 +314,7 @@ async def _start(db_session, project: Any) -> None:
     for i, letter in enumerate("ABCDEFGHIJKLMN", start=1):
         status = (
             WorkflowStepStatus.DONE
-            if letter in "ABC"
+            if letter in "ABCE"
             else WorkflowStepStatus.IN_PROGRESS
             if letter == "D"
             else WorkflowStepStatus.NOT_STARTED
@@ -321,36 +326,175 @@ async def _start(db_session, project: Any) -> None:
                 sequence_order=i,
                 duration_weeks=2,
                 status=status,
-                actual_start_week=10 if letter in "ABCD" else None,
-                actual_end_week=11 if letter in "ABC" else None,
-                percent_complete=100 if letter in "ABC" else 0,
+                actual_start_week=10 if letter in "ABCDE" else None,
+                actual_end_week=11 if letter in "ABCE" else None,
+                percent_complete=100 if letter in "ABCE" else 50 if letter == "D" else 0,
             )
         )
     project.status = ProjectStatus.IN_DEVELOPMENT
     await db_session.flush()
 
 
-async def test_started_project_keeps_its_stage_and_round_trips(db_session):
+def _steps(sim: Any, name: str) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    p = next(p for p in sim.json()["projects"] if p["name"] == name)
+    return p, {s["step_id"]: s for s in p["steps"]}
+
+
+def _comparable(sim: Any) -> Any:
+    out = sim.json()
+    out.pop("issues", None)
+    return out
+
+
+async def test_rename_only_is_the_live_plan_exactly(db_session):
+    """B2 (a): renaming a started project simulates nothing: no movement and
+    the same result as the unedited list."""
+
     world = await make_world(db_session)
     await _start(db_session, world.gamma)
     await act_as(db_session, RoleName.ADMIN)
     async with client_for(db_session) as c:
         wb, ws, headers = _sheet(await _export(c))
-        served_step = _rows_by_name(ws, headers)["Gamma Cooler"]["Current step"]
-        same = await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)
-        _set(ws, headers, "Gamma Cooler", "Priority", "P1")
-        resp = await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)
-        body = resp.json()
+        same = (await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)).json()
+        _set(ws, headers, "Gamma Cooler", "Project", "Gamma Cooler renamed")
+        body = (await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)).json()
+        live = await c.post("/whatif/import/simulate", json={"rows": same["rows"]})
         sim = await c.post("/whatif/import/simulate", json={"rows": body["rows"]})
-    assert served_step is not None and served_step.startswith("PDD-")
-    code = served_step.split(" ")[0]
-    assert {r["change_kind"] for r in same.json()["rows"]} == {"unchanged"}
+    g = next(r for r in body["rows"] if r["matched_project_id"] == str(world.gamma.id))
+    assert g["change_kind"] == "unchanged"
+    assert [(x["field"], x["simulated"]) for x in g["changes"]] == [("project", False)]
+    assert body["counts"]["changed"] == 0 and body["counts"]["projects_after_expansion"] == 0
+    assert sim.status_code == 200 and live.status_code == 200, sim.text
+    assert sim.json()["changes"] == {"newly_slipping": [], "recovered": [], "moved": []}
+    assert _comparable(sim) == _comparable(live)
+    _, steps = _steps(sim, "Gamma Cooler")
+    assert steps["PDD-E"]["status"] == "Done" and steps["PDD-D"]["status"] == "In Progress"
+
+
+async def test_priority_edit_on_a_started_project_keeps_its_progress(db_session):
+    """B2 (b): a priority edit keeps Done / In Progress steps and the remaining
+    effort; only the priority changes. The current step is not rebuilt."""
+
+    world = await make_world(db_session)
+    await _start(db_session, world.gamma)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        wb, ws, headers = _sheet(await _export(c))
+        same = (await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)).json()
+        _set(ws, headers, "Gamma Cooler", "Priority", "P1")
+        body = (await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)).json()
+        live = await c.post("/whatif/import/simulate", json={"rows": same["rows"]})
+        sim = await c.post("/whatif/import/simulate", json={"rows": body["rows"]})
     gamma = next(r for r in body["rows"] if r["name"] == "Gamma Cooler")
     assert gamma["change_kind"] == "changed" and gamma["status"] == "In Development"
-    assert gamma["stage_step_id"] == code
+    assert body["counts"]["projects_after_expansion"] == 0
+    assert any(
+        i["code"] == "CHANGED" and "in place" in i["message"]
+        for i in body["issues"]
+        if i["row_key"] == gamma["key"]
+    )
     assert sim.status_code == 200, sim.text
-    g = next(p for p in sim.json()["projects"] if p["name"] == "Gamma Cooler")
-    assert g["source"] == "file" and g["priority"] == "P1"
-    steps = {s["step_id"]: s for s in g["steps"]}
-    assert steps["PDD-A"]["done_before_import"] and steps["PDD-B"]["done_before_import"]
-    assert steps[code]["status"] == "In Progress"
+    assert sim.json()["kpis"]["file_projects"] == 0
+    g, steps = _steps(sim, "Gamma Cooler")
+    lg, live_steps = _steps(live, "Gamma Cooler")
+    assert g["source"] == "plan" and g["ref"] == str(world.gamma.id) and g["priority"] == "P1"
+    for sid in ("PDD-A", "PDD-B", "PDD-C", "PDD-E"):
+        assert steps[sid]["status"] == "Done", sid
+    assert steps["PDD-D"]["status"] == "In Progress"
+    # The In Progress step keeps its recorded start and remaining effort.
+    assert (steps["PDD-D"]["start_week"], steps["PDD-D"]["end_week"]) == (
+        live_steps["PDD-D"]["start_week"],
+        live_steps["PDD-D"]["end_week"],
+    )
+    assert g["finish_week"] <= lg["finish_week"]
+
+
+async def test_current_step_edit_rebuilds_from_the_list(db_session):
+    """B2 (c): only an edited Current step rebuilds progress from the list."""
+
+    world = await make_world(db_session)
+    await _start(db_session, world.gamma)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        wb, ws, headers = _sheet(await _export(c))
+        _set(ws, headers, "Gamma Cooler", "Current step", "PDD-H")
+        body = (await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)).json()
+        sim = await c.post("/whatif/import/simulate", json={"rows": body["rows"]})
+    gamma = next(r for r in body["rows"] if r["name"] == "Gamma Cooler")
+    assert gamma["change_kind"] == "changed" and gamma["stage_step_id"] == "PDD-H"
+    assert sim.status_code == 200, sim.text
+    g, steps = _steps(sim, "Gamma Cooler")
+    assert g["source"] == "file" and g["replaces_project_id"] == str(world.gamma.id)
+    assert steps["PDD-A"]["done_before_import"] and steps["PDD-E"]["done_before_import"]
+    # Rebuilt: D (In Progress live) is now done before the import.
+    assert steps["PDD-D"]["done_before_import"]
+    assert steps["PDD-H"]["status"] == "In Progress"
+
+
+async def test_priority_edit_on_a_cancelled_project_is_not_simulated(db_session):
+    """B2 (d): priority is Not applicable on a Cancelled project (ADR 0067); an
+    edit there is listed with an info issue and the totals stay the same."""
+
+    from models.enums import ProjectStatus
+
+    world = await make_world(db_session)
+    world.delta.status = ProjectStatus.CANCELLED
+    await db_session.flush()
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        wb, ws, headers = _sheet(await _export(c))
+        same = (await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)).json()
+        _set(ws, headers, "Delta Held", "Priority", "P1")
+        body = (await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)).json()
+        live = await c.post("/whatif/import/simulate", json={"rows": same["rows"]})
+        sim = await c.post("/whatif/import/simulate", json={"rows": body["rows"]})
+    delta = next(r for r in body["rows"] if r["name"] == "Delta Held")
+    assert delta["change_kind"] == "unchanged"
+    assert [(x["field"], x["simulated"]) for x in delta["changes"]] == [("priority", False)]
+    assert (delta["key"], "PRIORITY_NOT_APPLICABLE") in {
+        (i["row_key"], i["code"]) for i in body["issues"]
+    }
+    assert sim.status_code == 200, sim.text
+    assert sim.json()["kpis"] == live.json()["kpis"]
+
+
+def test_in_place_runner_without_edits_is_run_plan_import():
+    """Drift guard: the in-place runner mirrors `run_plan_import` step by step."""
+
+    import dataclasses
+
+    from scheduling.plan_import import PlanImportRequest, run_plan_import
+    from services.whatif_import_register import run_plan_import_in_place
+    from tests.scheduling._whatif_fixtures import portfolio_baseline
+
+    live = portfolio_baseline()
+    after = dataclasses.replace(live, schedule=dataclasses.replace(live.schedule))
+    req = PlanImportRequest(projects=(), mode="merge")
+    assert run_plan_import_in_place(live, after, req) == run_plan_import(live, req)
+
+
+async def test_leader_not_counted_in_capacity_is_kept(db_session):
+    """2026-11-23 (orchestrator, end-to-end test): a plan leader who does not
+    count in capacity is matched, not read as missing. A No-change row keeps
+    the leader, a Changed row keeps it too, and no ENGINEER_MISSING is raised."""
+
+    world = await make_world(db_session)
+    world.eng_gr.counts_in_capacity = False
+    await db_session.flush()
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        wb, ws, headers = _sheet(await _export(c))
+        _set(ws, headers, "Gamma Cooler", "Status", "In Development")
+        body = (await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)).json()
+        sim = await c.post("/whatif/import/simulate", json={"rows": body["rows"]})
+    by = {r["name"]: r for r in body["rows"]}
+    want = {"kind": "existing", "engineer_id": str(world.eng_gr.id)}
+    assert by["Alpha Cooler"]["change_kind"] == "unchanged"
+    assert by["Alpha Cooler"]["leader"]["engineer_id"] == want["engineer_id"]
+    assert by["Gamma Cooler"]["change_kind"] == "changed"
+    assert by["Gamma Cooler"]["leader"]["engineer_id"] == want["engineer_id"]
+    gr_keys = {by["Alpha Cooler"]["key"], by["Gamma Cooler"]["key"]}
+    assert not [
+        i for i in body["issues"] if i["row_key"] in gr_keys and i["code"] == "ENGINEER_MISSING"
+    ]
+    assert sim.status_code == 200, sim.text

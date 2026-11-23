@@ -722,7 +722,11 @@ def to_engine_request(
     wf_steps: dict[str, set[str]] = {}
     for t in ctx.baseline.schedule.workflow_steps:
         wf_steps.setdefault(t.workflow_id, set()).add(t.step_id)
-    roster_ids = {e.engineer_id for e in roster_of(ctx)}
+    # A Projects list row keeps its plan leader even when that engineer does
+    # not count in capacity (2026-11-23): any plan engineer with FTE > 0.
+    roster_ids = {e.engineer_id for e in roster_of(ctx)} | {
+        e.engineer_id for e in ctx.baseline.schedule.engineers if e.fte > 0
+    }
 
     # Owner rule (2026-11-04): a non-schedulable row is never simulated, even
     # with include=true (its plan project, if matched, is removed upstream:

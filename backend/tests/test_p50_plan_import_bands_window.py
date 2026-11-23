@@ -28,6 +28,7 @@ from services.plan_import_xlsx import (
     ParseResult,
     parse_plan_workbook,
 )
+from services.week_labels import week_label
 from services.whatif_import import (
     PLAN_FROM_LATER,
     PLAN_FROM_RAISED,
@@ -438,7 +439,9 @@ async def test_api_saved_scenario_stores_window_and_reads_old_rows(db_session):
         ).items()
         for k in keys_of(label)
     }
-    assert summary["plan_from_week"] == f and summary["plan_until_week"] == 80
+    # 2026-11-23 audit A1: the Summary writes weeks as labels ("W28 2027").
+    assert summary["plan_from_week"] == week_label(f)
+    assert summary["plan_until_week"] == week_label(80)
     assert (saved["plan_from_week"], saved["plan_until_week"]) == (f, 80)
     assert saved["request"]["plan_from_week"] == f and saved["request"]["plan_until_week"] == 80
     assert saved["result"]["plan_from_week"] == f

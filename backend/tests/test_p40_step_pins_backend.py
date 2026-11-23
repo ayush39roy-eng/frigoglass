@@ -91,13 +91,15 @@ async def test_persist_writes_pin_flags_and_null_span_fte(db_session):
     patched = dataclasses.replace(outcome, steps=steps, manual_overlap=True, pin_lapsed=True)
     output = dataclasses.replace(
         output,
-        project_outcomes=tuple(
-            patched if o is outcome else o for o in output.project_outcomes
-        ),
+        project_outcomes=tuple(patched if o is outcome else o for o in output.project_outcomes),
     )
     run = await persist_schedule_output(
-        db_session, schedule_input, output,
-        solver_type=SolverType.GREEDY, trigger_reason="step_pin", activate=True,
+        db_session,
+        schedule_input,
+        output,
+        solver_type=SolverType.GREEDY,
+        trigger_reason="step_pin",
+        activate=True,
     )
     rows = {
         r.step_template_id: r
@@ -210,7 +212,13 @@ def _body(*, mode="merge", status="In Development", include=True, matched="p1"):
         mode=mode,
         rows=[
             SimpleNamespace(
-                key="r1", include=include, status=status, matched_project_id=matched
+                key="r1",
+                include=include,
+                status=status,
+                matched_project_id=matched,
+                # P58-B / 2026-11-23 B2: the ImportRow defaults of a plan-format row.
+                change_kind=None,
+                changes=[],
             )
         ],
     )

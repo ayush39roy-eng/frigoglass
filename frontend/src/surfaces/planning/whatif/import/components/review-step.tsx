@@ -87,6 +87,9 @@ export function ReviewStep({
   const budgetRows = shownRows.filter((r) => isMappedStatus(r.status) && notAProject.has(r.key));
   const notMappedRows = shownRows.filter((r) => !isMappedStatus(r.status));
   const notMappedTotal = rows.filter((r) => !isMappedStatus(r.status)).length;
+  // The statuses actually present, in their own words ("On Hold", "Cancelled", …).
+  const notMappedWords = notMappedStatusWords(rows.filter((r) => !isMappedStatus(r.status)).map((r) => r.status));
+  const noStatusColumn = parsed.issues.some((i) => i.code === 'STATUS_NOT_IN_FILE');
   const c = parsed.counts;
   // "Projects to schedule" (P32-R03): the served count is shown as long as it still describes
   // the request (expansion on, no row's include/status changed since the parse); otherwise a
@@ -136,8 +139,8 @@ export function ReviewStep({
       </div>
       {c.derived_status > 0 ? (
         <p className="-mt-s3 text-2xs text-text-muted" data-testid="import-derived-status">
-          Status derived for {int(c.derived_status)} row{c.derived_status === 1 ? '' : 's'} (the file has no Status
-          column)
+          Status derived for {int(c.derived_status)} row{c.derived_status === 1 ? '' : 's'}{' '}
+          {noStatusColumn ? '(the file has no Status column)' : '(blank Status cells)'}
         </p>
       ) : null}
 
@@ -204,7 +207,7 @@ export function ReviewStep({
       {notMappedTotal > 0 ? (
         <Callout
           tone="neutral"
-          title={`${int(notMappedTotal)} On Hold project${notMappedTotal === 1 ? '' : 's'} not mapped`}
+          title={`${int(notMappedTotal)} ${notMappedWords} project${notMappedTotal === 1 ? '' : 's'} not mapped`}
           testId="import-not-mapped-banner"
           role="status"
         >
@@ -284,7 +287,7 @@ export function ReviewStep({
             data-testid="import-not-mapped"
           >
             <summary className="cursor-pointer list-none rounded-md px-s3 py-s2 text-xs font-semibold text-text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-              {`Not mapped (On Hold) — ${int(notMappedRows.length)}`}
+              {`Not mapped (${notMappedWords}) — ${int(notMappedRows.length)}`}
             </summary>
             <div className="p-s2">
               <ReviewTable
@@ -293,7 +296,7 @@ export function ReviewStep({
                 issuesByRow={issuesByRow}
                 errors={errors}
                 update={updateRow}
-                label="Rows not mapped (On Hold)"
+                label={`Rows not mapped (${notMappedWords})`}
               />
             </div>
           </details>
@@ -485,4 +488,12 @@ function PlanWindowPickers({
       </div>
     </>
   );
+}
+
+/** "On Hold", "On Hold / Cancelled", … — the not-mapped statuses present, in a fixed order. */
+function notMappedStatusWords(statuses: readonly string[]): string {
+  const order = ['On Hold', 'Draft', 'Cancelled', 'Commercialized'];
+  const present = new Set(statuses);
+  const words = [...order.filter((s) => present.has(s)), ...[...present].filter((s) => !order.includes(s)).sort()];
+  return words.length > 0 ? words.join(' / ') : 'On Hold';
 }
