@@ -2080,3 +2080,11 @@ clock / closed year, ADR 0056 queued P3, ADR 0061 bounds, ADR 0024/0062 display)
   windowed to the basis: full-year = load inside the plan year's weeks; remaining = load in weeks
   cw+1..year end. A step crossing the window edge is split pro rata per week. Multi-year (P53) work
   after the year no longer inflates booked %.
+
+## Hub rank (ADR 0068, 2026-11-23)
+
+- `hub_rank` = position among same-hub projects in the same band, by `band_rank`; derived, never stored.
+- Setting hub rank k moves the project just before the hub peer at hub rank k (after the hub's last peer
+  if k is past the end); global `band_rank` renumbered; other hubs' relative order unchanged. Scheduler
+  still reads `band_rank` only.
+- Display: hub rank first everywhere; global rank on hover when no hub filter; hub rank only with a hub filter.
