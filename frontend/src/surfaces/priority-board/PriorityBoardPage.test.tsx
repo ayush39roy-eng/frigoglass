@@ -666,7 +666,7 @@ describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
     // position is the served band_rank — for a session that may re-rank, an
     // editable field (owner request 2026-11-17) labelled with its spoken form.
     // P59: the set priority (P1) on the right, not the calculated band.
-    expect(alpha).toHaveTextContent(/^#2Alpha CoolerP1$/);
+    expect(alpha).toHaveTextContent(/^#R&D2Alpha CoolerP1$/);
     expect(within(alpha).getByRole('textbox', { name: /^Position of Alpha Cooler in R&D-Greece · P1/ })).toHaveValue('2');
     expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveAttribute('title', 'Alpha Cooler');
     // Owner feedback: the full name over up to two lines (fixed 46 px row), never one truncated line.
