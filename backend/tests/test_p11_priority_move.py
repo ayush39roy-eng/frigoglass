@@ -258,10 +258,9 @@ async def test_post_back_to_back_moves_queue_one_run_then_defer(db_session, disp
     assert len(dispatch.calls) == 1
 
 
-@pytest.mark.parametrize(
-    "status", [ProjectStatus.ON_HOLD, ProjectStatus.DRAFT, ProjectStatus.COMMERCIALIZED,
-               ProjectStatus.CANCELLED]
-)
+# P57 (ADR 0067): Commercialized / Cancelled take no priority, so a move on
+# them is 409 PRIORITY_NOT_APPLICABLE (tests/test_p57_priority_not_applicable.py).
+@pytest.mark.parametrize("status", [ProjectStatus.ON_HOLD, ProjectStatus.DRAFT])
 async def test_post_not_needed_for_non_schedulable_status(db_session, dispatch, status):
     w = await _world(db_session, status=status)
     await _act_as(db_session, RoleName.ADMIN)

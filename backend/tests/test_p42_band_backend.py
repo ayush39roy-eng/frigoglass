@@ -240,7 +240,13 @@ async def test_completing_within_year_buckets_sum_to_row_count(db_session: Async
         o = flags[r["project_id"]]
         assert r["counts_toward_year"] == o.counts_toward_year
         assert r["not_scheduled_priority"] == o.not_scheduled_priority
-        assert r["priority_label"] == (dc.PRIORITY_LABELS[r["priority"]] if r["priority"] else None)
+        # P57 (ADR 0067): a Commercialized / Cancelled row has no band.
+        if not r["priority_applicable"]:
+            assert r["priority"] is None and r["priority_label"] == "Not applicable"
+        else:
+            assert r["priority_label"] == (
+                dc.PRIORITY_LABELS[r["priority"]] if r["priority"] else None
+            )
         if r["outcome"] in ("NOT_SCHEDULED_PRIORITY", "QUEUED"):
             assert not r["within_year"] or r["outcome"] == "NOT_SCHEDULED_PRIORITY"
     # Regions reconcile for the two new buckets too.
@@ -506,6 +512,7 @@ async def test_class_breakdown_excludes_non_counting(db_session: AsyncSession) -
         "P3": "P3",
         "P4": "P4",
         "Queue": "Q",
+        "NA": "Not applicable",
     }
     assert hubs["priority_bucket_labels"]["Queue"] == "Q"
     row = next(r for r in body["rows"] if r["category"] == "A")

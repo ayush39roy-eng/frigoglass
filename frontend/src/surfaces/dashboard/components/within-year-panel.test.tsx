@@ -20,6 +20,7 @@ const withRun: CompletingWithinYear = servedCompleting({
   regions: [],
   rows: [
     {
+      priority_applicable: true,
       project_id: 'p1',
       project_name: 'Alpha cooler refresh',
       hub: 'R&D-Greece',

@@ -5,10 +5,11 @@
 
 import type {
   ProjectCategory,
-  ProjectPriority,
   ProjectStatus,
   ProjectType,
 } from '@/types/enums';
+
+import type { PriorityFilterValue } from '@/lib/priority-applicability';
 
 import type { GanttSort } from '../api/types';
 
@@ -24,7 +25,8 @@ export interface GanttFilterState {
   status: ProjectStatus[];
   leaderEngineerId: string[];
   currentStep: string[];
-  priority: ProjectPriority[];
+  /** P57: a band or `not_applicable` (Commercialized / Cancelled). */
+  priority: PriorityFilterValue[];
   sort: GanttSort;
 }
 

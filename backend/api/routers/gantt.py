@@ -73,7 +73,7 @@ from collections.abc import Mapping, Sequence
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import ColumnElement, func, or_, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -131,8 +131,14 @@ from services.hub_scope import (
     needs_own_assignments,
     project_row_scope,
 )
-from services.outcome_buckets import outcome_bucket, priority_label
+from services.outcome_buckets import outcome_bucket
 from services.plan_clock import PlanClock, get_plan_clock
+from services.priority_applicability import (
+    effective_priority,
+    priority_applicable,
+    priority_filter_predicate,
+    served_priority_label,
+)
 from services.project_cards import build_project_cards
 from services.project_effort import (
     TRIGGER_UNFREEZE,
@@ -183,6 +189,8 @@ GanttSort = Literal["name", "priority", "start", "end"]
 #: priority is the Queue bucket, as in Capacity and the Board (P13 slice B).
 _BAND_ORDER = {band: i for i, band in enumerate(dc.PRIORITY_ORDER)}
 _QUEUE_BAND = _BAND_ORDER[ProjectPriority.Q.value]
+#: ADR 0067: "Not applicable" (Commercialized / Cancelled) sorts after Queue.
+_NOT_APPLICABLE_BAND = _QUEUE_BAND + 1
 
 
 def _served_span_fte(
@@ -317,11 +325,12 @@ async def get_gantt(
     leader_engineer_id: LeaderListQuery = None,
     current_step: CurrentStepListQuery = None,
     priority: Annotated[
-        list[ProjectPriority] | None,
+        list[ProjectPriority | Literal["not_applicable"]] | None,
         Query(
             description=(
-                "Repeatable (ORed). P1..P4 match exactly. Q is the Queue bucket: "
-                "priority Q OR no priority (the Capacity / Priority board rule). "
+                "Repeatable (ORed). P1..P4 match the effective priority exactly. Q is "
+                "the Queue bucket: priority Q OR no priority (the Capacity / Priority "
+                "board rule). `not_applicable` = Commercialized / Cancelled (ADR 0067). "
                 f"At most {MAX_FILTER_VALUES} values."
             ),
             max_length=MAX_FILTER_VALUES,
@@ -415,10 +424,10 @@ async def get_gantt(
         predicate = any_of(column, values)
         if predicate is not None:
             stmt = stmt.where(predicate)
-    priority_filter = any_of(Project.priority, priority)
-    if priority_filter is not None and ProjectPriority.Q in (priority or ()):
-        # The Queue bucket (P13, same as Capacity / Priority board): Q or none.
-        priority_filter = or_(priority_filter, Project.priority.is_(None))
+    # ADR 0067: the effective band, so no band value matches a
+    # Commercialized / Cancelled project; `not_applicable` selects them. The
+    # Queue bucket (P13, as Capacity / Priority board) is Q or no priority.
+    priority_filter = priority_filter_predicate(priority, queue_includes_unset=True)
     if priority_filter is not None:
         stmt = stmt.where(priority_filter)
     search = search_predicate(q)
@@ -468,9 +477,13 @@ async def get_gantt(
         if sort == "priority":
             def _priority_key(p: Project) -> tuple[int, int, float, str, str]:
                 score = cards[p.id].score
-                band = (
-                    _BAND_ORDER.get(p.priority.value, _QUEUE_BAND) if p.priority else _QUEUE_BAND
-                )
+                eff = effective_priority(p.status, p.priority)
+                if not priority_applicable(p.status):
+                    band = _NOT_APPLICABLE_BAND
+                elif eff is not None:
+                    band = _BAND_ORDER.get(eff.value, _QUEUE_BAND)
+                else:
+                    band = _QUEUE_BAND
                 return (band, score is None, -(score or 0.0), p.name, str(p.id))
 
             filtered.sort(key=_priority_key)
@@ -708,7 +721,10 @@ async def get_gantt(
                 project_name=project.name,
                 hub=project.hub.name,
                 category=project.category,
+                # Stored value; ADR 0067 flag + label (`priority_applicable`).
                 priority=project.priority,
+                priority_applicable=priority_applicable(project.status),
+                status=project.status,
                 frozen=project.frozen,
                 delay_weeks=project.delay_weeks,
                 left_out=outcome.left_out if outcome else False,
@@ -733,7 +749,7 @@ async def get_gantt(
                 total_weeks=total_weeks,
                 pin_lapsed=bool(outcome.pin_lapsed) if outcome else False,
                 manual_overlap=bool(outcome.manual_overlap) if outcome else False,
-                priority_label=priority_label(project.priority),
+                priority_label=served_priority_label(project.status, project.priority),
                 counts_toward_year=outcome.counts_toward_year if outcome else True,
                 not_scheduled_priority=outcome.not_scheduled_priority if outcome else False,
                 outcome=outcome_bucket(outcome),

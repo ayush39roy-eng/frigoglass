@@ -34,7 +34,11 @@ from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunP
 from scheduling.types import ScheduleOutput
 from schemas.schedule_run import ScheduleRunChangeRow, ScheduleRunChanges
 from services.hub_scope import needs_own_assignments, project_row_scope
-from services.outcome_buckets import priority_label
+from services.priority_applicability import (
+    effective_priority,
+    priority_applicable,
+    served_priority_label,
+)
 
 
 class _Compared(NamedTuple):
@@ -160,7 +164,7 @@ async def diff_outcomes(
     rows: list[ScheduleRunChangeRow] = []
     if changed:
         stmt = (
-            select(Project.id, Project.name, Hub.name, Project.priority)
+            select(Project.id, Project.name, Hub.name, Project.priority, Project.status)
             .join(Hub, Project.hub_id == Hub.id)
             .where(Project.id.in_(changed))
         )
@@ -175,7 +179,7 @@ async def diff_outcomes(
         scope = project_row_scope(principal, Project.hub_id, own)
         if scope is not None:
             stmt = stmt.where(scope)
-        for pid, name, hub_name, priority in (await db.execute(stmt)).all():
+        for pid, name, hub_name, priority, project_status in (await db.execute(stmt)).all():
             b = before.get(pid, _EMPTY)
             a = after.get(pid, _EMPTY)
             delta = (
@@ -188,7 +192,9 @@ async def diff_outcomes(
                     project_id=pid,
                     project_name=name,
                     hub=hub_name,
-                    priority=priority,
+                    # ADR 0067: display-only row, the effective band.
+                    priority=effective_priority(project_status, priority),
+                    priority_applicable=priority_applicable(project_status),
                     before_projected_end_week=b.projected_end_week,
                     after_projected_end_week=a.projected_end_week,
                     delta_weeks=delta,
@@ -202,7 +208,7 @@ async def diff_outcomes(
                     after_counts_toward_year=a.counts_toward_year,
                     before_not_scheduled_priority=b.not_scheduled_priority,
                     after_not_scheduled_priority=a.not_scheduled_priority,
-                    priority_label=priority_label(priority),
+                    priority_label=served_priority_label(project_status, priority),
                     is_new=pid not in before,
                     is_removed=pid not in after,
                 )

@@ -9,6 +9,7 @@ import { servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 function wyRow(overrides: Partial<CompletingWithinYearRow> = {}): CompletingWithinYearRow {
   return servedRow({
+    priority_applicable: true,
     project_id: 'p-1',
     project_name: 'Project One',
     hub: 'PD-India',
@@ -29,6 +30,7 @@ function wyRow(overrides: Partial<CompletingWithinYearRow> = {}): CompletingWith
 
 function regRow(overrides: Partial<ProjectFilterRow> = {}): ProjectFilterRow {
   return {
+    priority_applicable: true,
     project_id: 'p-2',
     project_name: 'Project Two',
     hub: 'R&D-Greece',
@@ -44,6 +46,7 @@ function regRow(overrides: Partial<ProjectFilterRow> = {}): ProjectFilterRow {
 
 function vipProject(overrides: Partial<VipItemProject> = {}): VipItemProject {
   return {
+    priority_applicable: true,
     id: 'p-3',
     name: 'VIP Project',
     hub: 'PD-Romania',

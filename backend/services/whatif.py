@@ -79,6 +79,7 @@ from schemas.whatif import (
     UtilizationRowOut,
 )
 from services.delivery_serving import result_delivery, result_row
+from services.priority_applicability import priority_applicable
 from services.whatif_baseline import Scope, WhatIfContext, principal_audit_hub_id
 
 #: Wall-clock caps (seconds). One greedy run on ~250 projects is about 20 ms:
@@ -459,7 +460,13 @@ def scope_simulation(raw: SimulationResult, scope: Scope) -> SimulateResponse:
     return SimulateResponse(
         scope=scope_info(scope),
         projects=[
-            ProjectResultOut(**{k: getattr(p, k) for k in ProjectResultOut.model_fields})
+            ProjectResultOut(
+                **{
+                    k: getattr(p, k)
+                    for k in ProjectResultOut.model_fields
+                    if k != "priority_applicable"
+                }
+            )
             for p in projects
         ],
         outcome_counts_before={o: before_counts.get(o, 0) for o in OUTCOME_CLASSES},
@@ -595,11 +602,20 @@ def with_delivery(
 
     diag = {p.project_id: p for p in raw.projects}
     si = ctx.baseline.schedule
+    # ADR 0067: a Commercialized / Cancelled project has no band in the
+    # results (served `priority` null, `priority_applicable` false) and is
+    # counted under Other. Added projects are always schedulable.
+    status_of = {p.project_id: p.status for p in si.projects}
+    for p in resp.projects:
+        if not priority_applicable(status_of.get(p.project_id)):
+            p.priority = None
+            p.priority_applicable = False
     resp.delivery_by_year = result_delivery(
         [
             result_row(
                 project_id=p.project_id,
                 priority=p.priority,
+                status=status_of.get(p.project_id),
                 outcome=p.outcome,
                 within_year=within_year_bucket(p.within_year, p.outcome),
                 finish_week=p.finish_week,

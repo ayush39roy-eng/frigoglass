@@ -69,6 +69,7 @@ function compareItem(id: string): PriorityCompareProject {
   const s = server[id]!;
   const v = served(id);
   return {
+    priority_applicable: true,
     project_id: id, project_name: s.name, hub: s.hub, set_priority: null, has_score: v.scored,
     weighted_score: v.raw, normalized_pct: v.pct, suggested_band: s.fill ? 'P1' : v.band, dimension_scores: v.dims,
     score_band: v.band, capacity_fill: s.fill !== undefined, capacity_fill_reason: s.fill ?? null,
@@ -81,6 +82,7 @@ function matrixRow(id: string): PriorityMatrixRow {
   return {
     ...P13_MATRIX_ROW_DEFAULTS,
     missing_dimension_keys: v.missing,
+    priority_applicable: true,
     project_id: id, project_name: s.name, hub: s.hub, category: 'A', type: 'NM', set_priority: null,
     has_score: v.scored, hard_gates: s.gates, weighted_score: v.raw, normalized_pct: v.pct,
     suggested_band: v.band, score_band: v.band, capacity_fill: false, capacity_fill_reason: null,

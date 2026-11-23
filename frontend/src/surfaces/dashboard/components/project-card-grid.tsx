@@ -12,7 +12,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { CategoryTag } from '@/components/ui/category-tag';
-import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { ProjectPriorityPill } from '@/components/shared/priority-band-pill';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
 import { VipBadge } from '@/components/shared/vip-badge';
@@ -75,11 +75,11 @@ function ProjectFeatureCard({ row }: { row: ProjectFilterRow }): React.JSX.Eleme
       </div>
 
       <div className="mt-auto flex items-center justify-between gap-s2 border-t border-dash-hairline pt-s3">
-        {row.priority ? (
-          <PriorityBandPill priority={row.priority} />
-        ) : (
-          <span className="text-2xs text-text-subtle">Unscored</span>
-        )}
+        <ProjectPriorityPill
+          status={row.status} priorityApplicable={row.priority_applicable}
+          priority={row.priority}
+          fallback={<span className="text-2xs text-text-subtle">Unscored</span>}
+        />
         <CardAskAgentDialog projectId={row.project_id} projectName={row.project_name} />
       </div>
     </BoltCard>

@@ -32,6 +32,7 @@ const hubs: Hub[] = [
 
 function oemProject(overrides: Partial<ProjectRead> = {}): ProjectRead {
   return {
+    priority_applicable: true,
     id: 'p-oem', name: 'HCK cooler', external_code: null, hub_id: 'h-hck', leader_engineer_id: 'eng-dim',
     leader_is_provisional: true, category: 'B-OEM', type: 'RC', priority: 'P2', status: 'In Queue', frozen: false,
     actual_start_week: 10, actual_end_week: null, delay_weeks: 0, reg_year: 2026, carry_over: false, comments: null, customer_name: null,

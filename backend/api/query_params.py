@@ -144,9 +144,16 @@ StatusListQuery = Annotated[
     list[ProjectStatus] | None,
     Query(alias="status_", description=_REPEAT_DOC, max_length=MAX_FILTER_VALUES),
 ]
+#: ADR 0067 (P57): `not_applicable` selects the Commercialized / Cancelled
+#: projects; a band value matches the effective priority only.
 PriorityListQuery = Annotated[
-    list[ProjectPriority] | None,
-    Query(alias="priority", description=_REPEAT_DOC, max_length=MAX_FILTER_VALUES),
+    list[ProjectPriority | Literal["not_applicable"]] | None,
+    Query(
+        alias="priority",
+        description=_REPEAT_DOC
+        + " Bands match the effective priority; `not_applicable` = Commercialized / Cancelled.",
+        max_length=MAX_FILTER_VALUES,
+    ),
 ]
 LeaderListQuery = Annotated[
     list[uuid.UUID] | None,

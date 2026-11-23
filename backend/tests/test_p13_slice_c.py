@@ -300,9 +300,10 @@ async def test_gantt_field_filters_are_exact_subsets(db_session):
             assert set(_ids(rows)) == expect(lambda p, r, c=c: r["category"] == c)
         for pr in {r["priority"] for r in everything if r["priority"]}:
             rows = (await _gantt(client, priority=pr))["rows"]
+            # P57 (ADR 0067): a Commercialized / Cancelled row is under no band.
             assert set(_ids(rows)) == expect(
-                lambda p, r, pr=pr: r["priority"] == pr
-                or (pr == "Q" and r["priority"] is None)  # Queue bucket
+                lambda p, r, pr=pr: r["priority_applicable"]
+                and (r["priority"] == pr or (pr == "Q" and r["priority"] is None))  # Queue
             )
         statuses = {p.status for p in projects.values()}
         assert len(statuses) > 1
@@ -404,20 +405,33 @@ async def test_gantt_queue_tab_is_q_or_no_priority(db_session):
         queue = await _gantt(client, priority="Q")
         p1 = await _gantt(client, priority="P1")
         by_priority = (await _gantt(client, sort="priority"))["rows"]
+    # P57 (ADR 0067): Commercialized / Cancelled are under no band (not Queue).
+    na = {ProjectStatus.COMMERCIALIZED, ProjectStatus.CANCELLED}
     expected_queue = {
-        pid for pid, p in projects.items() if p.priority in (ProjectPriority.Q, None)
+        pid
+        for pid, p in projects.items()
+        if p.priority in (ProjectPriority.Q, None) and p.status not in na
     }
     assert set(_ids(queue["rows"])) == expected_queue
     assert {str(q_project.id), str(null_project.id)} <= expected_queue
     assert queue["total_count"] == len(expected_queue)
     assert set(_ids(p1["rows"])) == {
-        pid for pid, p in projects.items() if p.priority == ProjectPriority.P1
+        pid
+        for pid, p in projects.items()
+        if p.priority == ProjectPriority.P1 and p.status not in na
     }
-    # Queue rows (Q and null together) form one contiguous tail block.
+    # Queue rows (Q and null together) form one contiguous block after the
+    # bands; "Not applicable" rows (P57) come last.
     queue_bands = (ProjectPriority.Q, None)
-    is_queue = [projects[r["project_id"]].priority in queue_bands for r in by_priority]
-    first = is_queue.index(True)
-    assert all(is_queue[first:]) and not any(is_queue[:first])
+
+    def block(pid: str) -> int:
+        p = projects[pid]
+        if p.status in na:
+            return 2
+        return 1 if p.priority in queue_bands else 0
+
+    blocks = [block(r["project_id"]) for r in by_priority]
+    assert blocks == sorted(blocks) and 1 in blocks
 
 
 # --- T13: sort ---------------------------------------------------------------------------
@@ -456,8 +470,10 @@ async def test_gantt_sorts_and_pages_consistently(db_session):
     # Priority: band P1 → P4 → Q → none, then score (the register's rank) descending.
     band = {b: i for i, b in enumerate(dc.PRIORITY_ORDER)}
     rank = {r["project_id"]: r["priority_rank"] for r in register}
+    # P57 (ADR 0067): "Not applicable" rows sort after Q.
     keys = [
-        (band.get(r["priority"], band["Q"]), rank[r["project_id"]] is None,
+        (band.get(r["priority"], band["Q"]) if r["priority_applicable"] else band["Q"] + 1,
+         rank[r["project_id"]] is None,
          rank[r["project_id"]] or 0)
         for r in by_priority
     ]

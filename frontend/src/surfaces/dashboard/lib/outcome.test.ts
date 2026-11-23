@@ -6,6 +6,7 @@ import { servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 function row(overrides: Partial<CompletingWithinYearRow>): CompletingWithinYearRow {
   return servedRow({
+    priority_applicable: true,
     project_id: 'p1',
     project_name: 'Project',
     hub: 'R&D-Greece',

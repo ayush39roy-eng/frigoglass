@@ -141,6 +141,8 @@ export interface VipPillarInfo {
 /** A linked project's served live facts (active run, I9). No financial fields. */
 export interface VipItemProject {
   id: Id;
+  /** P57 (ADR 0067): false for a Commercialized / Cancelled project (priority "Not applicable"). */
+  priority_applicable: boolean;
   name: string;
   hub: HubName;
   priority: ProjectPriority | null;

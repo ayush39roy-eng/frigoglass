@@ -45,6 +45,7 @@ from models.enums import (
     NON_SCHEDULABLE_STATUSES,
     HardGateReason,
     ProjectPriority,
+    ProjectStatus,
     SolverType,
 )
 from models.priority import PriorityScore
@@ -52,6 +53,7 @@ from models.project import Project
 from schemas.project import RecalcStatus
 from services.active_run import get_active_run
 from services.band_rank import lock_band_ranks, reconcile_band_rank
+from services.priority_applicability import ensure_priority_applicable
 from services.run_dispatch import dispatch_greedy, enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 
@@ -108,13 +110,24 @@ async def project_hard_gates(db: AsyncSession, project_id: uuid.UUID) -> list[Ha
 
 
 async def ensure_priority_move_allowed(
-    db: AsyncSession, project: Project, new_priority: ProjectPriority | None
+    db: AsyncSession,
+    project: Project,
+    new_priority: ProjectPriority | None,
+    *,
+    target_status: ProjectStatus | None = None,
 ) -> None:
     """DOMAIN_RULES "Hard gates": a project with any hard gate is pinned to
     P1. Any other target is 409 `HARD_GATE_FORCES_P1`. Raises before anything
     is written. The gate names are fixed domain labels, not project data.
+
+    ADR 0067: a Commercialized / Cancelled project's priority is "Not
+    applicable" and cannot be changed: 409 `PRIORITY_NOT_APPLICABLE`.
+    `target_status` is the status the project will have (a PATCH that also changes
+    the status passes its target); default `project.status`. Callers reach
+    here only for an actual change (an unchanged priority returns earlier).
     """
 
+    ensure_priority_applicable(project.status if target_status is None else target_status)
     if new_priority == ProjectPriority.P1:
         return
     gates = await project_hard_gates(db, project.id)

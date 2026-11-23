@@ -2,7 +2,8 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { CalendarCheck, CalendarClock } from 'lucide-react';
 
-import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { ProjectPriorityPill } from '@/components/shared/priority-band-pill';
+import { rowEffectivePriority, rowPriorityNotApplicable } from '@/lib/priority-applicability';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardInfo } from '@/components/ui/card-info';
 import { usePlanClock } from '@/lib/plan-clock';
@@ -178,10 +179,10 @@ export function UpcomingCompletionsCard({
                   data-testid="exec-upcoming-row-meta"
                 >
                   <span className="shrink-0 text-2xs text-text-muted">{row.hub}</span>
-                  {row.priority ? (
+                  {rowEffectivePriority(row) || rowPriorityNotApplicable(row) ? (
                     <span className="inline-flex items-center gap-x-1.5 sm:contents">
                       <span className="text-2xs text-text-subtle sm:hidden" aria-hidden="true">·</span>
-                      <PriorityBandPill priority={row.priority} />
+                      <ProjectPriorityPill status={row.status} priorityApplicable={row.priority_applicable} priority={row.priority} short />
                     </span>
                   ) : (
                     <span aria-hidden="true" />

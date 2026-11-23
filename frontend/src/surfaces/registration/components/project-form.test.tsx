@@ -148,6 +148,7 @@ describe('ProjectFormDialog', () => {
       <ProjectFormDialog
         mode="edit"
         project={{
+          priority_applicable: true,
           id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
           category: null, type: null, priority: null, status: 'In Queue', frozen: false, actual_start_week: null, actual_end_week: null,
           delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,
@@ -176,6 +177,7 @@ describe('ProjectFormDialog', () => {
         variant="inline"
         onDirtyChange={onDirtyChange}
         project={{
+          priority_applicable: true,
           id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
           category: null, type: 'NO', priority: null, status: 'In Queue', frozen: false, actual_start_week: null, actual_end_week: null,
           delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,
@@ -222,6 +224,7 @@ describe('ProjectFormDialog', () => {
         mode="edit"
         variant="inline"
         project={{
+          priority_applicable: true,
           id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
           category: null, type: null, priority: null, status: 'In Queue', frozen: false, actual_start_week: null, actual_end_week: null,
           delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,
@@ -267,6 +270,7 @@ describe('ProjectFormDialog', () => {
       <ProjectFormDialog
         mode="edit"
         project={{
+          priority_applicable: true,
           id: 'p1',
           name: 'Cooler A',
           external_code: null,
@@ -605,7 +609,7 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
 
 describe('ProjectForm — unsaved-changes reporting (P22-T01)', () => {
   const existing = {
-    id: 'p-1', name: 'Cooler A', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
+    priority_applicable: true, id: 'p-1', name: 'Cooler A', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
     category: 'A' as const, type: null, priority: 'P2' as const, status: 'In Queue' as const, frozen: false,
     actual_start_week: null, actual_end_week: null, delay_weeks: 0, reg_year: 2026, carry_over: false, comments: 'one\r\ntwo',
     customer_name: null, tcogs_eur: 100.5, selling_price_eur: null, gross_margin_pct: null, capex_keur: null,

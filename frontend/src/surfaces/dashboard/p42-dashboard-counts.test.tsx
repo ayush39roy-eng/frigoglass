@@ -38,6 +38,7 @@ vi.mock('@tanstack/react-virtual', () => ({
 
 function row(id: string, o: Partial<CompletingWithinYearRow> = {}): CompletingWithinYearRow {
   return servedRow({
+    priority_applicable: true,
     project_id: id,
     project_name: `Project ${id}`,
     hub: 'R&D-Greece',
@@ -168,6 +169,7 @@ describe('P42 Executive view', () => {
 
   it('the risk list leaves out every project that does not count toward the year', () => {
     const reg = (id: string, o: Partial<ProjectFilterRow>): ProjectFilterRow => ({
+      priority_applicable: true,
       project_id: id,
       project_name: `Register ${id}`,
       hub: 'R&D-Greece',

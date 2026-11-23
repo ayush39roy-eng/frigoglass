@@ -416,6 +416,7 @@ describe('DashboardPage — P17-R06/R08 rearrangement', () => {
     ...withinYear,
     rows: [
       {
+        priority_applicable: true,
         project_id: 'p1',
         project_name: 'Alpha cooler refresh',
         hub: 'R&D-Greece',

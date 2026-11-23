@@ -35,6 +35,7 @@ import { useCategoryCatalogSnapshot } from '@/lib/category-catalog';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { formatDecimal, formatPlanWeek, formatWeekWithYear } from '@/lib/format';
 import { useCurrentWeek, usePlanClock } from '@/lib/plan-clock';
+import { isPriorityNotApplicable, NOT_APPLICABLE_LABEL, NOT_APPLICABLE_TOOLTIP } from '@/lib/priority-applicability';
 import { cn } from '@/lib/utils';
 import { usePermission } from '@/stores/session';
 import {
@@ -227,6 +228,11 @@ export function ProjectForm({
   const contextMoveHost = usePriorityMoveHost();
   const moveHost = rankMoveHost ?? contextMoveHost;
   const canMovePriority = usePermission('project_registration').write;
+  // P57 (ADR 0067): a Commercialized / Cancelled project takes no priority. The
+  // select is replaced by a disabled "Not applicable"; its state keeps the
+  // stored value, so a save sends it back unchanged (never null, never moved).
+  const priorityNotApplicable =
+    project !== null && project !== undefined && isPriorityNotApplicable(project.status, project.priority_applicable);
   const planWeekHint =
     clock?.planYearStartWeek != null
       ? `Plan week, counted from the first plan year (${String(clock.planYearStartWeek)} = ${formatWeekWithYear(clock.planYearStartWeek)}). `
@@ -622,8 +628,22 @@ export function ProjectForm({
               // P11 (ADR 0015): on an existing project a priority change
               // recalculates the timeline by itself. A new project waits for
               // the next schedule run, so the note is edit-only.
-              hint={mode === 'edit' ? MOVE_COPY.formHint : undefined}
+              hint={priorityNotApplicable ? NOT_APPLICABLE_TOOLTIP : mode === 'edit' ? MOVE_COPY.formHint : undefined}
             >
+              {priorityNotApplicable ? (
+                <span title={NOT_APPLICABLE_TOOLTIP} className="block">
+                  <button
+                    type="button"
+                    id="reg-priority"
+                    disabled
+                    className="flex h-8 w-full cursor-not-allowed items-center rounded-md border border-input bg-surface-sunken px-3 text-left text-sm text-text-muted"
+                    data-testid="reg-priority-not-applicable"
+                  >
+                    {NOT_APPLICABLE_LABEL}
+                  </button>
+                </span>
+              ) : (
+              <>
               <Select value={priority} onValueChange={setPriority}>
                 <SelectTrigger
                   id="reg-priority"
@@ -654,6 +674,8 @@ export function ProjectForm({
                 host={moveHost}
                 canMove={canMovePriority}
               />
+              </>
+              )}
             </Field>
             {withRegister ? null : (
             <Field

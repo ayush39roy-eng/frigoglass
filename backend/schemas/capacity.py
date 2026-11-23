@@ -46,24 +46,29 @@ class PriorityLoadSplit(BaseModel):
     `Q` or a null priority (`services.capacity_priority.priority_bucket`).
     P42 (R42-1): the key stays `Queue`; its display label is "Q"
     (`priority_bucket_labels`).
-    The five values sum to the load they split (to 2 dp)."""
+    ADR 0067 (P57): `NA` is "Not applicable" (Commercialized / Cancelled
+    projects, whatever their stored priority).
+    The six values sum to the load they split (to 2 dp)."""
 
     P1: float
     P2: float
     P3: float
     P4: float
     Queue: float
+    NA: float = 0.0
 
 
 class PriorityCountSplit(BaseModel):
     """P13 (§6): a project count split by the same priority buckets as
-    `PriorityLoadSplit`. The five values sum to the count they split."""
+    `PriorityLoadSplit` (ADR 0067: `NA` = "Not applicable"). The six values
+    sum to the count they split."""
 
     P1: int
     P2: int
     P3: int
     P4: int
     Queue: int
+    NA: int = 0
 
 
 class CapacityChamberRow(BaseModel):

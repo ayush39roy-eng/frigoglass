@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 
 import { WeekText } from '@/components/shared/week-text';
-import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { ProjectPriorityPill } from '@/components/shared/priority-band-pill';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -66,7 +66,12 @@ export function KpiProjectsDialog({
         header: 'Priority',
         width: '5rem',
         cell: (row) =>
-          row.priority ? <PriorityBandPill priority={row.priority} /> : <span className="text-xs text-text-muted">—</span>,
+          <ProjectPriorityPill
+            status={row.status} priorityApplicable={row.priority_applicable}
+            priority={row.priority}
+            short
+            fallback={<span className="text-xs text-text-muted">—</span>}
+          />,
       },
       {
         id: 'end-week',

@@ -11,7 +11,7 @@ never filled from the live band (R53-3).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +37,7 @@ from schemas.delivery import (
     TailWarningsOut,
 )
 from services.active_run import step_kinds_for_run
+from services.priority_applicability import effective_priority
 
 #: R53-2 copy of a `beyond_horizon` row.
 BEYOND_HORIZON_COPY = "Cannot be scheduled within {n} years — check resources"
@@ -121,10 +122,13 @@ def to_wire(
 # --- stored runs ---------------------------------------------------------------------
 
 
-def stored_row(o: ScheduleRunProjectOutcome) -> DeliveryRow:
+def stored_row(o: ScheduleRunProjectOutcome, status: object = None) -> DeliveryRow:
+    """ADR 0067: with the project's (live) `status`, a Commercialized /
+    Cancelled row has no band and is counted under Other."""
+
     return DeliveryRow(
         project_id=str(o.project_id),
-        priority=o.priority_at_run,
+        priority=effective_priority(status, o.priority_at_run),
         counts_toward_year=o.counts_toward_year,
         not_scheduled_priority=o.not_scheduled_priority,
         blocked=o.blocked,
@@ -141,14 +145,22 @@ def is_p53_run(run: ScheduleRun) -> bool:
 
 
 def stored_delivery(
-    run: ScheduleRun, outcomes: Iterable[ScheduleRunProjectOutcome]
+    run: ScheduleRun,
+    outcomes: Iterable[ScheduleRunProjectOutcome],
+    statuses: Mapping[uuid.UUID, object] | None = None,
 ) -> DeliveryByYearOut | None:
     """The table over the given (already scoped and filtered) stored rows of
-    `run`; None for a pre-P53 run (`pre_p53_run`, R53-3)."""
+    `run`; None for a pre-P53 run (`pre_p53_run`, R53-3). `statuses` (project
+    id → live status) applies ADR 0067: a Commercialized / Cancelled row is
+    counted under Other, never P1/P2/P3."""
 
     if not is_p53_run(run):
         return None
-    table = delivery_by_year([stored_row(o) for o in outcomes], run_week=run.current_week)
+    status_of = statuses or {}
+    table = delivery_by_year(
+        [stored_row(o, status_of.get(o.project_id)) for o in outcomes],
+        run_week=run.current_week,
+    )
     return to_wire(
         table,
         run_week=run.current_week,
@@ -287,6 +299,7 @@ def result_row(
     no_chamber_step_id: str | None = None,
     data_error: str | None = None,
     left_out: bool | None = None,
+    status: object = None,
 ) -> DeliveryRow:
     """A `DeliveryRow` from a What-if / import project result (outcome class
     + flags). `left_out`, when given, is the engine's raw LEFT_OUT flag (as
@@ -301,7 +314,8 @@ def result_row(
     blocked = outcome == "blocked"
     return DeliveryRow(
         project_id=project_id,
-        priority=priority,
+        # ADR 0067: no band for a Commercialized / Cancelled project.
+        priority=effective_priority(status, priority),
         counts_toward_year=counts_toward_year,
         not_scheduled_priority=not_scheduled_priority,
         blocked=blocked,

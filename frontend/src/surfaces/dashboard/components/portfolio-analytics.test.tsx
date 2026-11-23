@@ -13,6 +13,7 @@ function row(
   overrides: Partial<CompletingWithinYearRow> = {},
 ): CompletingWithinYearRow {
   return servedRow({
+    priority_applicable: true,
     project_id: id,
     project_name: `Project ${id}`,
     hub: 'R&D-Greece',

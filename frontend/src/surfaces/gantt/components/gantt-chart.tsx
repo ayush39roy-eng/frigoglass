@@ -770,7 +770,14 @@ function ProjectLeftCell({
           the expand button because a menu trigger cannot nest in a button. The
           flow itself is hosted by GanttPage's <PriorityMoveProvider>, so scrolling
           this virtualized row away never cancels a run being followed. */}
-      <PriorityMoveControl projectId={project.project_id} projectName={project.project_name} priority={project.priority} />
+      {/* P57 (ADR 0067): Commercialized / Cancelled show "Not applicable", disabled. */}
+      <PriorityMoveControl
+        projectId={project.project_id}
+        projectName={project.project_name}
+        priority={project.priority}
+        status={project.status}
+        priorityApplicable={project.priority_applicable}
+      />
       {/* Click-through to the Project Workspace (Surface #7) — a real link, so
           it works with middle-click / bookmarks. */}
       <Link

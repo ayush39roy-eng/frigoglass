@@ -40,12 +40,14 @@ from models.schedule import ScheduleRun, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep
 from services.active_run import step_kinds_for_run
 from services.capacity_supply import round2
+from services.priority_applicability import priority_applicable
 from services.run_step_effort import effort_from, spread_effort, weekly_effort_for_rows
 
-PriorityBucket = Literal["P1", "P2", "P3", "P4", "Queue"]
+PriorityBucket = Literal["P1", "P2", "P3", "P4", "Queue", "NA"]
 
-#: Served key order (contract §6).
-PRIORITY_BUCKETS: tuple[PriorityBucket, ...] = ("P1", "P2", "P3", "P4", "Queue")
+#: Served key order (contract §6). ADR 0067 (P57): `NA` = "Not applicable",
+#: a Commercialized / Cancelled project (never under a band).
+PRIORITY_BUCKETS: tuple[PriorityBucket, ...] = ("P1", "P2", "P3", "P4", "Queue", "NA")
 
 #: P42 (ADR 0056 R42-1): the display label of each bucket key. The key
 #: `Queue` stays (wire compatibility) but must not read "Queue" any more: P3
@@ -56,6 +58,7 @@ PRIORITY_BUCKET_LABELS: Mapping[PriorityBucket, str] = {
     "P3": "P3",
     "P4": "P4",
     "Queue": "Q",
+    "NA": "Not applicable",
 }
 
 #: P13-F06 (2026-10-19): the statuses the scheduler plans
@@ -75,9 +78,15 @@ _BAND_TO_BUCKET: dict[ProjectPriority, PriorityBucket] = {
 }
 
 
-def priority_bucket(priority: ProjectPriority | None) -> PriorityBucket:
-    """`P1`..`P4` → themselves; `Q` or null → `"Queue"`."""
+def priority_bucket(
+    priority: ProjectPriority | None, status: ProjectStatus | str | None = None
+) -> PriorityBucket:
+    """`P1`..`P4` → themselves; `Q` or null → `"Queue"`. ADR 0067: with the
+    project's `status`, Commercialized / Cancelled → `"NA"` whatever the
+    stored priority."""
 
+    if not priority_applicable(status):
+        return "NA"
     if priority is None:
         return "Queue"
     return _BAND_TO_BUCKET[priority]

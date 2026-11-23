@@ -8,6 +8,7 @@ import type {
   HubName,
   ProjectCategory,
   ProjectPriority,
+  ProjectStatus,
   ProjectType,
   ScheduleOutcome,
   WorkflowId,
@@ -122,6 +123,10 @@ export interface GanttProjectRow {
   hub: HubName;
   category: ProjectCategory | null;
   priority: ProjectPriority | null;
+  /** P57 (ADR 0067): served project status and `priority_applicable` (false
+   *  for Commercialized / Cancelled: the row reads "Not applicable"). */
+  status: ProjectStatus;
+  priority_applicable: boolean;
   frozen: boolean;
   delay_weeks: number;
   left_out: boolean;

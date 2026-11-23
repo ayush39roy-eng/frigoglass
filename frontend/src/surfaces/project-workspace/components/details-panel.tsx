@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CONFLICT_COPY, sendEditWithBase } from '@/lib/api/edit-conflict';
 import { useHubs } from '@/lib/api/reference';
 import { formatCurrency, formatDecimal, formatPlanWeek } from '@/lib/format';
+import { NOT_APPLICABLE_LABEL, rowPriorityNotApplicable } from '@/lib/priority-applicability';
 import { queryKeys } from '@/lib/query-keys';
 import { invalidateScoreReaders } from '@/lib/score-readers';
 import { scoringTagsText } from '@/lib/scoring-tags';
@@ -144,7 +145,7 @@ export function DetailsPanel({
               <Field label="Category" value={p.category ?? '—'} />
               <Field label="Type" value={p.type ? PROJECT_TYPE_LABELS[p.type] : '—'} />
               <Field label="Project nature" value={scoringTagsText(p.scoring_tags)} />
-              <Field label="Priority" value={p.priority ?? '—'} />
+              <Field label="Priority" value={rowPriorityNotApplicable(p) ? NOT_APPLICABLE_LABEL : (p.priority ?? '—')} />
               <Field label="Actual start week" value={p.actual_start_week === null ? '—' : formatPlanWeek(p.actual_start_week)} />
               <Field label="Delay (weeks)" value={String(p.delay_weeks)} />
               <Field label="Expected completion (week)" value={p.target_end_week === null ? 'Process-derived' : formatPlanWeek(p.target_end_week)} />

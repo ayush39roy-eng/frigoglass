@@ -46174,3 +46174,101 @@ The owner asked to push fast, so this was pushed before the P56-T04 gate; the ga
   not placed within 5 years 1 (no_leader). Warnings: far_finish 24, leader_overloaded 2. No data rewritten.
 - Failed runs v92/v94/v96 (register_edit) each followed by a completed run; same pattern as pre-P53
   runs (v26, v44) — abandoned/dispatch failures around redeploys, not a P53 regression. Not investigated further.
+
+## 2026-11-22 — P57-T01: ADR 0067 priority "Not applicable" for Commercialized / Cancelled
+
+- Owner: Commercialized and Cancelled projects appear under P4 (hosted: Cancelled P4 34, Commercialized
+  P4 52, plus Commercialized P1 1 / P3 11 / Q 2, Cancelled P3 1 — stored from imports). Ruling: read-time
+  effective priority NULL → "Not applicable"; stored value kept (no data rewrite, standing rule
+  2026-11-18). ADR 0067, DOMAIN_RULES section, plan P57 (T02 backend, T03 frontend, T04 gate).
+
+## 2026-11-22 — P57-T03: frontend "Not applicable" priority for Commercialized / Cancelled (ADR 0067) — frontend-builder: DONE (not committed)
+
+- **Helper** `frontend/src/lib/priority-applicability.ts`: `PRIORITY_NOT_APPLICABLE_STATUSES` (Commercialized, Cancelled),
+  `NOT_APPLICABLE_LABEL` ("Not applicable"), `NOT_APPLICABLE_SHORT_LABEL` ("N/A"), `NOT_APPLICABLE_TOOLTIP`
+  ("Priority does not apply to Commercialized or Cancelled projects"), `isPriorityNotApplicable(status, served?)`,
+  `effectivePriority(status, priority, served?)`, row forms `rowPriorityNotApplicable` / `rowEffectivePriority`,
+  `priorityFilterKey`, `priorityDisplayText`. A served `priority_applicable` boolean (if T02 adds it) wins over
+  `status`; nothing depends on it being served.
+- **Display:** `components/shared/priority-band-pill.tsx` adds `NotApplicablePriorityPill` (neutral, no band colour,
+  tooltip) and `ProjectPriorityPill({status, priority, priorityApplicable?, fallback, short})`. Used in: Projects
+  register cell + card grid (rank column shows "—" and band-rank sort treats them as unranked), Dashboard register
+  columns, hub/type drilldown, project card grid, project list dialog, VIP item picker, Executive upcoming
+  completions + KPI projects dialog + VIP list ("N/A" text), completion-profile row meta, Matrix "Committed" cell,
+  Workspace details "Priority" field, deactivate-engineer dialog meta, What-if import review table / drill sheet /
+  results Gantt label / project picker.
+- **Controls:** `PriorityMoveControl` (Gantt row + details, Workspace header, Projects row edit, board card) renders a
+  disabled "Not applicable" button with the tooltip (read-only roles get the N/A pill); new optional prop
+  `priorityApplicable`. `use-priority-move-flow` `requestMove` / `requestRankMove` refuse (cancelled) a target whose
+  status is Commercialized / Cancelled. Registration/edit form (`project-form.tsx`): for such a project the Priority
+  select and BandRankField are replaced by a disabled "Not applicable" with the tooltip as hint; the priority state
+  keeps the stored value, so the PATCH body carries it unchanged and `applyFormPriorityMove` is a no-op (never null,
+  never moved). Status is read from the stored `project.status` (a status change in the same drawer save does not
+  toggle the control until reopened).
+- **Client-side grouping / filters:** What-if project picker priority filter uses `priorityDisplayText`, so a P4 pick
+  never matches them and "Not applicable" appears as its own filter value. What-if drill searches use it too.
+  What-if donut drill (`drilldown.ts bucketKeyOf/bucketDrill`): N/A projects key to the served "Not applicable"
+  slice when the block serves one (keys accepted: `Not applicable`, `N/A`, `NOT_APPLICABLE`, `not_applicable`;
+  `bucketLabel` reads them as "Not applicable"); with no such slice the served value is followed so every list still
+  equals its served figure (I9). **Coordinate with T02:** if the backend instead keys them as `unknown`, it should
+  also serve the project's `priority` as null there, or the drill list for that slice will be short.
+- **Not changed (server-side, T02):** Projects / Dashboard / Gantt priority multi-selects and Gantt priority sort are
+  query params, never narrowed in the browser; no "Not applicable" option added there (needs a backend param value).
+  Priority board columns are served (the board already excludes non-schedulable statuses). Capacity splits, Dashboard
+  /Executive band charts, Matrix committed counts, delivery-by-year are served counts. Gantt rows carry no status:
+  `GanttProjectRow` gains optional `status?` / `priority_applicable?`; until T02 serves one of them a Commercialized
+  Gantt row still shows its stored band. Suggested band chips (score bands) untouched.
+- **Types:** optional `priority_applicable?` on `ProjectRead` (registration) and `GanttProjectRow` (+ `status?`).
+- **Tests:** new `src/lib/priority-applicability.test.ts` (4); `priority-band-pill.test.tsx` +3 (ProjectPriorityPill);
+  `priority-move.test.tsx` +4 (disabled N/A control for both statuses, no menu/preview; read-only pill; served flag);
+  `p41-logic.test.ts` +1 (picker P4 filter excludes Commercialized/Cancelled, N/A filter value); `drilldown.test.ts`
+  +1. Vitest (`--maxWorkers=2`): shared + planning + dashboard + matrix + gantt + workspace + priority-board 169 files
+  / 1555 tests pass; projects + registration 221/222 — the one failure (`ProjectsPage.test.tsx` "Register project …
+  POSTs /projects", expects `external_code: ""`, gets `null`) predates P57: it comes from the 2026-11-19 blank-code
+  hotfix (d44f1f2), not touched here. `tsc -b` 0 errors; eslint on touched files 0 errors, 2 existing warnings.
+- Files: `src/lib/priority-applicability.ts` (+test), `src/components/shared/priority-band-pill.tsx` (+test),
+  `src/components/shared/priority-move/{priority-move-control.tsx,use-priority-move-flow.tsx,priority-move.test.tsx}`,
+  dashboard `{register-columns,hub-type-drilldown,project-card-grid,project-list-dialog,completion-profile-card}.tsx`,
+  `vip/vip-item-link.tsx`, `executive/{upcoming-completions-card,kpi-projects-dialog,exec-kpi-strip}.tsx`, gantt
+  `api/types.ts`, `components/{gantt-chart,gantt-project-details}.tsx`, `matrix/components/matrix-table.tsx`,
+  planning `components/deactivate-engineer-dialog.tsx`, what-if import `{bucket-label,drilldown,project-picks}.ts`,
+  `components/{drill-sheet,results-gantt,review-table}.tsx` (+ `drilldown.test.ts`, `p41-logic.test.ts`),
+  `project-workspace/components/details-panel.tsx`, projects `components/{projects-table,projects-card-grid}.tsx`,
+  `lib/band-rank.ts`, registration `api/types.ts`, `components/project-form.tsx`. No backend/ edits. Not committed.
+
+## [2026-11-22] P57-T02 — backend: priority "Not applicable" for Commercialized / Cancelled (ADR 0067) — backend-builder: DONE (not committed)
+- **Helper.** New `backend/services/priority_applicability.py`:
+  - `PRIORITY_NOT_APPLICABLE_STATUSES` (defined in `models/enums.py` so schemas can use it, re-exported here);
+  - `priority_applicable(status)`, `effective_priority(status, priority)` (None for Commercialized / Cancelled), `served_priority_label` ("Not applicable", else the R42-1 label), `effective_priority_display` (export text);
+  - SQL: `effective_priority_expr()` = `CASE WHEN status IN (...) THEN NULL ELSE priority END`, `priority_applicable_expr()`, `priority_filter_predicate(values, queue_includes_unset=)`;
+  - `ensure_priority_applicable` → 409 `PRIORITY_NOT_APPLICABLE`.
+  - No migration and no data change. The stored priority is never cleared.
+- **Served contract.**
+  - `priority_applicable: bool` (default true) is on ProjectRead/ProjectListItem (computed field), ProjectFilterRow (`/dashboard/projects`), CompletingWithinYearRow, GanttProjectRow, PriorityMatrixRow, PriorityCompareItem, VipBoardProject, ScheduleRunChangeRow, What-if ProjectResultOut and import ImportProjectOut. Where a row has `priority_label`, it reads "Not applicable".
+  - Project-identity rows keep the STORED `priority`: ProjectRead, register, Gantt, Matrix `set_priority`, VIP board.
+  - Computed or result rows serve the EFFECTIVE value (null): CompletingWithinYearRow `priority` and `priority_at_run`, What-if / import results, run-change rows, the engineer-deactivation list.
+  - GanttProjectRow now also serves `status`.
+- **Filters.** `priority` on `/projects`, `/dashboard/projects`, `/gantt` and their exports matches the effective band, so P4 never matches a Commercialized or Cancelled project. The new value `not_applicable` selects exactly those. Gantt "Q" (Queue = Q or unset) excludes them. Gantt `sort=priority` puts them after Queue.
+- **Aggregations.**
+  - `priority_delivery` skips them: they are under no band, so per-band `delivered_*` is now always 0, because only Commercialized fed it.
+  - Delivery by year: `stored_delivery(run, outcomes, statuses)` / `result_row(status=)` puts them under Other, and I59 still holds.
+  - The drill `band=` uses the effective band.
+  - Matrix summary: `set_priority_counts` counts the effective priority; new `priority_not_applicable_count`.
+  - Capacity splits: a new bucket `NA` (label "Not applicable") on PriorityLoadSplit / PriorityCountSplit, so the splits still sum to the load. `priority_bucket(priority, status)` handles it.
+  - What-if import `by_priority` key `not_applicable`.
+  - Saved import scenarios: rows are re-labelled on read, and the saved counts are history (I62).
+  - The priority board and VIP already exclude NON_SCHEDULABLE (verified). Class breakdown is schedulable-only.
+- **Exports.** `rows_from_models` writes "Not applicable" in the `priority` / `set_priority` / `priority_at_run` cells when `priority_applicable` is false. The tallies use those cells. Gantt xlsx (`xlsx_writer`, status-aware) and the What-if / import Gantt write "Not applicable". The capacity `NA` columns are headed "Not applicable". The Ask-agent context sends "Not applicable".
+- **Writes.**
+  - A priority change while the (target) status is Commercialized or Cancelled is 409 `PRIORITY_NOT_APPLICABLE`. This applies to PATCH (including the bulk grid, which shares `stage_project_update`), `POST /projects/{id}/priority`, preview and confirm. It is done via `ensure_priority_move_allowed(..., target_status=)`.
+  - The same priority, or `null`, on such a project is the unchanged round-trip and returns 200 with the stored value kept.
+  - Status back to schedulable plus a new priority in one PATCH is allowed.
+- **Scheduler.** Nothing under `backend/scheduling/` was edited or needs editing. The engine's band is attached at the serving layer, in `delivery_serving` and the What-if `with_delivery`.
+- **Tests.**
+  - New `tests/test_p57_priority_not_applicable.py`: 23 tests covering the helper, the dashboard register filter and fields, `/projects` and `/gantt` filters, `priority_delivery` and the delivery-by-year split (Commercialized P1 → Other, I59), capacity NA, the matrix summary, the export cell (unit and CSV), PATCH / move / preview 409 and the round-trip, and What-if.
+  - Updated tests that encoded the old rule: p17_priority_delivery, p13_capacity_priority_board, p45_hub_demand_cards, p42_band_backend, p14_vip_board, p11_priority_move (Commercialized / Cancelled are now 409, not `not_needed`), p13_slice_c, adr0051 / p31 multi-select, p21_matrix.
+  - Full backend `--no-cov`: 4022 passed, 16 failed.
+    - 2 are the known pre-existing failures (test_migrations cycle, p20 gantt_step_row_contract).
+    - 14 are `test_openapi_frontend_contract`. It needs the frontend `api/types.ts` mirrors updated for the new fields: `priority_applicable` (required, non-null) on the interfaces listed, `NA` on PriorityLoadSplit / PriorityCountSplit, `priority_not_applicable_count`, and GanttProjectRow `status: ProjectStatus` (required). This is frontend-owned.
+  - ruff is clean on new and touched code. The pre-existing E501 / format diffs are untouched. mypy shows no new errors.
+- **Incident.** A `git stash` / `pop` during the lint comparison unstaged the orchestrator's staged doc changes. Their content was unchanged, and they were re-staged right away with `git add`.

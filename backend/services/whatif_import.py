@@ -119,6 +119,10 @@ from services.plan_import_xlsx import (
     RosterEntry,
     StepMeta,
 )
+from services.priority_applicability import (
+    effective_priority,
+    priority_applicable,
+)
 from services.whatif import (
     WHATIF_DEADLINE_SECONDS,
     WHATIF_TIME_CAP_SECONDS,
@@ -912,7 +916,9 @@ def _project_out(
         hub=p.hub,
         capacity_hub=p.capacity_hub,
         category=p.category,
-        priority=p.priority,
+        # ADR 0067: no band for a Commercialized / Cancelled project.
+        priority=effective_priority(p.status, p.priority),
+        priority_applicable=priority_applicable(p.status),
         status=p.status,
         leader_name=eng_name.get(p.leader_ref) if p.leader_ref else None,
         leader_ref=p.leader_ref,
@@ -1005,6 +1011,11 @@ def finish_quarter(week: int) -> tuple[int, int]:
     return year_of(week), min((week_of_year(week) - 1) // _QUARTER_WEEKS + 1, 4)
 
 
+#: ADR 0067: the `by_priority` key of a Commercialized / Cancelled project
+#: (sorted after the bands, before "unknown"; shown "Not applicable").
+NOT_APPLICABLE_BUCKET = "not_applicable"
+
+
 def _buckets(
     projects: list[ImportProjectOut],
     value: Callable[[ImportProjectOut], str | None],
@@ -1054,7 +1065,12 @@ def breakdown_of(
         outcomes=BreakdownOutcomesOut(**oc),
         by_category=_buckets(projects, lambda p: p.category, category_order),
         by_hub=_buckets(projects, lambda p: p.hub, _HUB_ORDER),
-        by_priority=_buckets(projects, lambda p: p.priority, dc.PRIORITY_ORDER),
+        # ADR 0067: Commercialized / Cancelled rows in a "Not applicable" bucket.
+        by_priority=_buckets(
+            projects,
+            lambda p: p.priority if p.priority_applicable else NOT_APPLICABLE_BUCKET,
+            dc.PRIORITY_ORDER,
+        ),
         by_status=_buckets(projects, lambda p: p.status, _STATUS_ORDER),
         by_source=_buckets(projects, lambda p: p.source, _SOURCE_ORDER),
         by_finish_quarter=[
@@ -1293,6 +1309,7 @@ def scope_import_result(
                 result_row(
                     project_id=p.project_id,
                     priority=p.priority,
+                    status=p.status,
                     outcome=p.outcome,
                     within_year=p.within_plan_year,
                     finish_week=p.finish_week,

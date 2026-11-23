@@ -5,6 +5,7 @@ import { CalendarCheck, CalendarClock, CircleOff, CirclePause, FolderKanban, Inf
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { formatInteger } from '@/lib/format';
+import { NOT_APPLICABLE_SHORT_LABEL, NOT_APPLICABLE_TOOLTIP, rowPriorityNotApplicable } from '@/lib/priority-applicability';
 import type { VipArea, VipBoardResponse } from '@/lib/api/vip';
 
 import type { CompletingWithinYear, ProjectFilterRow } from '../../api/types';
@@ -111,7 +112,14 @@ export function ExecKpiStrip({
                     {p.project_name}
                   </Link>
                   <span className="shrink-0 text-2xs text-text-muted">{p.hub}</span>
-                  {p.priority ? <span className="shrink-0 text-2xs font-semibold text-text-muted">{p.priority}</span> : null}
+                  {/* P57 (ADR 0067): Commercialized / Cancelled read "N/A". */}
+                  {rowPriorityNotApplicable(p) ? (
+                    <span className="shrink-0 text-2xs font-semibold text-text-muted" title={NOT_APPLICABLE_TOOLTIP}>
+                      {NOT_APPLICABLE_SHORT_LABEL}
+                    </span>
+                  ) : p.priority ? (
+                    <span className="shrink-0 text-2xs font-semibold text-text-muted">{p.priority}</span>
+                  ) : null}
                 </li>
               ))}
             </ul>

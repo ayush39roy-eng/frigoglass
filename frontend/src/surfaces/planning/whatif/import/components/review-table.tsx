@@ -5,6 +5,7 @@ import { Link2, TriangleAlert } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { isPriorityNotApplicable, NOT_APPLICABLE_LABEL, NOT_APPLICABLE_TOOLTIP } from '@/lib/priority-applicability';
 import { cn } from '@/lib/utils';
 import {
   HUB_NAMES,
@@ -190,6 +191,22 @@ function StatusCell({ row: { original: r } }: Cell): React.JSX.Element {
 function PriorityCell({ row: { original: r } }: Cell): React.JSX.Element {
   const { originals, update } = useCtx();
   const hint = priorityHint(r, originals.get(r.key));
+  // P57 (ADR 0067): no priority for a Commercialized / Cancelled row. The row's
+  // priority is left as parsed (sent unchanged) and applies again if the status
+  // is changed back to a mapped one.
+  if (isPriorityNotApplicable(r.status)) {
+    return (
+      <span
+        className="inline-flex w-fit items-center rounded-sm bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold text-text-muted ring-1 ring-inset ring-border"
+        title={NOT_APPLICABLE_TOOLTIP}
+        aria-label={`Priority for ${r.name}: ${NOT_APPLICABLE_LABEL}`}
+        role="note"
+        data-testid="import-priority-not-applicable"
+      >
+        {NOT_APPLICABLE_LABEL}
+      </span>
+    );
+  }
   return (
     <div className="flex flex-col gap-0.5">
       <NativeSelect

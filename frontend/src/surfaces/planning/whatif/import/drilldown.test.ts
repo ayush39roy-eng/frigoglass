@@ -4,6 +4,7 @@ import { OUTCOME_LABEL } from '../components/outcome-meta';
 import {
   bucketDrill,
   bucketKeyOf,
+  notApplicableBucketKey,
   capacityHubDrill,
   capacityLabDrill,
   changeDrill,
@@ -218,5 +219,21 @@ describe('P32-R07 drill-down selection', () => {
     expect(figure).toBe(5);
     expect(d.rows).toHaveLength(5);
     expect(d.rows.map((x) => x.copy)).toEqual([null, '1/3', '2/3', '3/3', null]);
+  });
+});
+
+describe('P57 (ADR 0067): by-priority buckets use the effective priority', () => {
+  it('a Commercialized / Cancelled project keys under the served N/A slice', () => {
+    const base = r.projects[0]!;
+    const commercialized = { ...base, priority: 'P4', status: 'Commercialized' };
+    expect(bucketKeyOf(commercialized, 'by_priority', 'Not applicable')).toBe('Not applicable');
+    // No served N/A slice (pre-P57 API): the served value is followed, so lists match their figure.
+    expect(bucketKeyOf(commercialized, 'by_priority')).toBe('P4');
+    expect(bucketKeyOf({ ...base, priority: 'P4', status: 'Cancelled' }, 'by_priority', 'not_applicable')).toBe('not_applicable');
+    expect(bucketKeyOf({ ...base, priority: 'P4', status: 'In Queue' }, 'by_priority')).toBe('P4');
+    // Other dimensions are untouched.
+    expect(bucketKeyOf(commercialized, 'by_status')).toBe('Commercialized');
+    expect(notApplicableBucketKey(['P1', 'not_applicable', 'unknown'])).toBe('not_applicable');
+    expect(notApplicableBucketKey(['P1', 'unknown'])).toBeNull();
   });
 });

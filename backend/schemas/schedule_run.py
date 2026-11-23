@@ -131,8 +131,11 @@ class ScheduleRunChangeRow(BaseModel):
     project_id: uuid.UUID
     project_name: str
     hub: HubName
-    #: The project's live priority now (not part of the comparison).
+    #: The project's live priority now (not part of the comparison). ADR
+    #: 0067: the effective band (null for Commercialized / Cancelled).
     priority: ProjectPriority | None
+    #: ADR 0067: false for a Commercialized / Cancelled project.
+    priority_applicable: bool = True
     before_projected_end_week: int | None
     after_projected_end_week: int | None
     #: `after − before`; null if either side is null.

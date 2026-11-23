@@ -561,7 +561,13 @@ async def test_counts_within_and_across_responses_stay_consistent(db_session):
                 + completing["blocked_count"]
             ) <= len(completing["rows"])
             assert sum(r["completing_count"] for r in analytics["completing_by_type"]) == within
-            prioritised = sum(1 for i in expected if w.attrs[i].priority is not None)
+            # P57 (ADR 0067): Commercialized / Cancelled are under no band.
+            prioritised = sum(
+                1
+                for i in expected
+                if w.attrs[i].priority is not None
+                and w.attrs[i].status.value not in ("Commercialized", "Cancelled")
+            )
             assert sum(b["total"] for b in completing["priority_delivery"]) == prioritised
 
 

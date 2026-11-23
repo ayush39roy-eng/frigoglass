@@ -7,6 +7,7 @@ import { distributionFromRows, narrowByBand, narrowExceptBand, rowLastScoreVersi
 
 function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
   return {
+    priority_applicable: true,
     project_id: 'p1', project_name: 'Cooler A', hub: 'R&D-Greece', category: 'A', type: 'NM', set_priority: 'P2',
     has_score: true, hard_gates: [], weighted_score: 200, normalized_pct: 70, suggested_band: 'P1',
     is_new_model: false, is_rm_saving_project: false, currency: 'EUR', capex_keur: null, rm_savings_keur: null,

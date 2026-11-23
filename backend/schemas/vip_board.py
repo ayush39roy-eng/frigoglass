@@ -35,7 +35,10 @@ class VipBoardProject(BaseModel):
     id: uuid.UUID
     name: str
     hub: HubName
+    #: The STORED priority; see `priority_applicable` (ADR 0067).
     priority: ProjectPriority | None
+    #: ADR 0067: false for a Commercialized / Cancelled project.
+    priority_applicable: bool = True
     status: ProjectStatus
     projected_end_week: int | None
     within_year: bool | None

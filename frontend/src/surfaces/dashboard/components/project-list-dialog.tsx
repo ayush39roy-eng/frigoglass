@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 
 import { WeekText } from '@/components/shared/week-text';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
-import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { ProjectPriorityPill } from '@/components/shared/priority-band-pill';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -141,7 +141,12 @@ const COLUMNS: VirtualColumn<ProjectFilterRow>[] = [
     header: 'Priority',
     width: '5rem',
     cell: (row) =>
-      row.priority ? <PriorityBandPill priority={row.priority} /> : <span className="text-xs text-text-muted">—</span>,
+      <ProjectPriorityPill
+        status={row.status} priorityApplicable={row.priority_applicable}
+        priority={row.priority}
+        short
+        fallback={<span className="text-xs text-text-muted">—</span>}
+      />,
   },
   {
     id: 'end-week',

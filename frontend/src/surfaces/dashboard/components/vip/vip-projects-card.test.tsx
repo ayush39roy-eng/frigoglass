@@ -24,6 +24,7 @@ import { VipProjectsCard } from './vip-projects-card';
 function project(id: string, overrides: Partial<VipItemProject> = {}): VipItemProject {
   return {
     id,
+    priority_applicable: true,
     name: `Project ${id}`,
     hub: 'OEM-Seitek',
     priority: 'P3',

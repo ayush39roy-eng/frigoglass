@@ -19,6 +19,7 @@ const STOPPED = 'Not promoted: hub P1 design load would be 11.00 of 10.00 weeks'
 
 function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
   return {
+    priority_applicable: true,
     project_id: 'p1', project_name: 'Cooler A', hub: 'R&D-Greece', category: 'A', type: 'NM', set_priority: 'P2',
     has_score: true, hard_gates: [],
     weighted_score: 177, normalized_pct: 60, suggested_band: 'P2', is_new_model: false, is_rm_saving_project: false,
@@ -129,7 +130,7 @@ describe('Distribution and summary agree on the promoted band (P25)', () => {
 
   it('the summary shows the suggested (promoted) counts, the score-band counts and the same note', () => {
     const summary: PriorityPortfolioSummary = {
-      total_projects: 10, scored_projects: 10, unscored_projects: 0, hard_gate_forced_count: 0,
+      total_projects: 10, scored_projects: 10, unscored_projects: 0, hard_gate_forced_count: 0, priority_not_applicable_count: 0,
       suggested_band_counts: { P1: 4, P2: 3, P3: 2, P4: 1 },
       set_priority_counts: {},
       score_band_counts: { P1: 2, P2: 5, P3: 2, P4: 1 },

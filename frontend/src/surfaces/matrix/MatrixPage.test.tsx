@@ -98,6 +98,7 @@ const summary: PriorityPortfolioSummary = {
   scored_projects: 7,
   unscored_projects: 3,
   hard_gate_forced_count: 2,
+  priority_not_applicable_count: 0,
   suggested_band_counts: { P1: 3, P2: 2, P3: 1, P4: 1 },
   set_priority_counts: { P1: 4, P2: 3 },
   score_band_counts: { P1: 3, P2: 2, P3: 1, P4: 1 },
@@ -105,6 +106,7 @@ const summary: PriorityPortfolioSummary = {
 };
 
 const scoredRow: PriorityMatrixRow = {
+  priority_applicable: true,
   project_id: 'p1', project_name: 'Cooler A', hub: 'R&D-Greece', category: 'A+', type: 'NM',
   set_priority: 'P2', has_score: true,
   hard_gates: [], weighted_score: 980, normalized_pct: 70, suggested_band: 'P1',
@@ -420,14 +422,17 @@ describe('MatrixPage', () => {
     ];
     const compared: PriorityCompareProject[] = [
       {
+        priority_applicable: true,
         project_id: 'c0', project_name: 'Cooler 0', hub: 'R&D-Greece', set_priority: 'P2', has_score: true,
         weighted_score: 268, normalized_pct: 91, suggested_band: 'P1', dimension_scores: dims(5), ...P25_FILL_DEFAULTS,
       },
       {
+        priority_applicable: true,
         project_id: 'c1', project_name: 'Cooler 1', hub: 'PD-India', set_priority: null, has_score: true,
         weighted_score: 130, normalized_pct: 44, suggested_band: 'P3', dimension_scores: dims(0), ...P25_FILL_DEFAULTS,
       },
       {
+        priority_applicable: true,
         project_id: 'c2', project_name: 'Cooler 2', hub: 'PD-India', set_priority: null, has_score: false,
         weighted_score: null, normalized_pct: null, suggested_band: null,
         dimension_scores: dims(0).map((d) => ({ ...d, score: null, points: null })), ...P25_FILL_DEFAULTS,

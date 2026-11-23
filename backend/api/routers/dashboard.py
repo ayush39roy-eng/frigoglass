@@ -136,6 +136,13 @@ from services.outcome_buckets import (
     sql_counting,
 )
 from services.plan_clock import PlanClock, get_plan_clock
+from services.priority_applicability import (
+    PriorityFilterValue,
+    effective_priority,
+    priority_applicable,
+    priority_filter_predicate,
+    served_priority_label,
+)
 from services.project_cards import build_project_cards
 from services.text_search import project_search_filter
 
@@ -376,6 +383,8 @@ async def _priority_delivery(
     }
     for priority, status, has_progress, wy, nsp, counts in grouped:
         count = 1
+        # ADR 0067: a Commercialized / Cancelled project has no band.
+        priority = effective_priority(status, priority)
         if priority is None:
             continue
         a = acc[priority]
@@ -496,9 +505,11 @@ async def completing_within_year(
     # `lab_region`, as ADR 0025's country filter and /region-summary use).
     by_region: dict[LabRegion, dict[str, int]] = {}
     kept_outcomes: list[ScheduleRunProjectOutcome] = []
+    statuses: dict[uuid.UUID, ProjectStatus] = {}
     run_week = active_run.current_week
     for outcome, project, has_progress in result.all():
         kept_outcomes.append(outcome)
+        statuses[project.id] = project.status
         row_bucket = outcome_bucket(outcome)
         if row_bucket is None:
             excluded_count += 1
@@ -513,7 +524,9 @@ async def completing_within_year(
                 project_name=project.name,
                 hub=project.hub.name,
                 category=project.category,
-                priority=project.priority,
+                # ADR 0067: display-only row, served the effective band.
+                priority=effective_priority(project.status, project.priority),
+                priority_applicable=priority_applicable(project.status),
                 type=project.type,
                 within_year=outcome.within_year,
                 spillover=outcome.spillover,
@@ -526,9 +539,9 @@ async def completing_within_year(
                 counts_toward_year=outcome.counts_toward_year,
                 not_scheduled_priority=outcome.not_scheduled_priority,
                 outcome=row_bucket,
-                priority_label=priority_label(project.priority),
+                priority_label=served_priority_label(project.status, project.priority),
                 projected_end_week=outcome.projected_end_week,
-                priority_at_run=outcome.priority_at_run,
+                priority_at_run=effective_priority(project.status, outcome.priority_at_run),
                 delivery_year=delivery_year_of(outcome, run_week),
                 left_out_reason=stored_left_out_reason(outcome, active_run),
                 far_finish=stored_far_finish(outcome, run_week),
@@ -559,7 +572,7 @@ async def completing_within_year(
         ),
         regions=_delivery_regions(by_region),
         # P53 (R53-3, I59): over exactly the rows above.
-        delivery_by_year=stored_delivery(active_run, kept_outcomes),
+        delivery_by_year=stored_delivery(active_run, kept_outcomes, statuses),
         delivery_by_year_unavailable=None if is_p53_run(active_run) else "pre_p53_run",
         rules_epoch=active_run.rules_epoch,
         rules_label=None if is_p53_run(active_run) else PRE_P53_RULES_LABEL,
@@ -612,7 +625,8 @@ async def delivery_by_year_projects(
     for outcome, project in (await db.execute(stmt.order_by(Project.name, Project.id))).all():
         if outcome.not_scheduled_priority or not outcome.counts_toward_year:
             continue
-        band_key = outcome.priority_at_run
+        # ADR 0067: a Commercialized / Cancelled project counts under Other.
+        band_key = effective_priority(project.status, outcome.priority_at_run)
         if band is not None and band_key != band:
             continue
         d_year = delivery_year_of(outcome, run_week)
@@ -939,7 +953,7 @@ def _register_stmt(
     region: RegionsArg,
     category: list[DashboardCategoryValue] | None = None,
     status_: Sequence[ProjectStatus] | None = None,
-    priority: Sequence[ProjectPriority] | None = None,
+    priority: Sequence[PriorityFilterValue] | None = None,
     q: str | None = None,
     type_: list[DashboardTypeValue] | None = None,
     leader_engineer_id: Sequence[uuid.UUID] | None = None,
@@ -962,12 +976,16 @@ def _register_stmt(
     # ADR 0051: each list is ORed (`IN`), the lists ANDed; empty = no filter.
     for column, values in (
         (Project.status, status_),
-        (Project.priority, priority),
         (Project.leader_engineer_id, leader_engineer_id),
     ):
         predicate = any_of(column, values)
         if predicate is not None:
             stmt = stmt.where(predicate)
+    # ADR 0067: the effective band, so P4 never matches a Commercialized /
+    # Cancelled project; `not_applicable` selects exactly those.
+    priority_filter = priority_filter_predicate(priority)
+    if priority_filter is not None:
+        stmt = stmt.where(priority_filter)
     search = project_search_filter(q)
     if search is not None:
         stmt = stmt.where(search)
@@ -1098,7 +1116,9 @@ async def analytics_projects(
                 hub=p.hub.name,
                 category=p.category,
                 status=p.status,
+                # Stored value (round-trip safe); ADR 0067 flag + label below.
                 priority=p.priority,
+                priority_applicable=priority_applicable(p.status),
                 is_vip=p.is_vip,
                 tracking_status=card.tracking_status,
                 external_code=p.external_code,
@@ -1110,7 +1130,7 @@ async def analytics_projects(
                 current_step_name=stage.step_name if stage is not None else None,
                 end_week=outcome.projected_end_week if outcome is not None else None,
                 outcome=_outcome_bucket(outcome),
-                priority_label=priority_label(p.priority),
+                priority_label=served_priority_label(p.status, p.priority),
                 counts_toward_year=outcome.counts_toward_year if outcome is not None else None,
                 not_scheduled_priority=(
                     outcome.not_scheduled_priority if outcome is not None else None

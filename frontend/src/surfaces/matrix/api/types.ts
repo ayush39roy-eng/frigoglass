@@ -125,6 +125,8 @@ export interface PriorityDistribution {
 /** One project of `GET /priorities/compare` (P21 §5, `PriorityCompareItem`). No financial field. */
 export interface PriorityCompareProject {
   project_id: Id;
+  /** P57 (ADR 0067): false for a Commercialized / Cancelled project (priority "Not applicable"). */
+  priority_applicable: boolean;
   project_name: string;
   hub: HubName;
   set_priority: ProjectPriority | null;
@@ -171,6 +173,8 @@ export const BAND_THRESHOLDS: readonly { min: number; band: ProjectPriority }[] 
  *  `gross_margin_pct` is never converted. */
 export interface PriorityMatrixRow {
   project_id: Id;
+  /** P57 (ADR 0067): false for a Commercialized / Cancelled project (priority "Not applicable"). */
+  priority_applicable: boolean;
   project_name: string;
   /** P34-T03 (D34-3): the project code (`Project.external_code`); null when the project has none.
    *  Matched by the grid's client-side search. Absent from a pre-P34-T03 API. */
@@ -257,6 +261,8 @@ export interface LastScoreVersion {
  *  to the caller's hub(s) — NOT parameterised by the grid's hub filter. */
 export interface PriorityPortfolioSummary {
   total_projects: number;
+  /** P57 (ADR 0067): Commercialized / Cancelled projects, counted in no band. */
+  priority_not_applicable_count: number;
   scored_projects: number;
   unscored_projects: number;
   hard_gate_forced_count: number;

@@ -18,6 +18,7 @@ import { ChangedProjectsList, TimelineUpdatedPanel } from './timeline-updated-pa
 
 function row(overrides: Partial<ScheduleRunChangeRow> = {}): ScheduleRunChangeRow {
   return {
+    priority_applicable: true,
     project_id: 'p9',
     project_name: 'Other Cooler',
     hub: 'R&D-Greece',

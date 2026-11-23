@@ -8,12 +8,11 @@ import {
   useCategoryFilterValues,
   writeMultiParam,
 } from '@/lib/multi-select-filter';
+import { PRIORITY_FILTER_VALUES, type PriorityFilterValue } from '@/lib/priority-applicability';
 import {
-  PROJECT_PRIORITIES,
   PROJECT_TYPES,
   UI_PROJECT_STATUSES,
   type ProjectCategory,
-  type ProjectPriority,
   type ProjectStatus,
   type ProjectType,
 } from '@/types/enums';
@@ -80,7 +79,7 @@ export function useGanttUrlFilters(facets: GanttFacets | undefined): {
       status: UI_PROJECT_STATUSES,
       leaderEngineerId: leaderValues,
       currentStep: stepValues,
-      priority: PROJECT_PRIORITIES as readonly ProjectPriority[],
+      priority: PRIORITY_FILTER_VALUES,
     }),
     [categoryValues, leaderValues, stepValues],
   );
@@ -104,7 +103,7 @@ export function useGanttUrlFilters(facets: GanttFacets | undefined): {
         split(rawStep).filter((c) => STEP_CODE.test(c)),
         allowed.currentStep,
       ),
-      priority: canonicalSelection<ProjectPriority>(split(rawPriority), allowed.priority),
+      priority: canonicalSelection<PriorityFilterValue>(split(rawPriority), allowed.priority),
     }),
     [rawCategory, rawType, rawStatus, rawLeader, rawStep, rawPriority, allowed],
   );

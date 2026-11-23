@@ -1,3 +1,4 @@
+import { priorityDisplayText } from '@/lib/priority-applicability';
 import { compileSearch } from '@/lib/project-search';
 import { isMappedStatus } from './import-rows';
 import type { ImportMode, ImportPlanProject, ImportRow } from './import-types';
@@ -38,7 +39,9 @@ export function pickItems(rows: readonly ImportRow[], planProjects: readonly Imp
     name: r.name,
     hub: r.hub,
     category: r.category,
-    priority: r.priority,
+    // P57 (ADR 0067): "Not applicable" for Commercialized / Cancelled, so the
+    // Priority filter offers it and a P4 pick never matches one.
+    priority: priorityDisplayText(r.status, r.priority),
     status: r.status,
     locked: isMappedStatus(r.status) ? null : `${r.status}: not scheduled`,
     note: r.matched_project_name ? `replaces ${r.matched_project_name}` : null,
@@ -53,7 +56,7 @@ export function pickItems(rows: readonly ImportRow[], planProjects: readonly Imp
       name: p.name,
       hub: p.hub,
       category: p.category,
-      priority: p.priority,
+      priority: priorityDisplayText(p.status, p.priority),
       status: p.status,
       locked: null,
       note: matched.has(p.id) ? 'also a file row' : null,

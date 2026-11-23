@@ -71,8 +71,8 @@ from schemas.vip_board import (
 from services.active_run import get_active_run
 from services.edit_conflict import AUDIT_SEARCH_LIMIT, AuditRef, check_base, field_refs
 from services.hub_scope import HubIdsArg, RegionsArg, hub_scope_filter, narrowed_hub_filter
-from services.outcome_buckets import priority_label
 from services.plan_clock import PlanClock, get_plan_clock
+from services.priority_applicability import priority_applicable, served_priority_label
 from services.project_cards import build_project_cards
 from services.vip_board import (
     AREA_LABELS,
@@ -396,11 +396,12 @@ async def get_vip_board(
             name=project.name,
             hub=project.hub.name,
             priority=project.priority,
+            priority_applicable=priority_applicable(project.status),
             status=project.status,
             projected_end_week=card.projected_end_week,
             within_year=card.within_year,
             health=card.health,
-            priority_label=priority_label(project.priority),
+            priority_label=served_priority_label(project.status, project.priority),
             counts_toward_year=card.counts_toward_year,
             not_scheduled_priority=card.not_scheduled_priority,
             outcome_label=card.outcome_label,

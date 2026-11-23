@@ -263,7 +263,7 @@ async def hub_load_vs_capacity(
     for d in demand.projects.values():
         if not d.in_full_year:
             continue
-        bucket = priority_bucket(d.priority)
+        bucket = priority_bucket(d.priority, d.status)
         design_by_priority[d.hub_id][bucket] += d.design_full_year
         lab_by_priority[d.lab_region][bucket] += d.lab_full_year
         lab_full_year_by_hub[d.hub_id] += d.lab_full_year

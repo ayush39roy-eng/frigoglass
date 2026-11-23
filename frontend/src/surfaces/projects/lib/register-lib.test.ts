@@ -17,6 +17,7 @@ import {
 
 function row(id: string, over: Partial<ProjectFilterRow> = {}): ProjectFilterRow {
   return {
+    priority_applicable: true,
     project_id: id,
     project_name: `Project ${id}`,
     hub: 'R&D-Greece',

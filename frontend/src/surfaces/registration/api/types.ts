@@ -106,6 +106,9 @@ export interface ProjectRead {
   type: ProjectType | null;
   priority: ProjectPriority | null;
   status: ProjectStatus;
+  /** P57-T02 (ADR 0067), optional: false for a Commercialized / Cancelled
+   *  project (its stored `priority` is kept but shown as "Not applicable"). */
+  priority_applicable: boolean;
   frozen: boolean;
   actual_start_week: number | null;
   /** P35-T01: the week the project actually finished (≥ 1, never before

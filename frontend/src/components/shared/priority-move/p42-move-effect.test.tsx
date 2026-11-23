@@ -154,6 +154,7 @@ describe('P42 priority-move preview copy (R42-8)', () => {
 
 function changeRow(overrides: Partial<ScheduleRunChangeRow>): ScheduleRunChangeRow {
   return {
+    priority_applicable: true,
     project_id: 'p1',
     project_name: 'Coffee Combo',
     hub: 'PD-India',

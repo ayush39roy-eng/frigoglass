@@ -15,6 +15,7 @@ import type {
   ScheduleRunStatus,
   ScheduleOutcome,
 } from '@/types/enums';
+import type { PriorityFilterValue } from '@/lib/priority-applicability';
 import type { TrackingStatus } from '@/components/shared/tracking-status-meta';
 import type { Id, WeekNumber } from '@/types/common';
 import type { LeftOutReason } from '@/lib/left-out-reason';
@@ -70,6 +71,8 @@ export interface HubTypePipelineRow {
 /** One project's outcome in the active schedule run (I9 source rows). */
 export interface CompletingWithinYearRow {
   project_id: Id;
+  /** P57 (ADR 0067): false for a Commercialized / Cancelled project (priority "Not applicable"). */
+  priority_applicable: boolean;
   project_name: string;
   hub: HubName;
   category: ProjectCategory | null;
@@ -206,6 +209,8 @@ export interface DeliveryRegionRow {
 /** One row of GET /dashboard/projects (the "analytics breakdown with filters"). */
 export interface ProjectFilterRow {
   project_id: Id;
+  /** P57 (ADR 0067): false for a Commercialized / Cancelled project (priority "Not applicable"). */
+  priority_applicable: boolean;
   project_name: string;
   hub: HubName;
   category: ProjectCategory | null;
@@ -285,7 +290,8 @@ export interface ProjectFilterParams {
    *  `Unmapped` = no category (Dashboard endpoints only). */
   category?: readonly (ProjectCategory | 'Unmapped')[] | undefined;
   status_?: readonly ProjectStatus[] | undefined;
-  priority?: readonly ProjectPriority[] | undefined;
+  /** P57: `not_applicable` selects Commercialized / Cancelled. */
+  priority?: readonly PriorityFilterValue[] | undefined;
   // P13 (API_CONTRACT_P13 §3) — every filter is applied server-side.
   region?: readonly LabRegion[] | undefined;
   /** Case-insensitive substring of name or external_code, ≤ 100 chars. */

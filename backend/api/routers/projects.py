@@ -147,6 +147,7 @@ from services.engineer_status import (
 from services.hub_scope import global_hub_filter, hub_scope_filter, is_hub_in_scope
 from services.plan_clock import PlanClock, get_plan_clock
 from services.plan_clock import now as plan_clock_now
+from services.priority_applicability import priority_applicable, priority_filter_predicate
 from services.priority_move import (
     AutoRecalcOutcome,
     apply_priority_change,
@@ -596,10 +597,14 @@ async def list_projects(
     selection = category_type_filter(category, [*(type_ or []), *(legacy_type or [])])
     if selection is not None:
         stmt = stmt.where(selection)
-    for column, values in ((Project.status, status_), (Project.priority, priority)):
-        predicate = any_of(column, values)
-        if predicate is not None:
-            stmt = stmt.where(predicate)
+    status_filter = any_of(Project.status, status_)
+    if status_filter is not None:
+        stmt = stmt.where(status_filter)
+    # ADR 0067: the effective band, so P4 never matches a Commercialized /
+    # Cancelled project; `not_applicable` selects exactly those.
+    priority_filter = priority_filter_predicate(priority)
+    if priority_filter is not None:
+        stmt = stmt.where(priority_filter)
     search = project_search_filter(q)
     if search is not None:
         stmt = stmt.where(search)
@@ -976,9 +981,14 @@ async def stage_project_update(
 
     # ADR 0015: the priority is applied last, as a priority move.
     new_priority: ProjectPriority | None = updates.pop("priority", project.priority)
+    target_status = updates.get("status", project.status)
+    if new_priority is None and not priority_applicable(target_status):
+        # ADR 0067: a client that shows "Not applicable" may send null for a
+        # Commercialized / Cancelled project; the stored priority is kept
+        # (never cleared), so null is the unchanged round-trip.
+        new_priority = project.priority
     priority_moves = new_priority != project.priority
     if priority_moves:
-        target_status = updates.get("status", project.status)
         if new_priority is None and target_status not in NON_SCHEDULABLE_STATUSES:
             # Clearing a set priority is not offered (P56 made it optional at
             # registration only; a priority-less project is left out of the
@@ -989,7 +999,11 @@ async def stage_project_update(
                 "NULL_NOT_ALLOWED",
                 "priority may not be null while the project's status is schedulable",
             )
-        await ensure_priority_move_allowed(db, project, new_priority)
+        # ADR 0067: 409 PRIORITY_NOT_APPLICABLE for a Commercialized /
+        # Cancelled target status (an unchanged priority never gets here).
+        await ensure_priority_move_allowed(
+            db, project, new_priority, target_status=target_status
+        )
 
     current_hub = (await db.execute(select(Hub).where(Hub.id == project.hub_id))).scalar_one()
     target_hub = current_hub

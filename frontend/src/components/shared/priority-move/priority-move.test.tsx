@@ -72,6 +72,7 @@ const changes: ScheduleRunChanges = {
   hidden_count: 3,
   rows: [
     {
+      priority_applicable: true,
       project_id: 'p1', project_name: 'Cooler One', hub: 'PD-India', priority: 'P2',
       before_projected_end_week: 40, after_projected_end_week: 46, delta_weeks: 6,
       before_within_year: true, after_within_year: true, before_left_out: false, after_left_out: false,
@@ -79,6 +80,7 @@ const changes: ScheduleRunChanges = {
       before_counts_toward_year: true, after_counts_toward_year: true, before_not_scheduled_priority: false, after_not_scheduled_priority: false, priority_label: null,
     },
     {
+      priority_applicable: true,
       project_id: 'p2', project_name: 'Freezer Two', hub: 'R&D-India', priority: 'P1',
       before_projected_end_week: 55, after_projected_end_week: 50, delta_weeks: -5,
       before_within_year: false, after_within_year: true, before_left_out: false, after_left_out: false,
@@ -297,3 +299,34 @@ describe('followPatch (Registration PATCH headers)', () => {
   });
 });
 
+
+describe('PriorityMoveControl — P57 (ADR 0067) not applicable', () => {
+  it.each(['Commercialized', 'Cancelled'])('%s: a disabled "Not applicable" control, no menu, no preview', async (status) => {
+    const user = userEvent.setup();
+    renderControl(undefined, status);
+    expect(screen.queryByTestId('priority-move-trigger')).not.toBeInTheDocument();
+    const control = screen.getByTestId('priority-move-not-applicable');
+    expect(control).toBeDisabled();
+    expect(control).toHaveTextContent('Not applicable');
+    expect(control.parentElement).toHaveAttribute('title', 'Priority does not apply to Commercialized or Cancelled projects');
+    expect(screen.queryByText('P1')).not.toBeInTheDocument();
+    await user.click(control);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(api.previewProjectPriority).not.toHaveBeenCalled();
+  });
+
+  it('without write it is the read-only "Not applicable" pill', () => {
+    renderControl({ session: { permissions: ROLE_MATRIX['Executive Viewer'] } }, 'Commercialized');
+    expect(screen.getByTestId('priority-not-applicable')).toHaveTextContent('Not applicable');
+    expect(screen.queryByText('P1')).not.toBeInTheDocument();
+  });
+
+  it('a served priority_applicable=false (Gantt row, no status) also disables it', () => {
+    renderWithProviders(
+      <PriorityMoveProvider>
+        <PriorityMoveControl projectId="p1" projectName="Cooler One" priority="P4" priorityApplicable={false} />
+      </PriorityMoveProvider>,
+    );
+    expect(screen.getByTestId('priority-move-not-applicable')).toBeDisabled();
+  });
+});

@@ -9,6 +9,7 @@ import { servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 function row(id: string, week: number | null, overrides: Partial<CompletingWithinYearRow> = {}): CompletingWithinYearRow {
   return servedRow({
+    priority_applicable: true,
     project_id: id,
     project_name: `Cooler ${id}`,
     hub: 'R&D-Greece',

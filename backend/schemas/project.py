@@ -24,10 +24,12 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    computed_field,
     field_validator,
 )
 
 from models.enums import (
+    PRIORITY_NOT_APPLICABLE_STATUSES,
     HubName,
     ProjectPriority,
     ProjectStatus,
@@ -219,6 +221,8 @@ class ProjectRead(BaseModel):
     leader_is_provisional: bool
     category: CategoryCodeOut | None
     type: ProjectType | None
+    #: The STORED priority (ADR 0067: kept, and round-tripped by edit forms,
+    #: even when `priority_applicable` is false).
     priority: ProjectPriority | None
     status: ProjectStatus
     frozen: bool
@@ -276,6 +280,14 @@ class ProjectRead(BaseModel):
     #: `band_rank`, all hubs); null exactly when `band_rank` is null. Filled
     #: by `services.band_rank.with_band_size` (one grouped count per request).
     band_size: int | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def priority_applicable(self) -> bool:
+        """ADR 0067: false for a Commercialized / Cancelled project; its
+        priority shows "Not applicable" and cannot be changed."""
+
+        return self.status not in PRIORITY_NOT_APPLICABLE_STATUSES
 
 
 class ProjectListItem(ProjectRead):

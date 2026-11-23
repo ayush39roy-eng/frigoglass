@@ -4,7 +4,8 @@ import type { PriorityCountSplit, PriorityLoadSplit } from '../api/types';
  * P13-T11 (API_CONTRACT_P13 §6): the served priority buckets, in display order.
  * Every value is read from the served split; nothing here re-buckets a project.
  */
-export const PRIORITY_BUCKETS = ['P1', 'P2', 'P3', 'P4', 'Queue'] as const;
+/** P57 (ADR 0067): `NA` = Commercialized / Cancelled (served label "Not applicable"), neutral colour. */
+export const PRIORITY_BUCKETS = ['P1', 'P2', 'P3', 'P4', 'Queue', 'NA'] as const;
 export type PriorityBucket = (typeof PRIORITY_BUCKETS)[number];
 
 /** Short labels, e.g. for "P1-D" matrix headers and "Q: 5" captions. The
@@ -17,6 +18,7 @@ export const BUCKET_SHORT: Record<PriorityBucket, string> = {
   P3: 'P3',
   P4: 'P4',
   Queue: 'Q',
+  NA: 'N/A',
 };
 
 /** P42: the display label of a split key — the served map first, else `BUCKET_SHORT`. */
@@ -31,6 +33,7 @@ export const BUCKET_BG: Record<PriorityBucket, string> = {
   P3: 'bg-band-p3',
   P4: 'bg-band-p4',
   Queue: 'bg-band-q',
+  NA: 'bg-text-subtle/60',
 };
 
 /** The buckets with a non-zero served value, in display order (for compact

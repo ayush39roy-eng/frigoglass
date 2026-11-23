@@ -106,6 +106,7 @@ function util(scope: 'hub' | 'lab_region', key: string, pct: number): Utilizatio
 
 export function simulateFixture(over: Partial<SimulateResponse> = {}): SimulateResponse {
   const newProject: ProjectResultOut = {
+    priority_applicable: true,
     project_id: 'whatif-p001-001',
     name: 'What-if project 1',
     hub: 'PD-India',

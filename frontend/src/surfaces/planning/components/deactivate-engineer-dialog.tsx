@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { priorityDisplayText } from '@/lib/priority-applicability';
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { isSuperAdminOnlyError, SUPER_ADMIN_ONLY_MESSAGE } from '@/lib/auth/super-admin';
@@ -393,7 +394,7 @@ function ProjectRow({
   onChange: (engineerId: string) => void;
 }): React.JSX.Element {
   const id = React.useId();
-  const meta = [row.hub, row.status, row.priority, row.category].filter((x): x is string => Boolean(x)).join(' · ');
+  const meta = [row.hub, row.status, priorityDisplayText(row.status, row.priority), row.category].filter((x): x is string => Boolean(x)).join(' · ');
   const noCandidate = row.candidates.length === 0;
   const missingFrozen = row.frozen && !value;
   return (

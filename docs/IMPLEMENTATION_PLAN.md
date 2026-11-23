@@ -2791,3 +2791,12 @@ Presentation over existing capabilities (ADR 0007 kinds, ADR 0045–0048 templat
 | P56-T02 | Backend: empty `HARD_GATE_FIELDS`; leave incomplete projects out of the scheduler input with an `outcome_label` reason; tests | backend-builder | T01 | pytest, ruff/mypy; MEMORY | DONE (MEMORY 2026-11-19 P56 backend) |
 | P56-T03 | Frontend: only Name and Hub marked required; Unset placeholders; tests | frontend-builder | T01 | vitest, tsc/eslint; MEMORY | DONE (MEMORY 2026-11-19 P56 frontend) |
 | P56-T04 | Gate: qa, workflow, security | three gatekeepers | T02, T03 | three PASSes | TODO (owner asked to push first) |
+
+## P57 — Priority "Not applicable" for Commercialized and Cancelled (ADR 0067; owner 2026-11-22)
+
+| ID | Task | Owner | Deps | Verify | Status |
+|---|---|---|---|---|---|
+| P57-T01 | ADR 0067, DOMAIN_RULES, plan | orchestrator | — | docs | DONE (MEMORY 2026-11-22 P57-T01) |
+| P57-T02 | Backend: effective-priority helper; every by-priority aggregation, serializer field, export and What-if result uses it; tests | backend-builder | T01 | pytest, ruff/mypy; MEMORY | DONE (MEMORY 2026-11-22 P57-T02) |
+| P57-T03 | Frontend: "Not applicable" pill/cell/select (disabled) for Commercialized/Cancelled; filters and client-side groupings use the helper; tests | frontend-builder | T01 | vitest, tsc/eslint; MEMORY | DONE (MEMORY 2026-11-22 P57-T03) |
+| P57-T04 | Gate: qa, workflow, security | three gatekeepers | T02, T03 | three PASSes | TODO |

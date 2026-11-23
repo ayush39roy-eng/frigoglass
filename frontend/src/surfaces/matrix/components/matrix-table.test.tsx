@@ -25,6 +25,7 @@ const SCORES = {
 
 function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
   return {
+    priority_applicable: true,
     project_id: 'p1',
     project_name: 'Cooler A',
     hub: 'R&D-Greece',

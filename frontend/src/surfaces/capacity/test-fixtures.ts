@@ -45,14 +45,14 @@ export function hubRow(overrides: Partial<HubCapacityRow> = {}): HubCapacityRow 
     lab_booking_status_remaining: 'full',
     area: 'India',
     // P13-T11 (API_CONTRACT_P13 §6): served priority buckets; they sum to the loads above.
-    design_load_by_priority: { P1: 400, P2: 100, P3: 50, P4: 0, Queue: 37 },
-    lab_load_by_priority: { P1: 300, P2: 96.5, P3: 0, P4: 0, Queue: 100 },
+    design_load_by_priority: { P1: 400, P2: 100, P3: 50, P4: 0, Queue: 37, NA: 0 },
+    lab_load_by_priority: { P1: 300, P2: 96.5, P3: 0, P4: 0, Queue: 100, NA: 0 },
     // P45-T01 (D45-1/D45-2): served band splits (full-year sums to the loads above,
     // remaining sums to the *_load_remaining_weeks) and the served need figures.
-    design_demand_by_priority: { P1: 400, P2: 100, P3: 50, P4: 0, Queue: 37 },
-    lab_demand_by_priority: { P1: 300, P2: 96.5, P3: 0, P4: 0, Queue: 100 },
-    design_remaining_by_priority: { P1: 300, P2: 80, P3: 30, P4: 0, Queue: 26 },
-    lab_remaining_by_priority: { P1: 250, P2: 80.25, P3: 0, P4: 0, Queue: 78 },
+    design_demand_by_priority: { P1: 400, P2: 100, P3: 50, P4: 0, Queue: 37, NA: 0 },
+    lab_demand_by_priority: { P1: 300, P2: 96.5, P3: 0, P4: 0, Queue: 100, NA: 0 },
+    design_remaining_by_priority: { P1: 300, P2: 80, P3: 30, P4: 0, Queue: 26, NA: 0 },
+    lab_remaining_by_priority: { P1: 250, P2: 80.25, P3: 0, P4: 0, Queue: 78, NA: 0 },
     design_need_p1_weeks: 120.25,
     design_need_p1_p2_weeks: 200.25,
     lab_need_p1_weeks: 117.5,
@@ -99,9 +99,9 @@ export function greeceRow(overrides: Partial<HubCapacityRow> = {}): HubCapacityR
     design_booked_pct_remaining: 554.85,
     design_booking_status_year: 'full',
     design_booking_status_remaining: 'full',
-    design_load_by_priority: { P1: 60, P2: 40, P3: 20, P4: 0, Queue: 11 },
-    design_demand_by_priority: { P1: 60, P2: 40, P3: 20, P4: 0, Queue: 11 },
-    design_remaining_by_priority: { P1: 20, P2: 30, P3: 15, P4: 0, Queue: 10 },
+    design_load_by_priority: { P1: 60, P2: 40, P3: 20, P4: 0, Queue: 11, NA: 0 },
+    design_demand_by_priority: { P1: 60, P2: 40, P3: 20, P4: 0, Queue: 11, NA: 0 },
+    design_remaining_by_priority: { P1: 20, P2: 30, P3: 15, P4: 0, Queue: 10, NA: 0 },
     // Served: P1 fits the remaining capacity; P1 + P2 does not.
     design_need_p1_weeks: 0,
     design_need_p1_p2_weeks: 26.39,
@@ -120,7 +120,7 @@ export function greeceRow(overrides: Partial<HubCapacityRow> = {}): HubCapacityR
 }
 
 /** P42 (API_CONTRACT_P42 §5): the served `priority_bucket_labels`. */
-export const PRIORITY_BUCKET_LABELS: Record<string, string> = { P1: 'P1', P2: 'P2', P3: 'P3', P4: 'P4', Queue: 'Q' };
+export const PRIORITY_BUCKET_LABELS: Record<string, string> = { P1: 'P1', P2: 'P2', P3: 'P3', P4: 'P4', Queue: 'Q', NA: 'Not applicable' };
 
 /** P13-T11: one served class-breakdown row (counts as the server would serve them). */
 export function classRow(overrides: Partial<ClassBreakdownRow> = {}): ClassBreakdownRow {
@@ -129,8 +129,8 @@ export function classRow(overrides: Partial<ClassBreakdownRow> = {}): ClassBreak
     deliverable_count: 37,
     left_out_count: 125,
     total_count: 162,
-    deliverable_by_priority: { P1: 32, P2: 0, P3: 0, P4: 0, Queue: 5 },
-    left_out_by_priority: { P1: 87, P2: 1, P3: 0, P4: 0, Queue: 37 },
+    deliverable_by_priority: { P1: 32, P2: 0, P3: 0, P4: 0, Queue: 5, NA: 0 },
+    left_out_by_priority: { P1: 87, P2: 1, P3: 0, P4: 0, Queue: 37, NA: 0 },
     by_hub: [
       { hub: 'R&D-Greece', deliverable: 0, left_out: 2 },
       { hub: 'PD-Romania', deliverable: 16, left_out: 3 },
@@ -187,7 +187,7 @@ export function totalsRow(overrides: Partial<CapacityTotals> = {}): CapacityTota
     design_booked_pct_remaining: 326.56,
     design_booking_status_year: 'full',
     design_booking_status_remaining: 'full',
-    design_load_by_priority: { P1: 400, P2: 100, P3: 50, P4: 0, Queue: 37 },
+    design_load_by_priority: { P1: 400, P2: 100, P3: 50, P4: 0, Queue: 37, NA: 0 },
     lab_load_weeks: 496.5,
     lab_load_remaining_weeks: 408.25,
     lab_load_booked_weeks: 409.5,
@@ -197,7 +197,7 @@ export function totalsRow(overrides: Partial<CapacityTotals> = {}): CapacityTota
     lab_booked_pct_remaining: 374.72,
     lab_booking_status_year: 'full',
     lab_booking_status_remaining: 'full',
-    lab_load_by_priority: { P1: 300, P2: 96.5, P3: 0, P4: 0, Queue: 100 },
+    lab_load_by_priority: { P1: 300, P2: 96.5, P3: 0, P4: 0, Queue: 100, NA: 0 },
     // P19-T03: served day totals for the single PD-India row.
     design_capacity_days: { year: 1515.72, remaining: 1078.5 },
     design_load_days: { year: 3522, remaining: 2616 },

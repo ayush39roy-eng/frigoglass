@@ -146,7 +146,7 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     const user = userEvent.setup();
     renderWithProviders(<HubSummaryTable data={six} activeRun={undefined} view={{ horizon: 'year', unit: 'days' }} />);
     const india = screen.getByTestId('hub-summary-row-R&D-India');
-    expect(within(india).getByRole('img', { name: 'Design full-year demand by priority (wks): P1 400, P2 100, P3 50, P4 0, Q 37' })).toBeInTheDocument();
+    expect(within(india).getByRole('img', { name: 'Design full-year demand by priority (wks): P1 400, P2 100, P3 50, P4 0, Q 37, N/A 0' })).toBeInTheDocument();
     expect(within(india).getByRole('img', { name: /^Lab full-year demand by priority \(wks\): P1 300/ })).toBeInTheDocument();
     expect(screen.queryByTestId('split-R&D-India-P2-D')).not.toBeInTheDocument();
 
@@ -160,10 +160,10 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     expect(screen.getByTestId('split-R&D-India-Queue-L')).toHaveTextContent('100');
     expect(screen.getByRole('columnheader', { name: 'Design full-year demand, priority P1, in weeks' })).toHaveTextContent('P1-D');
     expect(screen.getByRole('columnheader', { name: 'Lab full-year demand, priority Q, in weeks' })).toHaveTextContent('Q-L');
-    expect(screen.getByRole('columnheader', { name: 'Design (per hub)' })).toHaveAttribute('colspan', '10');
-    expect(screen.getByRole('columnheader', { name: 'Lab (per lab region)' })).toHaveAttribute('colspan', '11');
+    expect(screen.getByRole('columnheader', { name: 'Design (per hub)' })).toHaveAttribute('colspan', '11');
+    expect(screen.getByRole('columnheader', { name: 'Lab (per lab region)' })).toHaveAttribute('colspan', '12');
     // shared lab rows span the lab split columns too; the total split is the served totals
-    expect(within(screen.getByTestId('hub-summary-row-OEM-HCK')).getByTestId('lab-shared')).toHaveAttribute('colspan', '10');
+    expect(within(screen.getByTestId('hub-summary-row-OEM-HCK')).getByTestId('lab-shared')).toHaveAttribute('colspan', '11');
     expect(screen.queryByTestId('split-OEM-HCK-P1-L')).not.toBeInTheDocument();
     expect(screen.getByTestId('split-total-P1-D')).toHaveTextContent('400');
 

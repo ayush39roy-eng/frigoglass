@@ -112,6 +112,7 @@ function row(id: string, overrides: Partial<ProjectFilterRow> = {}): ProjectFilt
 }
 
 const project: ProjectRead = {
+  priority_applicable: true,
   id: P1,
   name: 'Cooler A',
   external_code: null,
@@ -426,7 +427,7 @@ describe('Projects page — registration drawer', () => {
     expect(http.send).toHaveBeenCalledWith('POST', '/projects', {
       name: 'Cooler B',
       // Untouched text fields go as '' — unchanged from the old /register form.
-      external_code: '',
+      external_code: null,
       hub_id: 'hub-1',
       leader_engineer_id: 'eng-1',
       category: 'A',

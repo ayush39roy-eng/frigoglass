@@ -10,6 +10,7 @@ import { P13_MATRIX_ROW_DEFAULTS } from '../test-fixtures';
 
 function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
   return {
+    priority_applicable: true,
     project_id: 'p1',
     project_name: 'Cooler A',
     hub: 'R&D-Greece',

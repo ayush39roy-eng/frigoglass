@@ -50,7 +50,8 @@ from tests.p12_helpers import (
     stepped_project,
 )
 
-BUCKETS = ["P1", "P2", "P3", "P4", "Queue"]
+# P57 (ADR 0067): "NA" = Not applicable (Commercialized / Cancelled).
+BUCKETS = ["P1", "P2", "P3", "P4", "Queue", "NA"]
 REGIONS = ("Greece", "India", "Romania")
 
 
@@ -77,6 +78,10 @@ def _total(split: dict) -> float:
 
 def test_priority_bucket_mapping():
     assert [priority_bucket(p) for p in ProjectPriority] == ["P1", "P2", "P3", "P4", "Queue"]
+    # P57 (ADR 0067): Commercialized / Cancelled → "NA" whatever the stored band.
+    assert priority_bucket(ProjectPriority.P1, ProjectStatus.COMMERCIALIZED) == "NA"
+    assert priority_bucket(None, "Cancelled") == "NA"
+    assert priority_bucket(ProjectPriority.P4, ProjectStatus.ON_HOLD) == "P4"
     assert priority_bucket(None) == "Queue"
     assert PRIORITY_BUCKETS == tuple(BUCKETS)
 
@@ -150,15 +155,15 @@ async def test_hub_rows_priority_split_exact(db_session):
     rows = {r["hub"]: r for r in body["rows"]}
     gr, pdi, rdi = rows["R&D-Greece"], rows["PD-India"], rows["R&D-India"]
     assert gr["design_load_by_priority"] == {"P1": 10.0, "P2": 0.0, "P3": 0.0, "P4": 0.0,
-                                             "Queue": 5.0}
+                                             "Queue": 5.0, "NA": 0.0}
     assert gr["lab_load_by_priority"] == {"P1": 4.0, "P2": 0.0, "P3": 0.0, "P4": 0.0,
-                                          "Queue": 0.0}
+                                          "Queue": 0.0, "NA": 0.0}
     assert pdi["design_load_by_priority"] == {"P1": 0.0, "P2": 7.0, "P3": 0.0, "P4": 0.0,
-                                              "Queue": 2.0}
+                                              "Queue": 2.0, "NA": 0.0}
     assert rdi["design_load_by_priority"] == {"P1": 0.0, "P2": 0.0, "P3": 0.0, "P4": 3.0,
-                                              "Queue": 0.0}
+                                              "Queue": 0.0, "NA": 0.0}
     # Lab is region-level (India = PD-India + R&D-India), repeated on both rows.
-    india_lab = {"P1": 0.0, "P2": 3.0, "P3": 0.0, "P4": 1.0, "Queue": 6.0}
+    india_lab = {"P1": 0.0, "P2": 3.0, "P3": 0.0, "P4": 1.0, "Queue": 6.0, "NA": 0.0}
     assert pdi["lab_load_by_priority"] == rdi["lab_load_by_priority"] == india_lab
     for row in body["rows"]:
         assert _total(row["design_load_by_priority"]) == row["design_load_weeks"]
@@ -169,9 +174,9 @@ async def test_hub_rows_priority_split_exact(db_session):
     t = body["totals"]
     assert (t["design_load_weeks"], t["lab_load_weeks"]) == (27, 14.0)
     assert t["design_load_by_priority"] == {"P1": 10.0, "P2": 7.0, "P3": 0.0, "P4": 3.0,
-                                            "Queue": 7.0}
+                                            "Queue": 7.0, "NA": 0.0}
     assert t["lab_load_by_priority"] == {"P1": 4.0, "P2": 3.0, "P3": 0.0, "P4": 1.0,
-                                         "Queue": 6.0}
+                                         "Queue": 6.0, "NA": 0.0}
     assert t["lab_regions"] == ["Greece", "India"]
     # No engineers / chambers in this fixture: capacity 0 with load > 0 → null, full.
     assert (t["design_booked_pct_year"], t["design_booking_status_year"]) == (None, "full")
@@ -193,8 +198,8 @@ async def test_class_breakdown_priority_and_hub_split_exact(db_session):
     rows = {r["category"]: r for r in body["rows"]}
     a, b = rows["A"], rows["B"]
     assert (a["deliverable_count"], a["left_out_count"]) == (3, 1)
-    assert a["deliverable_by_priority"] == {"P1": 1, "P2": 1, "P3": 0, "P4": 1, "Queue": 0}
-    assert a["left_out_by_priority"] == {"P1": 0, "P2": 0, "P3": 0, "P4": 0, "Queue": 1}
+    assert a["deliverable_by_priority"] == {"P1": 1, "P2": 1, "P3": 0, "P4": 1, "Queue": 0, "NA": 0}
+    assert a["left_out_by_priority"] == {"P1": 0, "P2": 0, "P3": 0, "P4": 0, "Queue": 1, "NA": 0}
     assert a["by_hub"] == [
         {"hub": "PD-India", "deliverable": 1, "left_out": 0},
         {"hub": "R&D-Greece", "deliverable": 1, "left_out": 1},
@@ -236,8 +241,8 @@ async def test_class_breakdown_excludes_non_schedulable_statuses(db_session):
     a = {r["category"]: r for r in body["rows"]}["A"]
     # Identical to the fixture without the six non-schedulable projects.
     assert (a["deliverable_count"], a["left_out_count"], a["total_count"]) == (3, 1, 4)
-    assert a["deliverable_by_priority"] == {"P1": 1, "P2": 1, "P3": 0, "P4": 1, "Queue": 0}
-    assert a["left_out_by_priority"] == {"P1": 0, "P2": 0, "P3": 0, "P4": 0, "Queue": 1}
+    assert a["deliverable_by_priority"] == {"P1": 1, "P2": 1, "P3": 0, "P4": 1, "Queue": 0, "NA": 0}
+    assert a["left_out_by_priority"] == {"P1": 0, "P2": 0, "P3": 0, "P4": 0, "Queue": 1, "NA": 0}
     assert a["by_hub"] == [
         {"hub": "PD-India", "deliverable": 1, "left_out": 0},
         {"hub": "R&D-Greece", "deliverable": 1, "left_out": 1},

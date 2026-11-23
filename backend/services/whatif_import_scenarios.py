@@ -61,7 +61,11 @@ from schemas.whatif_import import (
 from services.active_run import get_active_run
 from services.edit_conflict import AuditRef, check_base, listed_change
 from services.export_builder import ExportSheets, xlsx_bytes
-from services.outcome_buckets import priority_label
+from services.priority_applicability import (
+    effective_priority,
+    priority_applicable,
+    served_priority_label,
+)
 from services.week_labels import week_label
 from services.whatif_baseline import Scope, WhatIfContext, principal_audit_hub_id, resolve_scope
 from services.whatif_import import (
@@ -274,6 +278,13 @@ def stored_result(row: WhatifImportScenario) -> ImportSimulateResponse:
         # P53 (R53-3, I62): a scenario saved before P53 has no table; it is
         # never recomputed on read.
         res.delivery_by_year_unavailable = "pre_p53_run"
+    # ADR 0067: a row saved before P57 serves its band as "Not applicable"
+    # when its (saved) status is Commercialized / Cancelled. The saved
+    # counts and tables are history and are not recomputed (I62).
+    for p in res.projects:
+        if not priority_applicable(p.status):
+            p.priority = None
+            p.priority_applicable = False
     return res
 
 
@@ -629,8 +640,8 @@ def import_gantt_chart(
         GanttProjectBar(
             name=p.name,
             hub=p.hub,
-            priority=p.priority,
-            priority_label=priority_label(p.priority),
+            priority=effective_priority(p.status, p.priority),
+            priority_label=served_priority_label(p.status, p.priority),
             leader=p.leader_name,
             outcome=p.outcome,
             outcome_text=label_for(p.outcome, _OUTCOME_TEXT),

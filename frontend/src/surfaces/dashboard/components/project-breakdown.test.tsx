@@ -40,6 +40,7 @@ const HUBS = [
 
 function row(over: Partial<ProjectFilterRow> = {}): ProjectFilterRow {
   return {
+    priority_applicable: true,
     project_id: 'p-1',
     project_name: 'Ice cooler ICOOL-7',
     hub: 'PD-India',

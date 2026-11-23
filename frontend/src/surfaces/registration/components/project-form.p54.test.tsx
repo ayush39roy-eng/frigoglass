@@ -25,6 +25,7 @@ const hubs: Hub[] = [
 
 function project(overrides: Partial<ProjectRead> = {}): ProjectRead {
   return {
+    priority_applicable: true,
     id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
     category: null, type: null, priority: 'P1', status: 'In Development', frozen: false, actual_start_week: 20, actual_end_week: null,
     delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,

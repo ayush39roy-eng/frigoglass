@@ -7,8 +7,8 @@ import { seriousAxeViolations } from '@/test/axe';
 import { PriorityLoadChart } from './priority-load-chart';
 
 const bars = [
-  { key: 'PD-India', label: 'PD-India', split: { P1: 707, P2: 9, P3: 0, P4: 0, Queue: 0 }, splitTotal: 716, load: 716, capacity: 90 },
-  { key: 'R&D-Greece', label: 'R&D-Greece', split: { P1: 43, P2: 0, P3: 0, P4: 0, Queue: 0 }, splitTotal: 43, load: 43, capacity: 55 },
+  { key: 'PD-India', label: 'PD-India', split: { P1: 707, P2: 9, P3: 0, P4: 0, Queue: 0, NA: 0 }, splitTotal: 716, load: 716, capacity: 90 },
+  { key: 'R&D-Greece', label: 'R&D-Greece', split: { P1: 43, P2: 0, P3: 0, P4: 0, Queue: 0, NA: 0 }, splitTotal: 43, load: 43, capacity: 55 },
 ];
 
 describe('PriorityLoadChart (P13-T11)', () => {

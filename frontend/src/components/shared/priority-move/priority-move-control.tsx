@@ -10,12 +10,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { isPriorityNotApplicable, NOT_APPLICABLE_LABEL, NOT_APPLICABLE_TOOLTIP } from '@/lib/priority-applicability';
 import { cn } from '@/lib/utils';
 import { usePermission } from '@/stores/session';
 import { PROJECT_PRIORITIES, type ProjectPriority } from '@/types/enums';
 
 import { PRIORITY_BAND_STYLES, PRIORITY_BAND_TITLE, priorityBandName } from '../priority-band-meta';
-import { PriorityBandPill } from '../priority-band-pill';
+import { NotApplicablePriorityPill, PriorityBandPill } from '../priority-band-pill';
 import { MOVE_COPY } from './move-copy';
 import { usePriorityMoveHost, type PriorityMoveTarget } from './priority-move-context';
 
@@ -25,6 +26,8 @@ function isPriority(value: string): value is ProjectPriority {
 
 export interface PriorityMoveControlProps extends PriorityMoveTarget {
   className?: string;
+  /** P57-T02: served `priority_applicable`, when the payload carries it (wins over `status`). */
+  priorityApplicable?: boolean | null | undefined;
 }
 
 /**
@@ -37,10 +40,36 @@ export interface PriorityMoveControlProps extends PriorityMoveTarget {
  * renders the existing read-only `<PriorityBandPill>`. The server still
  * enforces hub scope and project grants.
  */
-export function PriorityMoveControl({ className, ...target }: PriorityMoveControlProps): React.JSX.Element | null {
+export function PriorityMoveControl({
+  className,
+  priorityApplicable,
+  ...target
+}: PriorityMoveControlProps): React.JSX.Element | null {
   const host = usePriorityMoveHost();
   const canWrite = usePermission('project_registration').write;
   const { priority, projectName } = target;
+
+  // P57 (ADR 0067): Commercialized / Cancelled take no priority. The control is
+  // shown as "Not applicable", disabled; the stored priority is never moved here.
+  if (isPriorityNotApplicable(target.status, priorityApplicable)) {
+    if (!host || !canWrite) return <NotApplicablePriorityPill className={className} />;
+    return (
+      <span title={NOT_APPLICABLE_TOOLTIP} className="inline-flex">
+        <button
+          type="button"
+          disabled
+          aria-label={`Priority ${NOT_APPLICABLE_LABEL} for ${projectName}. ${NOT_APPLICABLE_TOOLTIP}`}
+          className={cn(
+            'inline-flex shrink-0 cursor-not-allowed items-center gap-1 rounded-sm bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold leading-none text-text-muted ring-1 ring-inset ring-border',
+            className,
+          )}
+          data-testid="priority-move-not-applicable"
+        >
+          {NOT_APPLICABLE_LABEL}
+        </button>
+      </span>
+    );
+  }
 
   if (!host || !canWrite) {
     return priority ? <PriorityBandPill priority={priority} className={className} /> : null;

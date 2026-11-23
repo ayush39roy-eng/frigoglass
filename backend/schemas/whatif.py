@@ -267,7 +267,10 @@ class ProjectResultOut(BaseModel):
     name: str
     hub: str
     category: str | None
+    #: ADR 0067: the effective band (null for Commercialized / Cancelled).
     priority: str | None
+    #: ADR 0067: false for a Commercialized / Cancelled project.
+    priority_applicable: bool = True
     is_new: bool
     outcome: OutcomeLiteral
     finish_week: int | None

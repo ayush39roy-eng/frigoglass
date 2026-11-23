@@ -1,5 +1,11 @@
 import { PLAN_YEAR_WEEKS } from '@/lib/week-line';
 import { formatInteger } from '@/lib/format';
+import {
+  isPriorityNotApplicable,
+  NOT_APPLICABLE_FILTER_VALUE,
+  NOT_APPLICABLE_LABEL,
+  NOT_APPLICABLE_SHORT_LABEL,
+} from '@/lib/priority-applicability';
 import { HUB_COUNTRY } from '@/surfaces/dashboard/lib/hub-geo';
 
 import type { WhatIfOutcome } from '../../api/whatif-types';
@@ -289,21 +295,40 @@ const DIM_WORDS: Record<BucketDim, string> = {
   by_source: 'source',
 };
 
+/** Served keys a backend may use for the P57 "Not applicable" priority slice. */
+const NOT_APPLICABLE_BUCKET_KEYS: ReadonlySet<string> = new Set([
+  NOT_APPLICABLE_LABEL,
+  NOT_APPLICABLE_SHORT_LABEL,
+  NOT_APPLICABLE_FILTER_VALUE,
+]);
+
+/** The served "Not applicable" priority slice key, if the block serves one. */
+export function notApplicableBucketKey(keys: readonly string[]): string | null {
+  return keys.find((k) => NOT_APPLICABLE_BUCKET_KEYS.has(k)) ?? null;
+}
+
 /** The bucket key a project falls in for a dimension (`unknown` for a missing value, C1). */
-export function bucketKeyOf(p: ImportResultProject, dim: BucketDim): string {
+export function bucketKeyOf(p: ImportResultProject, dim: BucketDim, notApplicableKey: string | null = null): string {
+  // P57 (ADR 0067): a Commercialized / Cancelled project has no effective
+  // priority, so it goes to the served "Not applicable" slice when the block
+  // serves one. Without one the served value is followed as is (each list
+  // must equal its served figure, I9).
+  if (dim === 'by_priority' && notApplicableKey !== null && isPriorityNotApplicable(p.status)) return notApplicableKey;
   const v = p[DIM_FIELD[dim]] as string | null | undefined;
   return v === null || v === undefined || v === '' ? UNKNOWN_BUCKET : v;
 }
 
 /** A donut slice / legend chip: the bucket's served `total` and its projects in the block. */
 export function bucketDrill(result: ImportSimulateResponse, key: string, dim: BucketDim, bucket: string): ProjectDrill {
-  const served = breakdownFor(result, key)?.[dim].find((b) => b.key === bucket);
+  const buckets = breakdownFor(result, key)?.[dim] ?? [];
+  const served = buckets.find((b) => b.key === bucket);
+  const naKey = dim === 'by_priority' ? notApplicableBucketKey(buckets.map((b) => b.key)) : null;
   const label = bucketLabel(bucket);
   return projectDrill(
     result,
     `${DIM_WORDS[dim][0]?.toUpperCase() ?? ''}${DIM_WORDS[dim].slice(1)} ${label}`,
     served?.total ?? 0,
-    projectsInBlock(result, key).filter((p) => bucketKeyOf(p, dim) === bucket),
+    projectsInBlock(result, key).filter((p) => bucketKeyOf(p, dim, naKey) === bucket),
     `with ${DIM_WORDS[dim]} ${label}`,
     { context: yearContext(result, key) },
   );

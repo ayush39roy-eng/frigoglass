@@ -33,6 +33,7 @@ import { servedCompleting, servedRow } from '@/surfaces/dashboard/test-fixtures'
 
 function row(overrides: Partial<CompletingWithinYearRow>): CompletingWithinYearRow {
   return servedRow({
+    priority_applicable: true,
     project_id: 'p-x',
     project_name: 'Project X',
     hub: 'PD-India',

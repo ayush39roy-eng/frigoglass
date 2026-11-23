@@ -3,7 +3,8 @@ import { FolderKanban, FolderOpen, Pencil } from 'lucide-react';
 
 import { WeekText } from '@/components/shared/week-text';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
-import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { ProjectPriorityPill } from '@/components/shared/priority-band-pill';
+import { rowPriorityNotApplicable } from '@/lib/priority-applicability';
 import { CharterCell } from '@/components/shared/charter-fields';
 import { CHARTER_FIELDS } from '@/components/shared/charter-fields-meta';
 import { NoLeaderLabel } from '@/components/shared/no-leader-label';
@@ -174,9 +175,10 @@ export function registerColumns({
       width: '6rem',
       align: 'center',
       cell: (row) =>
-        row.priority || row.priority_rank ? (
+        row.priority || row.priority_rank || rowPriorityNotApplicable(row) ? (
           <span className="inline-flex items-center gap-1">
-            {row.priority ? <PriorityBandPill priority={row.priority} /> : null}
+            {/* P57 (ADR 0067): Commercialized / Cancelled read "Not applicable". */}
+            <ProjectPriorityPill status={row.status} priorityApplicable={row.priority_applicable} priority={row.priority} short />
             {row.priority_rank ? (
               <span
                 className="text-2xs font-semibold tabular-nums text-text-subtle"

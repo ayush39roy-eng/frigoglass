@@ -128,7 +128,7 @@ describe('CapacityPage', () => {
       hubRow({
         hub: 'R&D-India',
         design_load_weeks: 16,
-        design_load_by_priority: { P1: 16, P2: 0, P3: 0, P4: 0, Queue: 0 },
+        design_load_by_priority: { P1: 16, P2: 0, P3: 0, P4: 0, Queue: 0, NA: 0 },
       }),
     ];
     // Served totals (illustrative, deliberately not the rows' sum: the page must not add rows up).
@@ -138,7 +138,7 @@ describe('CapacityPage', () => {
       design_capacity_year: 290.1,
       design_booked_pct_year: 207.86,
       design_booked_pct_remaining: 299.5,
-      design_load_by_priority: { P1: 416, P2: 100, P3: 50, P4: 0, Queue: 37 },
+      design_load_by_priority: { P1: 416, P2: 100, P3: 50, P4: 0, Queue: 37, NA: 0 },
     });
     hooks.useHubLoadVsCapacity.mockReturnValue(ready({ ...hubLoad, rows, totals }));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));

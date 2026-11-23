@@ -54,6 +54,7 @@ export function stage(i: number, over: Partial<WorkspaceStage> = {}): WorkspaceS
 export function workspaceFixture(over: Partial<WorkspaceResponse> = {}): WorkspaceResponse {
   return {
     project: {
+      priority_applicable: true,
       id: 'p-1',
       name: 'Cooler Alpha',
       external_code: 'RPD-0042',

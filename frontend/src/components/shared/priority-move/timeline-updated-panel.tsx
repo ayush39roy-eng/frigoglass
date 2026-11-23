@@ -9,7 +9,7 @@ import { formatWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { ProjectPriority } from '@/types/enums';
 
-import { PriorityBandPill } from '../priority-band-pill';
+import { PriorityBandPill, ProjectPriorityPill } from '../priority-band-pill';
 import { BAND_EFFECT_COPY, bandEffectOfChange, MOVE_COPY, type BandEffect } from './move-copy';
 
 /**
@@ -121,7 +121,8 @@ function ChangeRowItem({ row }: { row: ScheduleRunChangeRow }): React.JSX.Elemen
       </div>
       <div className="flex flex-wrap items-center gap-1.5 text-2xs text-text-muted">
         <span>{row.hub}</span>
-        {row.priority ? <PriorityBandPill priority={row.priority} /> : null}
+        {/* P57 (ADR 0067): served priority null + priority_applicable false reads "N/A". */}
+        <ProjectPriorityPill status={undefined} priority={row.priority} priorityApplicable={row.priority_applicable} short />
         <Flips row={row} />
       </div>
     </div>

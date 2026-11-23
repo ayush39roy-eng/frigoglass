@@ -2,7 +2,7 @@ import * as React from 'react';
 import { CalendarCheck, FolderKanban } from 'lucide-react';
 
 import { WeekText } from '@/components/shared/week-text';
-import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { ProjectPriorityPill } from '@/components/shared/priority-band-pill';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { CategoryTag } from '@/components/ui/category-tag';
@@ -174,7 +174,7 @@ function columns(source: DrillSource): VirtualColumn<DrillRow>[] {
       header: 'Priority',
       width: '4.5rem',
       align: 'center',
-      cell: (row) => (row.priority ? <PriorityBandPill priority={row.priority} /> : DASH),
+      cell: (row) => <ProjectPriorityPill status={row.status} priority={row.priority} short fallback={DASH} />,
     },
     {
       id: 'status',

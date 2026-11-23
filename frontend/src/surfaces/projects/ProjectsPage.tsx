@@ -44,11 +44,12 @@ import {
   type TypeFilterValue,
 } from '@/lib/multi-select-filter';
 import {
-  PROJECT_PRIORITIES,
-  UI_PROJECT_STATUSES,
-  type ProjectPriority,
-  type ProjectStatus,
-} from '@/types/enums';
+  NOT_APPLICABLE_FILTER_VALUE,
+  NOT_APPLICABLE_LABEL,
+  PRIORITY_FILTER_VALUES,
+  type PriorityFilterValue,
+} from '@/lib/priority-applicability';
+import { UI_PROJECT_STATUSES, type ProjectStatus } from '@/types/enums';
 
 import { FilterSelect } from '@/surfaces/dashboard/components/project-breakdown';
 import { useDashboardProjects, useProjectFacets } from '@/surfaces/dashboard/hooks/use-dashboard';
@@ -146,7 +147,7 @@ type Sort = 'name' | 'priority';
 interface Filters {
   /** Multi-select (owner ask 2026-11-13): repeated params; empty = all. */
   status_: ProjectStatus[];
-  priority: ProjectPriority[];
+  priority: PriorityFilterValue[];
   leader: string[];
   step: string[];
 }
@@ -910,7 +911,7 @@ export default function ProjectsPage(): React.JSX.Element {
               allLabel="All priorities"
               value={filters.priority}
               onChange={set('priority')}
-              options={PROJECT_PRIORITIES.map((p) => ({ value: p, label: p }))}
+              options={PRIORITY_FILTER_VALUES.map((p) => ({ value: p, label: p === NOT_APPLICABLE_FILTER_VALUE ? NOT_APPLICABLE_LABEL : p }))}
             />
             <FilterSelect
               label="Leader"

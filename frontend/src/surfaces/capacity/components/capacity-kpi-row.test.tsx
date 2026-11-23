@@ -19,7 +19,7 @@ const totals = totalsRow({
   design_load_booked_weeks: 88,
   design_booked_pct_year: 192.98,
   design_booking_status_year: 'full',
-  design_load_by_priority: { P1: 54, P2: 56, P3: 0, P4: 0, Queue: 0 },
+  design_load_by_priority: { P1: 54, P2: 56, P3: 0, P4: 0, Queue: 0, NA: 0 },
 });
 
 describe('CapacityKpiRow (P19-T01)', () => {

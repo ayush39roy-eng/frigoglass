@@ -29,6 +29,7 @@ from tests.test_p13_region_filter import (
 PATH = "/dashboard/completing-within-year"
 BANDS = ["P1", "P2", "P3", "P4", "Q"]
 OTHER = {ProjectStatus.ON_HOLD, ProjectStatus.CANCELLED, ProjectStatus.DRAFT}
+NOT_APPLICABLE = {ProjectStatus.COMMERCIALIZED, ProjectStatus.CANCELLED}
 
 
 def _share(part: int, whole: int) -> float:
@@ -100,7 +101,8 @@ def _expected(projects, started, outcomes) -> dict[str, dict]:
         for b in BANDS
     }
     for p in projects:
-        if p.priority is None:
+        # P57 (ADR 0067): a Commercialized / Cancelled project has no band.
+        if p.priority is None or p.status in NOT_APPLICABLE:
             continue
         a = out[p.priority.value]
         o = outcomes.get(p.id)
@@ -179,19 +181,24 @@ async def test_bands_rows_and_filters(db_session):
         stale = sum(
             1
             for p in projects
-            if p.status in OTHER and outcomes[p.id].within_year and not outcomes[p.id].blocked
+            # P57: a Commercialized project's within-year flag is in no band.
+            if p.status in OTHER | NOT_APPLICABLE
+            and outcomes[p.id].within_year
+            and not outcomes[p.id].blocked
         )
         assert (
             sum(b["within_year"] for b in body["priority_delivery"])
             == body["within_year_count"] - stale
         )
-        # Bands cover every project that has a priority.
+        # Bands cover every project that has an applicable priority (P57,
+        # ADR 0067: Commercialized / Cancelled are under no band).
         assert sum(b["total"] for b in body["priority_delivery"]) == sum(
-            1 for p in projects if p.priority is not None
+            1 for p in projects if p.priority is not None and p.status not in NOT_APPLICABLE
         )
-        # Commercialized never in in-flight / not-started; In Queue with progress is in flight.
+        # Commercialized is under no band (so never "delivered" in a band);
+        # On Hold / Draft are "other"; In Queue with progress is in flight.
         p1 = next(b for b in body["priority_delivery"] if b["priority"] == "P1")
-        assert p1["delivered_total"] >= 1 and p1["other_total"] >= 3
+        assert p1["delivered_total"] == 0 and p1["other_total"] >= 2
         assert p1["not_started_total"] >= 1
         assert any(r["status"] == "In Queue" and not r["not_started"] for r in body["rows"])
         for hub in w.hubs.values():

@@ -31,7 +31,8 @@ from tests.factories import make_chamber, make_engineer, make_hub
 from tests.p12_helpers import act_as, client_for, stepped_project
 from tests.test_p13_capacity_priority_board import _capacity_fixture, _seeded
 
-BUCKETS = ["P1", "P2", "P3", "P4", "Queue"]
+# P57 (ADR 0067): "NA" = Not applicable (Commercialized / Cancelled).
+BUCKETS = ["P1", "P2", "P3", "P4", "Queue", "NA"]
 NEW_SPLITS = (
     "design_demand_by_priority",
     "lab_demand_by_priority",
@@ -106,7 +107,7 @@ async def _set_effort(db_session, project, planned: dict[str, int]) -> None:
 
 
 def test_need_to_finish_pure():
-    split = {"P1": 10.0, "P2": 20.0, "P3": 1.0, "P4": 0.0, "Queue": 0.0}
+    split = {"P1": 10.0, "P2": 20.0, "P3": 1.0, "P4": 0.0, "Queue": 0.0, "NA": 0.0}
     assert need_to_finish(split, 21.0) == (0.0, 9.0)
     assert need_to_finish(split, 5.25) == (4.75, 24.75)
     assert need_to_finish(split, 40.0) == (0.0, 0.0)

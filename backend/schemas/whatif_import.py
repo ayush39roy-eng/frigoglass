@@ -301,7 +301,10 @@ class ImportProjectOut(BaseModel):
     hub: str
     capacity_hub: str
     category: str | None
+    #: ADR 0067: the effective band (null for Commercialized / Cancelled).
     priority: str | None
+    #: ADR 0067: false for a Commercialized / Cancelled project.
+    priority_applicable: bool = True
     status: str
     leader_name: str | None
     leader_ref: str | None

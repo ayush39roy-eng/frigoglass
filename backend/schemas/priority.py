@@ -164,7 +164,11 @@ class PriorityMatrixRow(BaseModel):
     hub: HubName
     category: CategoryCodeOut | None
     type: ProjectType | None
+    #: The STORED priority (round-trip safe); see `priority_applicable`.
     set_priority: ProjectPriority | None
+    #: ADR 0067: false for a Commercialized / Cancelled project; its
+    #: `set_priority` reads "Not applicable" and is not editable.
+    priority_applicable: bool = True
     #: P13-T14 (docs/API_CONTRACT_P13.md §7).
     status: ProjectStatus
     #: OQ #8 / P3-T09: the leader's name only when the leader is the caller;
@@ -250,7 +254,11 @@ class PriorityPortfolioSummary(BaseModel):
     score_band_counts: dict[str, int]
     #: ADR 0036: projects promoted to P1 by the capacity fill.
     capacity_fill_count: int
+    #: ADR 0067: effective priority only (Commercialized / Cancelled are not
+    #: under any band; they are `priority_not_applicable_count`).
     set_priority_counts: dict[str, int]
+    #: ADR 0067: projects whose priority is "Not applicable".
+    priority_not_applicable_count: int = 0
 
 
 class BandShare(BaseModel):
@@ -293,7 +301,9 @@ class PriorityCompareItem(BaseModel):
     project_id: uuid.UUID
     project_name: str
     hub: HubName
+    #: The STORED priority; see `priority_applicable` (ADR 0067).
     set_priority: ProjectPriority | None
+    priority_applicable: bool = True
     has_score: bool
     weighted_score: float | None
     normalized_pct: int | None

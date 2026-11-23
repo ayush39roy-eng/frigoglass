@@ -12,10 +12,10 @@
 
 import { apiGet, apiSend, ApiError, type ApiRequestOptions } from '@/lib/api/client';
 import { hasHubSelection, toHubFilterParams, type HubSelection } from '@/stores/hub-filter';
+import type { PriorityFilterValue } from '@/lib/priority-applicability';
 import type {
   LabRegion,
   ProjectCategory,
-  ProjectPriority,
   ProjectStatus,
   ProjectType,
 } from '@/types/enums';
@@ -51,7 +51,7 @@ export interface GanttQueryParams {
   /** Step codes, e.g. `PDD-E`. */
   currentStep?: readonly string[] | undefined;
   /** The P1–P4 / Queue toggles. `Q` is the queue band. */
-  priority?: readonly ProjectPriority[] | undefined;
+  priority?: readonly PriorityFilterValue[] | undefined;
   sort?: GanttSort | undefined;
   /** P32-R04: one project only (`project_id`), ANDed with the RBAC scope. */
   projectId?: string | undefined;

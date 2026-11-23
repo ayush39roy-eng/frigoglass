@@ -152,6 +152,13 @@ NON_SCHEDULABLE_STATUSES: frozenset[ProjectStatus] = frozenset(
 )
 
 
+#: ADR 0067 (P57): statuses whose priority is "Not applicable" (read-time
+#: rule; the stored priority is kept). `services.priority_applicability` is
+#: the helper every grouping / count / filter uses.
+PRIORITY_NOT_APPLICABLE_STATUSES: frozenset[ProjectStatus] = frozenset(
+    {ProjectStatus.COMMERCIALIZED, ProjectStatus.CANCELLED}
+)
+
 class ProjectType(str, enum.Enum):
     """Not enumerated in docs/DOMAIN_RULES.md. Sourced from
     `reference/rpd-platform-prototype.html` (`Um={NM:"New Model",CO:"Cost

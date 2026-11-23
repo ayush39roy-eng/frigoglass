@@ -12,6 +12,7 @@ import { useMultiSearchParam } from '@/lib/multi-select-filter';
 import { planYearLabels, usePlanYear, usePlanYearWindow, yearEndText } from '@/lib/plan-clock';
 import { formatInteger, formatWeek } from '@/lib/format';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
+import { NOT_APPLICABLE_SHORT_LABEL, rowPriorityNotApplicable } from '@/lib/priority-applicability';
 import { cn } from '@/lib/utils';
 
 import type { CompletingWithinYear, CompletingWithinYearRow } from '../api/types';
@@ -543,7 +544,7 @@ export function CompletionProfileCard({ data }: CompletionProfileCardProps): Rea
                         <span className="block truncate text-2xs text-text-muted">
                           {row.hub}
                           {row.type !== null ? ` · ${typeCode(row.type)}` : ''}
-                          {row.priority !== null ? ` · ${row.priority}` : ''}
+                          {rowPriorityNotApplicable(row) ? ` · ${NOT_APPLICABLE_SHORT_LABEL}` : row.priority !== null ? ` · ${row.priority}` : ''}
                         </span>
                       </span>
                       <span

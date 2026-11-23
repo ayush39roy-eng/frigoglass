@@ -88,7 +88,13 @@ export function WorkspaceHeader({
             {p.category ? <Badge tone="outline">{p.category}</Badge> : null}
             {p.type ? <Badge tone="neutral">{PROJECT_TYPE_LABELS[p.type]}</Badge> : null}
             {/* P11 (ADR 0015): a dropdown with Registration write, else the read-only pill. */}
-            <PriorityMoveControl projectId={p.id} projectName={p.name} priority={p.priority} status={p.status} />
+            <PriorityMoveControl
+              projectId={p.id}
+              projectName={p.name}
+              priority={p.priority}
+              status={p.status}
+              priorityApplicable={p.priority_applicable}
+            />
             <span aria-hidden="true">·</span>
             {p.leader_engineer_id === null ? (
               // P24-T02: "No leader", plus the Left Out hint from the served `schedule.left_out`.

@@ -12,7 +12,12 @@ export const P13_GANTT_ROW_DEFAULTS: Pick<
   | 'total_weeks'
   | 'pin_lapsed'
   | 'manual_overlap'
+  | 'status'
+  | 'priority_applicable'
 > = {
+  // P57 (ADR 0067): served on every Gantt row.
+  status: 'In Development',
+  priority_applicable: true,
   external_code: null,
   type: null,
   leader_name: null,

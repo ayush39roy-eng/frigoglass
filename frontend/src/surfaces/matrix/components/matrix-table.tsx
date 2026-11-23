@@ -4,7 +4,7 @@ import { FolderKanban, History, Layers, Star, Tag, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { ProjectPriorityPill } from '@/components/shared/priority-band-pill';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { CategoryTag } from '@/components/ui/category-tag';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
@@ -495,12 +495,15 @@ export const MatrixTable = React.memo(function MatrixTable({
           width: 92,
           align: 'center',
           box: INFO_BOX,
-          cell: (row) =>
-            row.set_priority ? (
-              <PriorityBandPill priority={row.set_priority} />
-            ) : (
-              <span className="text-text-subtle">–</span>
-            ),
+          // P57 (ADR 0067): Commercialized / Cancelled read "N/A".
+          cell: (row) => (
+            <ProjectPriorityPill
+              status={row.status} priorityApplicable={row.priority_applicable}
+              priority={row.set_priority}
+              short
+              fallback={<span className="text-text-subtle">–</span>}
+            />
+          ),
         },
       );
     }

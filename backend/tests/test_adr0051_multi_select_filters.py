@@ -340,14 +340,23 @@ async def test_multi_status_leader_priority_step(db_session):
         assert _ids(both) == {
             r["project_id"]
             for r in rows
-            if r["status"] in statuses and r["priority"] in priorities
+            # P57 (ADR 0067): the filter matches the effective priority.
+            if r["status"] in statuses
+            and r["priority_applicable"]
+            and r["priority"] in priorities
         }
         # Gantt keeps the Queue bucket: Q in a list also selects no priority.
         gantt = await _get(client, "/gantt", limit=500)
         queue = {
-            r["project_id"] for r in gantt["rows"] if r["priority"] in (None, "Q")
+            r["project_id"]
+            for r in gantt["rows"]
+            if r["priority_applicable"] and r["priority"] in (None, "Q")
         }
-        p1 = {r["project_id"] for r in gantt["rows"] if r["priority"] == "P1"}
+        p1 = {
+            r["project_id"]
+            for r in gantt["rows"]
+            if r["priority_applicable"] and r["priority"] == "P1"
+        }
         assert _ids(await _get(client, "/gantt", priority=["P1", "Q"], limit=500)) == queue | p1
         # Priority board and Matrix take status lists too.
         board = await _get(client, "/priority-board", status_=statuses)

@@ -303,6 +303,8 @@ export interface PriorityLoadSplit {
   P3: number;
   P4: number;
   Queue: number;
+  /** P57 (ADR 0067): Commercialized / Cancelled (served label "Not applicable"). */
+  NA: number;
 }
 
 /** P13-T11: project counts per priority bucket (same keys as `PriorityLoadSplit`). */
@@ -312,6 +314,8 @@ export interface PriorityCountSplit {
   P3: number;
   P4: number;
   Queue: number;
+  /** P57 (ADR 0067): Commercialized / Cancelled (served label "Not applicable"). */
+  NA: number;
 }
 
 /** P13-T11: one hub's deliverable / left-out counts within a category (backend

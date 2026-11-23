@@ -223,7 +223,8 @@ async def test_board_shape_order_counts_and_live_facts(db_session):
     [proj] = super8["projects"]
     assert proj == {
         "id": str(p["s8"].id), "name": "S8 for Kazakhstan", "hub": "OEM-Seitek",
-        "priority": "P1", "status": "In Development", "projected_end_week": 40,
+        "priority": "P1", "priority_applicable": True, "status": "In Development",
+        "projected_end_week": 40,
         "within_year": True, "health": "on_track",
         # P42 (ADR 0056, API_CONTRACT_P42 §6): label and stored flags.
         "priority_label": "Must do this year", "counts_toward_year": True,

@@ -4,7 +4,7 @@ import { validateFormatDraft, withAlias, normaliseAlias, draftBody, draftOf } fr
 import { buildSimulateRequest, editsForRequest } from './import-rows';
 import { importSimulateResponseSchema, savedScenarioSchema } from './import-schema';
 import type { ImportFormat, SavedScenarioSummary } from './import-types';
-import { filterPicks, initialTicks, NO_PICK_FILTERS, pickItems, picksToRequest } from './project-picks';
+import { filterPicks, initialTicks, NO_PICK_FILTERS, pickItems, picksToRequest, pickValues } from './project-picks';
 import { exportableIds, mixedClock, mixedSources } from './scenario-compare';
 import { groupBySource, savedBannerTitle } from './saved-scenarios';
 import { ROWS, SIMULATE_RESPONSE } from './test-fixtures';
@@ -72,6 +72,30 @@ describe('hand-picked scenario request', () => {
     expect(out.excludedPlanIds).toEqual(['plan-2']);
     expect(filterPicks(items, { ...NO_PICK_FILTERS, source: 'plan' }).map((it) => it.ref)).toEqual(['plan-1', 'plan-2']);
     expect(filterPicks(items, { ...NO_PICK_FILTERS, query: 'freezer' }).map((it) => it.ref)).toEqual(['row-6']);
+  });
+});
+
+describe('P57 (ADR 0067): the picker priority filter uses the effective priority', () => {
+  it('a Commercialized / Cancelled project reads "Not applicable" and never matches a P4 pick', () => {
+    const rows = ROWS.map((r, i) => (i === 0 ? { ...r, status: 'Commercialized', priority: 'P4' as const, include: false } : r));
+    const plan = [
+      ...PLAN_PROJECTS,
+      { id: 'plan-3', name: 'Retired Cooler', hub: 'PD-India', category: 'B', priority: 'P4', status: 'Cancelled' },
+      { id: 'plan-4', name: 'Live P4 Cooler', hub: 'PD-India', category: 'B', priority: 'P4', status: 'In Queue' },
+    ];
+    const items = pickItems(rows, plan, 'merge');
+    const byRef = new Map(items.map((it) => [it.ref, it]));
+    expect(byRef.get(rows[0]!.key)?.priority).toBe('Not applicable');
+    expect(byRef.get('plan-3')?.priority).toBe('Not applicable');
+    expect(byRef.get('plan-4')?.priority).toBe('P4');
+    const p4 = filterPicks(items, { ...NO_PICK_FILTERS, priority: 'P4' }).map((it) => it.ref);
+    expect(p4).toContain('plan-4');
+    expect(p4).not.toContain('plan-3');
+    expect(p4).not.toContain(rows[0]!.key);
+    expect(filterPicks(items, { ...NO_PICK_FILTERS, priority: 'Not applicable' }).map((it) => it.ref).sort()).toEqual(
+      [rows[0]!.key, 'plan-3'].sort(),
+    );
+    expect(pickValues(items, 'priority')).toContain('Not applicable');
   });
 });
 

@@ -36,6 +36,7 @@ from models.workspace import ProjectComment, ProjectFile
 from scheduling.workflow import derive_remaining
 from services.active_run import get_active_run
 from services.display_labels import agent_health_label, stage_status_label
+from services.priority_applicability import effective_priority_display
 from services.progress import project_progress_pct
 from services.workflow_durations import display_duration_weeks
 from services.workspace import (
@@ -255,7 +256,8 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
             "category": project.category,
             "type": project.type.value if project.type else None,
             "status": project.status.value,
-            "priority": project.priority.value if project.priority else None,
+            # ADR 0067: "Not applicable" for a Commercialized / Cancelled project.
+            "priority": effective_priority_display(project.status, project.priority) or None,
             "frozen": project.frozen,
             "actual_start_week": project.actual_start_week,
             "target_end_week": project.target_end_week,

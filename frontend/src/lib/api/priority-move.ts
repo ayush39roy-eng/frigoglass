@@ -245,6 +245,8 @@ export function moveProjectBandRank(
 // PLACEHOLDER (P11 contract §3)
 export interface ScheduleRunChangeRow {
   project_id: Id;
+  /** P57 (ADR 0067): false for a Commercialized / Cancelled project (priority "Not applicable"). */
+  priority_applicable: boolean;
   project_name: string;
   hub: HubName;
   /** The project's live priority now. */

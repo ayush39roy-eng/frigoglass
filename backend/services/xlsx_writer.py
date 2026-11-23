@@ -52,6 +52,11 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.properties import Outline, PageSetupProperties
 
 from scheduling.weeks import PLAN_YEAR_WEEKS, week_of_year, year_end, year_of
+from services.priority_applicability import (
+    PRIORITY_NOT_APPLICABLE_LABEL,
+    effective_priority,
+    priority_applicable,
+)
 from services.week_labels import week_label
 
 # --------------------------------------------------------------------------
@@ -128,6 +133,7 @@ HEADER_LABELS: Final[Mapping[str, str]] = {
     "type": "Type",
     "priority": "Priority",
     "priority_label": "Priority meaning",
+    "priority_applicable": "Priority applicable",
     "status": "Status",
     "leader_name": "Leader",
     "leader_engineer_id": "Leader ID",
@@ -986,10 +992,19 @@ class _WeekStyler:
         return out
 
 
-def _priority_text(priority: str | None, label: str | None) -> str:
+def _priority_text(priority: str | None, label: str | None, status: str | None = None) -> str:
+    # ADR 0067: a Commercialized / Cancelled project's priority is "Not applicable".
+    if not priority_applicable(status):
+        return PRIORITY_NOT_APPLICABLE_LABEL
     if not priority:
         return ""
     return f"{priority} · {label}" if label else priority
+
+
+def _bar_priority(p: GanttProjectBar) -> str | None:
+    """ADR 0067: the bar's effective band (None for Commercialized / Cancelled)."""
+
+    return effective_priority(p.status, p.priority)
 
 
 def _write_chart(wb: Workbook, name: str, chart: GanttChart, generated: str) -> None:
@@ -1101,7 +1116,12 @@ def _project_line(
     line: list[Any] = [
         _text(ws, _project_name(p), font=_BOLD, fill=project_fill),
         _text(ws, p.hub, font=_BOLD, fill=project_fill),
-        _text(ws, _priority_text(p.priority, p.priority_label), font=_BOLD, fill=project_fill),
+        _text(
+            ws,
+            _priority_text(p.priority, p.priority_label, p.status),
+            font=_BOLD,
+            fill=project_fill,
+        ),
         _text(ws, p.leader or "", font=_BODY, fill=project_fill),
         _cell(ws, start, font=_BOLD, fill=project_fill, number_format=_week_format(start)),
         _cell(ws, end, font=_BOLD, fill=project_fill, number_format=_week_format(end)),
@@ -1129,7 +1149,11 @@ def _step_line(ws: Any, p: GanttProjectBar, st: GanttStepBar, styler: _WeekStyle
     row: list[Any] = [
         _text(ws, label, font=_BODY, alignment=_LEFT_INDENT),
         _text(ws, p.hub, font=_MUTED),
-        _text(ws, p.priority or "", font=_MUTED),
+        _text(
+            ws,
+            (p.priority or "") if priority_applicable(p.status) else PRIORITY_NOT_APPLICABLE_LABEL,
+            font=_MUTED,
+        ),
         _text(ws, st.resource or "", font=_BODY),
         _cell(
             ws,
@@ -1176,7 +1200,7 @@ _PRIORITY_ORDER: Final[Mapping[str, int]] = {"P1": 0, "P2": 1, "P3": 2, "P4": 3,
 def chart_section(p: GanttProjectBar) -> str:
     if p.status == "Commercialized":
         return "delivered"
-    if p.outcome == "queued" and p.frozen and p.priority in ("P4", "Q"):
+    if p.outcome == "queued" and p.frozen and _bar_priority(p) in ("P4", "Q"):
         return "locked"
     if p.outcome in ("queued", "not_scheduled_priority", "excluded"):
         return str(p.outcome)
@@ -1188,7 +1212,7 @@ def chart_order_key(p: GanttProjectBar) -> tuple[int, int, str]:
     name: the scheduler's band walk, for reading."""
 
     return (
-        _PRIORITY_ORDER.get(p.priority or "", 5),
+        _PRIORITY_ORDER.get(_bar_priority(p) or "", 5),
         p.rank if p.rank is not None else 1_000_000,
         p.name.casefold(),
     )

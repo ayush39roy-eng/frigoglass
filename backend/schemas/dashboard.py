@@ -100,7 +100,10 @@ class CompletingWithinYearRow(BaseModel):
     project_name: str
     hub: HubName
     category: CategoryCodeOut | None
+    #: ADR 0067: the EFFECTIVE band (null for Commercialized / Cancelled).
     priority: ProjectPriority | None
+    #: ADR 0067: false for a Commercialized / Cancelled project ("Not applicable").
+    priority_applicable: bool = True
     #: P13-T10 (docs/API_CONTRACT_P13.md §5): the project's type; null when
     #: unmapped.
     type: ProjectType | None
@@ -127,12 +130,14 @@ class CompletingWithinYearRow(BaseModel):
     #: R42-6 exclusive bucket of this row (the counts above partition by it);
     #: null for a status-excluded On Hold / Cancelled / Draft or data-error row.
     outcome: ScheduleOutcome | None
-    #: R42-1 band label; null when the project has no band.
+    #: R42-1 band label; null when the project has no band. ADR 0067:
+    #: "Not applicable" for a Commercialized / Cancelled project.
     priority_label: str | None
     #: The stored `projected_end_week` (end + delay); null when unscheduled.
     projected_end_week: int | None
     # --- P53 (ADR 0063, docs/API_CONTRACT_P53.md §4.2) ----------------------
-    #: The band in the run input; null on every pre-P53 row.
+    #: The band in the run input; null on every pre-P53 row. ADR 0067: null
+    #: for a Commercialized / Cancelled project (counted under Other).
     priority_at_run: str | None = None
     #: The delivery-table year this row is counted in (null when not listed
     #: by year).
@@ -291,7 +296,11 @@ class ProjectFilterRow(BaseModel):
     hub: HubName
     category: CategoryCodeOut | None
     status: ProjectStatus
+    #: The STORED priority (kept for round-trips); see `priority_applicable`.
     priority: ProjectPriority | None
+    #: ADR 0067: false for a Commercialized / Cancelled project; the UI shows
+    #: "Not applicable" and the stored `priority` is not a band for it.
+    priority_applicable: bool = True
     #: P12 (docs/API_CONTRACT_P12.md §5/§6): pinned as VIP (ADR 0022).
     is_vip: bool
     #: P12 (ADR 0021 §4), from `services.tracking.tracking_status_for`.
@@ -318,7 +327,8 @@ class ProjectFilterRow(BaseModel):
     #: `/dashboard/completing-within-year` (P42: NOT_SCHEDULED_PRIORITY >
     #: QUEUED > BLOCKED > ...); null if none.
     outcome: ScheduleOutcome | None
-    #: P42 (R42-1): the band's label; null with no band.
+    #: P42 (R42-1): the band's label; null with no band. ADR 0067:
+    #: "Not applicable" for a Commercialized / Cancelled project.
     priority_label: str | None
     #: P42 (R42-4): the active run's stored flags; null with no outcome row.
     counts_toward_year: bool | None

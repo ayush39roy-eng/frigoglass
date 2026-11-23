@@ -14,6 +14,7 @@ vi.mock('../hooks/use-registration', () => ({
 import { HardGatePanel } from './hard-gate-panel';
 
 const project: ProjectRead = {
+  priority_applicable: true,
   id: 'p1',
   name: 'Cooler A',
   external_code: null,

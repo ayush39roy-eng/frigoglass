@@ -1,5 +1,12 @@
 import * as React from 'react';
 
+import {
+  effectivePriority,
+  isPriorityNotApplicable,
+  NOT_APPLICABLE_LABEL,
+  NOT_APPLICABLE_SHORT_LABEL,
+  NOT_APPLICABLE_TOOLTIP,
+} from '@/lib/priority-applicability';
 import { cn } from '@/lib/utils';
 import type { ProjectPriority } from '@/types/enums';
 
@@ -43,4 +50,65 @@ export function PriorityBandPill({
       {iconOnly ? <span className="sr-only">{PRIORITY_BAND_TITLE[priority]}</span> : style.label}
     </span>
   );
+}
+
+export interface NotApplicablePriorityPillProps extends React.HTMLAttributes<HTMLSpanElement> {
+  /** "N/A" instead of "Not applicable" (tight cells). The full label stays the accessible name. */
+  short?: boolean;
+}
+
+/**
+ * P57 (ADR 0067): the neutral pill of a Commercialized / Cancelled project —
+ * no band colour, never a P1–P4 / Q label. The stored priority is not shown.
+ */
+export function NotApplicablePriorityPill({
+  short = false,
+  className,
+  ...props
+}: NotApplicablePriorityPillProps): React.JSX.Element {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-sm bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold leading-none text-text-muted ring-1 ring-inset ring-border',
+        className,
+      )}
+      title={NOT_APPLICABLE_TOOLTIP}
+      data-testid="priority-not-applicable"
+      {...props}
+    >
+      {short ? NOT_APPLICABLE_SHORT_LABEL : NOT_APPLICABLE_LABEL}
+    </span>
+  );
+}
+
+export interface ProjectPriorityPillProps {
+  /** The served project status (Commercialized / Cancelled → "Not applicable"). */
+  status: string | null | undefined;
+  priority: ProjectPriority | null | undefined;
+  /** P57-T02: served `priority_applicable`, when the payload carries it (wins over `status`). */
+  priorityApplicable?: boolean | null | undefined;
+  /** Rendered when the project is applicable but has no priority (default: nothing). */
+  fallback?: React.ReactNode;
+  short?: boolean;
+  className?: string;
+}
+
+/**
+ * P57 (ADR 0067): a project's priority as displayed everywhere — the band pill,
+ * or the neutral "Not applicable" pill for Commercialized / Cancelled.
+ */
+export function ProjectPriorityPill({
+  status,
+  priority,
+  priorityApplicable,
+  fallback = null,
+  short = false,
+  className,
+}: ProjectPriorityPillProps): React.JSX.Element | null {
+  if (isPriorityNotApplicable(status, priorityApplicable)) {
+    return <NotApplicablePriorityPill short={short} className={className} />;
+  }
+  const effective = effectivePriority(status, priority, priorityApplicable);
+  if (effective) return <PriorityBandPill priority={effective} className={className} />;
+  return <>{fallback}</>;
 }

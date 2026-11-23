@@ -98,6 +98,7 @@ const ROW: ProjectFilterRow = {
 } as ProjectFilterRow;
 
 const PROJECT: ProjectRead = {
+  priority_applicable: true,
   id: P1,
   name: 'Cooler A',
   external_code: null,

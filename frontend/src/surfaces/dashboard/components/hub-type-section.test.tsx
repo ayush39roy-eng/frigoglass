@@ -62,6 +62,7 @@ const completes = (p: P) => p.inRun !== false && p.within && !p.blocked;
 
 function registerRow(p: P): ProjectFilterRow {
   return {
+    priority_applicable: true,
     project_id: p.id,
     project_name: `Project ${p.id}`,
     hub: p.hub,
@@ -103,6 +104,7 @@ function registerRow(p: P): ProjectFilterRow {
 
 function runRow(p: P): CompletingWithinYearRow {
   return servedRow({
+    priority_applicable: true,
     project_id: p.id,
     project_name: `Project ${p.id}`,
     hub: p.hub,

@@ -85,6 +85,7 @@ const withinYear: CompletingWithinYear = servedCompleting({
   ],
   rows: [
     {
+      priority_applicable: true,
       project_id: 'p-b1',
       project_name: 'Blocked Cooler',
       hub: 'PD-India',
@@ -101,6 +102,7 @@ const withinYear: CompletingWithinYear = servedCompleting({
       not_started: false,
     },
     {
+      priority_applicable: true,
       project_id: 'p-w1',
       project_name: 'Landing Cooler',
       hub: 'PD-India',

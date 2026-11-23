@@ -71,6 +71,8 @@ export function GanttProjectDetailsDialog({
                   projectId={project.project_id}
                   projectName={project.project_name}
                   priority={project.priority}
+                  status={project.status}
+                  priorityApplicable={project.priority_applicable}
                 />
               </div>
             </div>

@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { priorityDisplayText } from '@/lib/priority-applicability';
 import { compileSearch, type SearchMatcher } from '@/lib/project-search';
 import { cn } from '@/lib/utils';
 
@@ -165,7 +166,8 @@ const ROW_COLUMNS: ColumnDef<DrillRow>[] = [
   { id: 'hub', header: 'Hub', accessorFn: (d) => d.row.hub },
   { id: 'category', header: 'Category', accessorFn: (d) => d.row.category },
   { id: 'status', header: 'Status', accessorFn: (d) => d.row.status },
-  { id: 'priority', header: 'Priority', accessorFn: (d) => d.row.priority },
+  // P57 (ADR 0067): Commercialized / Cancelled read "Not applicable".
+  { id: 'priority', header: 'Priority', accessorFn: (d) => priorityDisplayText(d.row.status, d.row.priority) },
   {
     id: 'engineer',
     header: 'Engineer',
@@ -193,12 +195,12 @@ const ROW_COLUMNS: ColumnDef<DrillRow>[] = [
 
 // P51-T02: the shared project search (`*` / `?` wildcards, everything else literal).
 function matchesProject(p: ImportResultProject, search: SearchMatcher): boolean {
-  return search(p.name, p.hub, p.category, p.priority, p.status, p.leader_name);
+  return search(p.name, p.hub, p.category, priorityDisplayText(p.status, p.priority), p.status, p.leader_name);
 }
 
 function matchesRow(d: DrillRow, search: SearchMatcher): boolean {
   const r = d.row;
-  return search(r.name, r.hub, r.category, r.status, r.priority, engineerOf(r), String(r.file_row));
+  return search(r.name, r.hub, r.category, r.status, priorityDisplayText(r.status, r.priority), engineerOf(r), String(r.file_row));
 }
 
 function unitOf(d: Drill, n: number): string {

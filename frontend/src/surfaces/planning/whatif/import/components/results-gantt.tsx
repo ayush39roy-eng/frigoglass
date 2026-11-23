@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import { MultiSelectDropdown } from '@/components/shared/multi-select-dropdown';
+import { priorityDisplayText } from '@/lib/priority-applicability';
 import { compileSearch } from '@/lib/project-search';
 import { cn } from '@/lib/utils';
 import { barGeometry, weekEndToX, weekToX, type WeekScale } from '@/surfaces/gantt/lib/gantt-coordinates';
@@ -546,7 +547,7 @@ function ProjectLeft({
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-semibold text-text">{p.name}</span>
         <span className="flex min-w-0 items-center gap-1 text-2xs text-text-muted">
-          <span className="truncate">{`${p.hub} · ${p.priority} · ${p.leader_name ?? 'no leader'}`}</span>
+          <span className="truncate">{`${p.hub} · ${priorityDisplayText(p.status, p.priority, '—')} · ${p.leader_name ?? 'no leader'}`}</span>
           {p.source === 'file' ? <Badge tone="primary">file</Badge> : null}
           <Badge tone={OUTCOME_TONE[p.outcome]}>{OUTCOME_LABEL[p.outcome]}</Badge>
           <span className="sr-only">{`Finish ${weekOrDash(p.finish_week, base)}`}</span>

@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from models.enums import (
     HubName,
     ProjectPriority,
+    ProjectStatus,
     ProjectType,
     WorkflowStepKind,
     WorkflowStepStatus,
@@ -142,7 +143,13 @@ class GanttProjectRow(BaseModel):
     project_name: str
     hub: HubName
     category: CategoryCodeOut | None
+    #: The STORED priority; see `priority_applicable` (ADR 0067).
     priority: ProjectPriority | None
+    #: ADR 0067: false for a Commercialized / Cancelled project (shown "Not
+    #: applicable", never under a band).
+    priority_applicable: bool = True
+    #: P57: the project's live status (non-sensitive), served with the flag.
+    status: ProjectStatus
     frozen: bool
     delay_weeks: int
     #: Project-level badges, from the active ScheduleRun's outcome snapshot.
@@ -185,7 +192,8 @@ class GanttProjectRow(BaseModel):
     lab_weeks: int | None
     total_weeks: int | None
     # --- P42 (ADR 0056 R42-1/R42-4/R42-6, docs/API_CONTRACT_P42.md §4) ---
-    #: The band's label; null with no band.
+    #: The band's label; null with no band. ADR 0067: "Not applicable" for
+    #: a Commercialized / Cancelled project.
     priority_label: str | None = None
     #: The active run's stored flags (no outcome row: true / false).
     counts_toward_year: bool = True

@@ -76,6 +76,7 @@ function ok(rows: ProjectFilterRow[]): UseQueryResult<ProjectFilterResult> {
 
 function row(id: string, overrides: Partial<ProjectFilterRow> = {}): ProjectFilterRow {
   return {
+    priority_applicable: true,
     project_id: id,
     project_name: `Project ${id}`,
     hub: 'R&D-Greece',

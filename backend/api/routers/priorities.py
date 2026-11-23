@@ -95,6 +95,7 @@ from services.hub_scope import (
     narrowed_hub_filter,
 )
 from services.plan_clock import PlanClock, get_plan_clock
+from services.priority_applicability import effective_priority, priority_applicable
 from services.priority_capacity_fill import CapacityFill, RowFill, compute_capacity_fill
 from services.priority_scoring import (
     Rubric,
@@ -167,6 +168,7 @@ def _build_row(
         category=project.category,
         type=project.type,
         set_priority=project.priority,
+        priority_applicable=priority_applicable(project.status),
         status=project.status,
         leader_name=leader_name_if_self(project, current_user),
         leader_engineer_id=project.leader_engineer_id,
@@ -376,7 +378,13 @@ async def priority_portfolio_summary(
         f.suggested_band.value for f in row_fills if f.suggested_band is not None
     )
     score_band_counts = Counter(f.score_band.value for f in row_fills if f.score_band is not None)
-    set_priority_counts = Counter(p.priority.value for p in projects if p.priority is not None)
+    # ADR 0067: counted by effective priority; N/A projects counted apart.
+    set_priority_counts = Counter(
+        eff.value
+        for p in projects
+        if (eff := effective_priority(p.status, p.priority)) is not None
+    )
+    not_applicable = sum(1 for p in projects if not priority_applicable(p.status))
     hard_gate_forced = sum(1 for p in scored if p.priority_score.hard_gates)
 
     return PriorityPortfolioSummary(
@@ -388,6 +396,7 @@ async def priority_portfolio_summary(
         score_band_counts=dict(score_band_counts),
         capacity_fill_count=sum(1 for f in row_fills if f.capacity_fill),
         set_priority_counts=dict(set_priority_counts),
+        priority_not_applicable_count=not_applicable,
     )
 
 
@@ -574,6 +583,7 @@ async def compare_priorities(
                 project_name=p.name,
                 hub=p.hub.name,
                 set_priority=p.priority,
+                priority_applicable=priority_applicable(p.status),
                 has_score=is_scored(score),
                 weighted_score=(
                     float(score.weighted_score)

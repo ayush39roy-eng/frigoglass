@@ -15,9 +15,13 @@ import { MultiSelectDropdown } from '@/components/shared/multi-select-dropdown';
 import { HubFilterSelect } from '@/components/shared/hub-filter/hub-filter-select';
 import { TYPE_CHIP_OPTIONS, useCategoryChipOptions } from '@/lib/multi-select-filter';
 import {
+  NOT_APPLICABLE_FILTER_VALUE,
+  NOT_APPLICABLE_LABEL,
+  type PriorityFilterValue,
+} from '@/lib/priority-applicability';
+import {
   UI_PROJECT_STATUSES,
   type ProjectCategory,
-  type ProjectPriority,
   type ProjectStatus,
   type ProjectType,
 } from '@/types/enums';
@@ -47,12 +51,14 @@ const SORT_LABELS: Record<GanttSort, string> = {
   end: 'End week',
 };
 
-const PRIORITY_OPTIONS: { value: ProjectPriority; label: string }[] = [
+const PRIORITY_OPTIONS: { value: PriorityFilterValue; label: string }[] = [
   { value: 'P1', label: 'P1' },
   { value: 'P2', label: 'P2' },
   { value: 'P3', label: 'P3' },
   { value: 'P4', label: 'P4' },
   { value: 'Q', label: priorityBandName('Q') },
+  // P57 (ADR 0067): Commercialized / Cancelled, served by `priority=not_applicable`.
+  { value: NOT_APPLICABLE_FILTER_VALUE, label: NOT_APPLICABLE_LABEL },
 ];
 
 const STATUS_OPTIONS = UI_PROJECT_STATUSES.map((s) => ({ value: s, label: s }));
@@ -186,7 +192,7 @@ export function GanttFilterBar({
           />
         </>
       ) : null}
-      <MultiSelectDropdown<ProjectPriority>
+      <MultiSelectDropdown<PriorityFilterValue>
         label="Priority"
         hideLabel
         emptySummary="Priority"
@@ -194,7 +200,7 @@ export function GanttFilterBar({
         value={filters.priority}
         onChange={(v) => set('priority', v)}
         options={PRIORITY_OPTIONS}
-        summarize={(sel) => sel.map((o) => o.value).join(', ')}
+        summarize={(sel) => sel.map((o) => (o.value === NOT_APPLICABLE_FILTER_VALUE ? 'N/A' : o.value)).join(', ')}
         triggerClassName={TRIGGER}
         data-testid="gantt-priority-filter"
       />

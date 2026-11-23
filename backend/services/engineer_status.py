@@ -72,6 +72,7 @@ from services.engineer_supply import (
 )
 from services.hub_scope import is_hub_in_scope
 from services.plan_clock import PlanClock
+from services.priority_applicability import effective_priority
 from services.run_step_effort import effort_from, weekly_effort_for_rows
 
 #: A project the engineer leads in one of these statuses is not "open": it
@@ -499,7 +500,12 @@ async def open_project_rows(
                 name=p.name,
                 hub=cmap.name(p.hub_id).value,
                 status=p.status.value,
-                priority=p.priority.value if p.priority is not None else None,
+                # ADR 0067: display-only, the effective band.
+                priority=(
+                    eff.value
+                    if (eff := effective_priority(p.status, p.priority)) is not None
+                    else None
+                ),
                 category=p.category,
                 schedulable=p.status not in NON_SCHEDULABLE_STATUSES,
                 frozen=p.frozen,

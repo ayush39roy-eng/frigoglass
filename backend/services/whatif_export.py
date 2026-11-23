@@ -31,7 +31,12 @@ from scheduling.weeks import WEEK_BASE_YEAR
 from scheduling.whatif import AppliedScenario, apply_scenario, classify_outcome
 from schemas.whatif import SimulateExportIn, SimulateResponse
 from services.export_builder import xlsx_bytes
-from services.outcome_buckets import outcome_label, priority_label
+from services.outcome_buckets import outcome_label
+from services.priority_applicability import (
+    effective_priority,
+    effective_priority_display,
+    served_priority_label,
+)
 from services.week_labels import week_label
 from services.whatif import (
     WHATIF_TIME_CAP_SECONDS,
@@ -132,8 +137,9 @@ def planner_book(
             "project_name": p.name,
             "hub": p.hub,
             "category": p.category,
-            "priority": p.priority,
-            "priority_label": priority_label(p.priority),
+            # ADR 0067: "Not applicable" for a Commercialized / Cancelled project.
+            "priority": effective_priority_display(p.status, p.priority) or None,
+            "priority_label": served_priority_label(p.status, p.priority),
             "is_new": p.project_id in new_ids,
             "frozen": p.frozen,
             "outcome": key,
@@ -184,8 +190,8 @@ def planner_book(
             GanttProjectBar(
                 name=p.name + (" (new)" if p.project_id in new_ids else ""),
                 hub=p.hub,
-                priority=p.priority,
-                priority_label=priority_label(p.priority),
+                priority=effective_priority(p.status, p.priority),
+                priority_label=served_priority_label(p.status, p.priority),
                 leader=None,
                 outcome=key,
                 outcome_text=text,

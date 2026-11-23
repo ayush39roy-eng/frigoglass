@@ -10,7 +10,7 @@ import { CategoryTag } from '@/components/ui/category-tag';
 import { Checkbox } from '@/components/ui/checkbox';
 import { EntityCell } from '@/components/ui/table-cells';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
-import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { ProjectPriorityPill } from '@/components/shared/priority-band-pill';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { usePriorityMoveHost } from '@/components/shared/priority-move/priority-move-context';
 import { CharterCell } from '@/components/shared/charter-fields';
@@ -20,6 +20,7 @@ import { VipToggle } from '@/components/shared/vip-toggle';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
 import type { Hub } from '@/lib/api/reference';
 import { formatInteger } from '@/lib/format';
+import { rowPriorityNotApplicable } from '@/lib/priority-applicability';
 import { queryKeys } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
@@ -874,9 +875,10 @@ export function ProjectsTable({
               </span>
             );
           }
-          return row.priority || row.priority_rank ? (
+          // P57 (ADR 0067): Commercialized / Cancelled read "Not applicable".
+          return row.priority || row.priority_rank || rowPriorityNotApplicable(row) ? (
             <span className="inline-flex items-center gap-1">
-              {row.priority ? <PriorityBandPill priority={row.priority} /> : null}
+              <ProjectPriorityPill status={row.status} priorityApplicable={row.priority_applicable} priority={row.priority} short />
               {rank}
             </span>
           ) : (
@@ -894,7 +896,8 @@ export function ProjectsTable({
         sort: { state: rankSort, onToggle: () => setRankSort(nextRankSort) },
         cell: (row) => {
           const rank = row.band_rank ?? null;
-          if (row.priority === null || rank === null) return DASH;
+          // P57 (ADR 0067): no band, so no rank, for Commercialized / Cancelled.
+          if (row.priority === null || rank === null || rowPriorityNotApplicable(row)) return DASH;
           const canMove = canEdit && moveHost !== null && (edit === undefined || edit.isWritable(row));
           return (
             <span className="inline-flex items-center gap-1 text-xs font-semibold tabular-nums text-text" data-testid="rank-cell" data-numeric="">

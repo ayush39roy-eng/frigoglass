@@ -488,6 +488,8 @@ async def test_compare_returns_projects_in_order_without_financials(db_session):
         "project_name",
         "hub",
         "set_priority",
+        # P57 (ADR 0067).
+        "priority_applicable",
         "has_score",
         "weighted_score",
         "normalized_pct",

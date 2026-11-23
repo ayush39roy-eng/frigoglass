@@ -72,6 +72,11 @@ from models.enums import (
 from scheduling.weeks import WEEK_BASE_YEAR
 from services import plan_clock
 from services.category_type_filter import UNMAPPED, as_list
+from services.priority_applicability import (
+    NOT_APPLICABLE_FILTER,
+    PRIORITY_NOT_APPLICABLE_LABEL,
+    PriorityFilterValue,
+)
 from services.xlsx_writer import (
     FORMULA_TRIGGERS,
     OUTCOME_STYLES,
@@ -145,8 +150,12 @@ def _statuses(value: _ListFilter) -> list[ProjectStatus]:
     return [ProjectStatus(v) for v in as_list(value)]
 
 
-def _priorities(value: _ListFilter) -> list[ProjectPriority]:
-    return [ProjectPriority(v) for v in as_list(value)]
+def _priorities(value: _ListFilter) -> list[PriorityFilterValue]:
+    # ADR 0067: `not_applicable` passes through (Commercialized / Cancelled).
+    return [
+        NOT_APPLICABLE_FILTER if v == NOT_APPLICABLE_FILTER else ProjectPriority(v)
+        for v in as_list(value)
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -223,7 +232,29 @@ def rows_from_models(
                     row[f"{h}_{k}"] = nested.get(k)
         else:
             headers.append(h)
+    _not_applicable_cells(rows)
     return headers, rows
+
+
+#: ADR 0067: the served priority columns that read "Not applicable" on a row
+#: whose `priority_applicable` is false (Commercialized / Cancelled).
+_PRIORITY_CELLS: tuple[str, ...] = ("priority", "set_priority", "priority_at_run")
+NA_PRIORITY = PRIORITY_NOT_APPLICABLE_LABEL
+
+
+def _bucket_word(bucket: str) -> str:
+    """A capacity split key as an export word (ADR 0067: `NA` reads
+    "Not applicable"; the band keys are unchanged)."""
+
+    return PRIORITY_NOT_APPLICABLE_LABEL if bucket == "NA" else bucket
+
+
+def _not_applicable_cells(rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        if row.get("priority_applicable") is False:
+            for key in _PRIORITY_CELLS:
+                if key in row:
+                    row[key] = NA_PRIORITY
 
 
 def csv_bytes(
@@ -526,7 +557,7 @@ async def build_capacity_sheets(db: AsyncSession, principal: Principal) -> Expor
     headers, rows = rows_from_models(result.rows, HubCapacityRow)
     # P43-R02 (QA G2): the per-priority load splits as words.
     labels = {
-        h: f"{m.group(1).capitalize()} load {m.group(2)} (weeks)"
+        h: f"{m.group(1).capitalize()} load {_bucket_word(m.group(2))} (weeks)"
         for h in headers
         if (m := re.match(r"^(design|lab)_load_by_priority_(\w+)$", h))
     }
@@ -535,7 +566,7 @@ async def build_capacity_sheets(db: AsyncSession, principal: Principal) -> Expor
     for h in headers:
         if m := re.match(r"^(design|lab)_(demand|remaining)_by_priority_(\w+)$", h):
             basis = "full-year demand" if m.group(2) == "demand" else "remaining demand"
-            labels[h] = f"{m.group(1).capitalize()} {basis} {m.group(3)} (weeks)"
+            labels[h] = f"{m.group(1).capitalize()} {basis} {_bucket_word(m.group(3))} (weeks)"
         elif m := re.match(r"^(design|lab)_need_(p1|p1_p2)_weeks$", h):
             which = "P1" if m.group(2) == "p1" else "P1 + P2"
             labels[h] = f"{m.group(1).capitalize()} still needed to finish {which} (weeks)"
@@ -652,7 +683,7 @@ async def build_matrix_sheets(
         SummaryBlock(
             title="Set priority",
             headers=["Priority", "Projects"],
-            rows=_tally(rows_models, "set_priority", _PRIORITIES),
+            rows=_tally(rows, "set_priority", _PRIORITIES),
         ),
     ]
     return SheetBook(
@@ -790,7 +821,12 @@ async def build_gantt_sheets(
             "project_name": project.project_name,
             "hub": project.hub.value if hasattr(project.hub, "value") else project.hub,
             "category": project.category,
-            "priority": project.priority.value if project.priority else None,
+            # ADR 0067: "Not applicable" for a Commercialized / Cancelled project.
+            "priority": (
+                (project.priority.value if project.priority else None)
+                if project.priority_applicable
+                else PRIORITY_NOT_APPLICABLE_LABEL
+            ),
             "leader_name": project.leader_name,
             "frozen": project.frozen,
             "delay_weeks": project.delay_weeks,
@@ -858,7 +894,14 @@ async def build_gantt_sheets(
         SummaryBlock(
             title="Projects by priority",
             headers=["Priority", "Projects"],
-            rows=_tally(project_rows, "priority", _PRIORITIES),
+            rows=_tally(
+                [
+                    {"priority": p.priority if p.priority_applicable else NA_PRIORITY}
+                    for p in project_rows
+                ],
+                "priority",
+                _PRIORITIES,
+            ),
         ),
         SummaryBlock(
             title="Steps",
@@ -968,7 +1011,10 @@ def gantt_chart_from_rows(
             GanttProjectBar(
                 name=p.project_name,
                 hub=p.hub.value if hasattr(p.hub, "value") else str(p.hub),
-                priority=p.priority.value if p.priority else None,
+                # ADR 0067: no band for a Commercialized / Cancelled project.
+                priority=(p.priority.value if p.priority else None)
+                if p.priority_applicable
+                else None,
                 priority_label=p.priority_label,
                 leader=p.leader_name,
                 outcome=key,
@@ -1013,7 +1059,7 @@ async def _fetch_all_projects(
     hub_id: list[uuid.UUID],
     category: list[str],
     status_: list[ProjectStatus],
-    priority: list[ProjectPriority],
+    priority: list[PriorityFilterValue],
     type_: list[ProjectType],
     q: str | None = None,
 ) -> list[ProjectListItem]:

@@ -21,6 +21,7 @@ import {
   type PriorityPreviewResponse,
   type RecalcStatus,
 } from '@/lib/api/priority-move';
+import { isPriorityNotApplicable } from '@/lib/priority-applicability';
 import { queryKeys } from '@/lib/query-keys';
 import { invalidateRunDerivedQueries, useScheduleRunFollow } from '@/lib/use-schedule-run-follow';
 import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
@@ -259,7 +260,8 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
 
   const requestMove = React.useCallback(
     (target: PriorityMoveTarget, next: ProjectPriority, options?: PriorityMoveRequestOptions) => {
-      if (next === target.priority || busyRef.current) {
+      // P57 (ADR 0067): no move for a Commercialized / Cancelled project.
+      if (next === target.priority || busyRef.current || isPriorityNotApplicable(target.status)) {
         options?.onSettled?.('cancelled');
         return;
       }
@@ -273,7 +275,7 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
   const requestRankMove = React.useCallback(
     (target: PriorityMoveTarget, placement: BandRankPlacement, options?: RankMoveRequestOptions) => {
       const band = target.priority;
-      if (band === null || busyRef.current) {
+      if (band === null || busyRef.current || isPriorityNotApplicable(target.status)) {
         options?.onSettled?.('cancelled');
         return;
       }

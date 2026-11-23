@@ -194,6 +194,8 @@ export interface EstimateResponse {
 
 export interface ProjectResultOut {
   project_id: string;
+  /** P57 (ADR 0067): false for a Commercialized / Cancelled project (priority "Not applicable"). */
+  priority_applicable: boolean;
   name: string;
   hub: string;
   category: string | null;

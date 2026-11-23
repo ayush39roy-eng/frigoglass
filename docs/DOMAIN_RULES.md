@@ -2066,3 +2066,12 @@ clock / closed year, ADR 0056 queued P3, ADR 0061 bounds, ADR 0024/0062 display)
   a project the tail cannot finish keeps its partial greedy rows (the greedy LEFT_OUT shape). Runs computed
   before P53 serve `left_out_reason = null`. What-if and plan import serve the same not-placed reasons as the
   live run (I58).
+
+## Priority not applicable (ADR 0067, 2026-11-22)
+
+- Effective priority = NULL ("Not applicable") when status is Commercialized or Cancelled; else the
+  stored priority. The stored value is kept, never cleared, and applies again if the status returns
+  to a schedulable one.
+- Every by-priority count, chart, column, filter, export and What-if result uses the effective
+  priority. Such projects never appear under P1/P2/P3/P4/Q; they go to "Not applicable" (or "Other"
+  where that row exists). Totals unchanged. Scheduler placement unchanged.

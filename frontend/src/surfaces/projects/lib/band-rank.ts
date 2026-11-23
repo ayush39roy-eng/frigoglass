@@ -1,3 +1,4 @@
+import { rowPriorityNotApplicable } from '@/lib/priority-applicability';
 import { PROJECT_PRIORITIES, type ProjectPriority } from '@/types/enums';
 
 /**
@@ -13,6 +14,9 @@ export type RankSort = 'none' | 'asc' | 'desc';
 export interface BandRanked {
   priority: ProjectPriority | null;
   band_rank?: number | null | undefined;
+  /** P57 (ADR 0067): a Commercialized / Cancelled row has no band, so it is unranked. */
+  status?: string | null | undefined;
+  priority_applicable?: boolean | null | undefined;
 }
 
 /** `P1 · 3`, or null when the row has no served rank (shown as "—"). */
@@ -24,7 +28,7 @@ export function formatBandRank(priority: ProjectPriority | null, rank: number | 
 const BAND_ORDER = new Map<ProjectPriority, number>(PROJECT_PRIORITIES.map((p, i) => [p, i]));
 
 function isRanked(row: BandRanked): row is BandRanked & { priority: ProjectPriority; band_rank: number } {
-  return row.priority !== null && typeof row.band_rank === 'number';
+  return row.priority !== null && typeof row.band_rank === 'number' && !rowPriorityNotApplicable(row);
 }
 
 /** Ascending: band (P1, P2, …), then served rank. Unranked rows last, in their given order. */
