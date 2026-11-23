@@ -141,7 +141,7 @@ export function withStatus(row: ImportRow, status: string): ImportRow {
 }
 
 /** Parse issue codes that mean the row has no usable engineer (highlighted on Review). */
-export const ENGINEER_ISSUE_CODES: ReadonlySet<string> = new Set(['ENGINEER_MISSING', 'ENGINEER_UNKNOWN']);
+export const ENGINEER_ISSUE_CODES: ReadonlySet<string> = new Set(['ENGINEER_MISSING', 'ENGINEER_UNKNOWN', 'ENGINEER_INACTIVE']);
 
 export type EditMap = Record<string, ImportStepEdit>;
 

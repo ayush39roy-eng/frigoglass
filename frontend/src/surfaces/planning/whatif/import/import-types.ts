@@ -289,6 +289,10 @@ export interface ImportResultProject {
   /** P42: the engine's flags (served defaults true / false). */
   counts_toward_year?: boolean | undefined;
   not_scheduled_priority?: boolean | undefined;
+  /** Audit M1 (I58): why the project was not placed, as the What-if serves it; null when placed. */
+  left_out_reason?: string | null | undefined;
+  /** The reason in words, e.g. "No leader assigned"; null when placed. Shown verbatim. */
+  left_out_reason_label?: string | null | undefined;
   steps: ImportResultStep[];
 }
 

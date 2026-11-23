@@ -89,7 +89,17 @@ function projectColumns(drill: ProjectDrill, onGantt: (p: ImportResultProject) =
       id: 'outcome',
       header: 'Outcome',
       accessorKey: 'outcome',
-      cell: ({ row }) => <Badge tone={OUTCOME_TONE[row.original.outcome]}>{OUTCOME_LABEL[row.original.outcome]}</Badge>,
+      cell: ({ row }) => (
+        <span className="inline-flex flex-col items-start gap-0.5">
+          <Badge tone={OUTCOME_TONE[row.original.outcome]}>{OUTCOME_LABEL[row.original.outcome]}</Badge>
+          {/* Audit M1 (I58): the served reason a project was not placed, verbatim. */}
+          {row.original.left_out_reason_label ? (
+            <span className="text-2xs text-text-muted" data-testid="import-left-out-reason">
+              {row.original.left_out_reason_label}
+            </span>
+          ) : null}
+        </span>
+      ),
     },
     {
       id: 'before_after',

@@ -331,8 +331,24 @@ async def build_schedule_input_from_db(
     hub_name_by_id = {
         h_id: name.value for h_id, name in (await db.execute(select(Hub.id, Hub.name))).all()
     }
+    # P38-T05 (ADR 0053, DOMAIN_RULES "Engineer deactivation" / I43): inactive
+    # engineers are left out of `ScheduleInput.engineers`, so the scheduler,
+    # Monte Carlo, the What-if pool and plan-import auto-assignment never give
+    # them work. A project whose stored leader is inactive (only Commercialized
+    # / Cancelled under I42) then resolves to no leader, the existing
+    # `LEFT_OUT no_leader` rule for a schedulable status. Their supply before
+    # the deactivation week reaches What-if / plan import through
+    # `WhatIfBaseline.engineer_active_weeks` (services.whatif_baseline).
     engineer_rows = (
-        (await db.execute(select(Engineer).options(selectinload(Engineer.hub)))).scalars().all()
+        (
+            await db.execute(
+                select(Engineer)
+                .where(Engineer.active.is_(True))
+                .options(selectinload(Engineer.hub))
+            )
+        )
+        .scalars()
+        .all()
     )
     chamber_rows = (await db.execute(select(Chamber))).scalars().all()
     template_stmt = select(WorkflowStepTemplate).order_by(
@@ -470,9 +486,7 @@ async def build_schedule_input_from_db(
             # ADR 0040: the manual VIP pin, sort key 2 of the scheduling order.
             is_vip=p.is_vip,
             # ADR 0042: OEM-HCK / OEM-Seitek -> R&D-Greece; else the hub itself.
-            capacity_hub=hub_name_by_id.get(
-                p.hub.capacity_hub_id or p.hub.id, p.hub.name.value
-            ),
+            capacity_hub=hub_name_by_id.get(p.hub.capacity_hub_id or p.hub.id, p.hub.name.value),
             # ADR 0050 (P36): the planner-set position inside the band,
             # scheduling order key 3a. None for non-members (I37b).
             band_rank=p.band_rank,
@@ -578,9 +592,7 @@ def run_step_span_fte(
         return None
     if step.assigned_engineer_id is None:
         return None
-    if any(
-        sp.step_id == step.step_id and sp.status == "Done" for sp in project.step_progress
-    ):
+    if any(sp.step_id == step.step_id and sp.status == "Done" for sp in project.step_progress):
         return None
     fte = fte_by_engineer.get(step.assigned_engineer_id)
     if fte is None or not is_valid_fte(fte):

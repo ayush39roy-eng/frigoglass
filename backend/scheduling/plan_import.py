@@ -52,6 +52,7 @@ from fractions import Fraction
 
 import domain_constants as dc
 from scheduling import hubs as hub_names
+from scheduling.delivery import outcome_left_out_reason
 from scheduling.greedy import (
     _sort_key,
     category_maps_for,
@@ -254,6 +255,9 @@ class PlanImportProject:
     # ADR 0056 (R42-3 / R42-4): copied from the outcome (I49 / I50).
     counts_toward_year: bool = True
     not_scheduled_priority: bool = False
+    #: Audit M1 (I58, as the What-if `ProjectResult.left_out_reason`):
+    #: `delivery.outcome_left_out_reason(outcome)`, null when placed.
+    left_out_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -349,7 +353,7 @@ class PlanImportKpis:
     recovered: int
     # ADR 0056 (R42-6): served from the same outcomes as their own counts.
     # `within_plan_year` / `spillover` / `left_out` / `blocked` count only
-    # counting outcomes (the classes are exclusive, `whatif.classify_outcome`).
+    # counting outcomes (the classes are exclusive, `served_outcome_class`).
     queued: int = 0
     not_scheduled_priority: int = 0
 
@@ -406,6 +410,26 @@ class PlanImportResult:
 # =====================================================================================
 # Small helpers
 # =====================================================================================
+
+
+def served_outcome_class(o: ProjectScheduleOutcome) -> str:
+    """P58-A / audit M2 (I59, R53-2b / I61): the plan-import class of one
+    outcome, bucketed exactly as the Dashboard and the What-if
+    (`services.whatif.served_outcome`, R42-6 precedence
+    NOT_SCHEDULED_PRIORITY > QUEUED > BLOCKED > WITHIN_YEAR > SPILLOVER >
+    LEFT_OUT). It differs from `whatif.classify_outcome` in two places only:
+    a Commercialized project delivered in the plan year (engine class
+    `excluded`, `within_year` true) is `within_year`, and `blocked` outranks
+    `left_out`. So an unedited Projects-list import equals the Dashboard."""
+
+    cls = classify_outcome(o)
+    if cls in ("not_scheduled_priority", "queued"):
+        return cls
+    if o.blocked and cls not in ("excluded", "data_error"):
+        return "blocked"
+    if cls == "excluded" and o.within_year:
+        return "within_year"
+    return cls
 
 
 def plan_from_label(week: int) -> str:
@@ -1413,13 +1437,13 @@ def _project_row(
         frozen=p.frozen,
         leader_ref=p.leader_engineer_id,
         leader_auto_assigned=auto,
-        outcome=classify_outcome(o),
-        within_plan_year=bool(o.within_year) and classify_outcome(o) == "within_year",
+        outcome=served_outcome_class(o),
+        within_plan_year=bool(o.within_year) and served_outcome_class(o) == "within_year",
         start_week=o.start_week,
         end_week=o.end_week,
         finish_week=o.projected_end_week,
         unconstrained_end_week=o.unconstrained_end_week,
-        before_outcome=None if before is None else classify_outcome(before),
+        before_outcome=None if before is None else served_outcome_class(before),
         before_finish_week=None if before is None else before.projected_end_week,
         eng_conflict=o.eng_conflict,
         lab_overlap=o.overlap,
@@ -1437,6 +1461,7 @@ def _project_row(
         ),
         counts_toward_year=o.counts_toward_year,
         not_scheduled_priority=o.not_scheduled_priority,
+        left_out_reason=outcome_left_out_reason(o),
     )
 
 
@@ -1651,8 +1676,8 @@ def _assemble(
                 name=proj[pid].name,
                 hub=proj[pid].hub,
                 kind=kind,
-                before_outcome=classify_outcome(b),
-                after_outcome=classify_outcome(o),
+                before_outcome=served_outcome_class(b),
+                after_outcome=served_outcome_class(o),
                 before_finish_week=b.projected_end_week,
                 after_finish_week=o.projected_end_week,
             )
@@ -1661,7 +1686,7 @@ def _assemble(
     # --- KPIs ---------------------------------------------------------------------------
     counts = {k: 0 for k in OUTCOME_CLASSES}
     for o in out.project_outcomes:
-        counts[classify_outcome(o)] += 1
+        counts[served_outcome_class(o)] += 1
     file_pids = [m.project_id for m in metas]
     kpis = PlanImportKpis(
         projects_total=len(out.project_outcomes),
@@ -1674,20 +1699,20 @@ def _assemble(
         excluded=counts["excluded"],
         data_error=counts["data_error"],
         file_within_plan_year=sum(
-            1 for pid in file_pids if classify_outcome(by_id[pid]) == "within_year"
+            1 for pid in file_pids if served_outcome_class(by_id[pid]) == "within_year"
         ),
         file_scheduled=sum(1 for pid in file_pids if not by_id[pid].excluded),
         before_within_plan_year=(
             sum(
                 1
                 for pid in existing
-                if (b := before.get(pid)) is not None and classify_outcome(b) == "within_year"
+                if (b := before.get(pid)) is not None and served_outcome_class(b) == "within_year"
             )
             if merge
             else None
         ),
         after_within_plan_year_existing=(
-            sum(1 for pid in existing if classify_outcome(by_id[pid]) == "within_year")
+            sum(1 for pid in existing if served_outcome_class(by_id[pid]) == "within_year")
             if merge
             else None
         ),
@@ -1778,5 +1803,6 @@ __all__ = (
     "resolve_plan_from_week",
     "resolve_plan_until_week",
     "run_plan_import",
+    "served_outcome_class",
     "validate_plan_import_limits",
 )

@@ -124,6 +124,20 @@ class ParseContext:
     #: details a re-uploaded Projects list download is compared against
     #: (`services.whatif_import_register.RegisterContext`); None = an empty one.
     register: Any = None
+    #: P38-T05: full names of inactive engineers, token-normalised
+    #: (`inactive_name_key`). A file row naming one is matched, warned
+    #: `ENGINEER_INACTIVE` and auto-assigned; never a new hypothetical designer.
+    inactive_names: frozenset[str] = frozenset()
+
+
+def inactive_name_key(name: str) -> str:
+    """The key `ParseContext.inactive_names` holds: tokens of `name` with an
+    export's " (inactive)" suffix stripped."""
+
+    raw = name.strip()
+    if raw.casefold().endswith("(inactive)"):
+        raw = raw[: -len("(inactive)")]
+    return " ".join(_tokens(raw))
 
 
 # --- output ----------------------------------------------------------------------------------
@@ -930,8 +944,13 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
         # Engineer (resolved first: the India hub depends on the leader's hub).
         eng_raw = _text(v.get("engineer"), _RAW_MAX)
         match = None
+        inactive_named = False
         if eng_raw is not None and _norm(eng_raw) not in _NO_ENGINEER:
-            match = roster.match(eng_raw)
+            if inactive_name_key(eng_raw) in ctx.inactive_names:
+                # P38-T05: an inactive engineer is never given new work.
+                inactive_named = True
+            else:
+                match = roster.match(eng_raw)
 
         # Matching (ADR 0044 §4).
         matched: MatchableProject | None = None
@@ -1379,6 +1398,14 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                     "No design engineer is named; the matched plan project's leader is kept "
                     "(choose another to replace it).",
                 )
+        elif inactive_named:
+            leader = Leader("auto")
+            issue(
+                "engineer",
+                SEV_WARNING,
+                "ENGINEER_INACTIVE",
+                f"{eng_raw!r} is inactive; one is auto-assigned (choose one to replace it).",
+            )
         elif eng_raw is None or _norm(eng_raw) in _NO_ENGINEER:
             leader = Leader("auto")
             issue(

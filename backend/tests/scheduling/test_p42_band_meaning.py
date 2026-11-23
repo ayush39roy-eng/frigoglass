@@ -560,6 +560,8 @@ def _strip(x):
             k: _strip(v)
             for k, v in x.items()
             if not (k in _P42_DEFAULTS and v in _P42_DEFAULTS[k] and type(v) is not float)
+            # Audit M1 (2026-11-23): the derived plan-import `left_out_reason`.
+            and k != "left_out_reason"
         }
     if isinstance(x, list):
         return [_strip(v) for v in x]

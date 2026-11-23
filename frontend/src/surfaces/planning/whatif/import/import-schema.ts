@@ -321,6 +321,9 @@ export const importSimulateResponseSchema: z.ZodType<ImportSimulateResponse> = z
       // P42: the engine's flags (served defaults true / false).
       counts_toward_year: z.boolean().optional(),
       not_scheduled_priority: z.boolean().optional(),
+      // Audit M1 (I58): the served not-placed reason; zod would strip it otherwise.
+      left_out_reason: nstr.optional(),
+      left_out_reason_label: nstr.optional(),
       steps: z.array(
         z.object({
           step_id: z.string(),

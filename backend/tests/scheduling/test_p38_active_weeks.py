@@ -301,8 +301,20 @@ _PRE_P38_HASHES = {
 }
 
 
+def _drop_m1(x: object) -> object:
+    """Audit M1 (2026-11-23): plan-import projects gained the derived
+    `left_out_reason` (`delivery.outcome_left_out_reason` of the outcome); it
+    is not part of the pre-P38 byte identity."""
+
+    if isinstance(x, dict):
+        return {k: _drop_m1(v) for k, v in x.items() if k != "left_out_reason"}
+    if isinstance(x, list):
+        return [_drop_m1(v) for v in x]
+    return x
+
+
 def _h(x: object) -> str:
-    return hashlib.sha256(json.dumps(to_jsonable(x), sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(_drop_m1(to_jsonable(x)), sort_keys=True).encode()).hexdigest()
 
 
 def _without_r49_fields(res: PlanImportResult, pyew: int) -> object:

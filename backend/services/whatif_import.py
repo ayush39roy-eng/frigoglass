@@ -27,7 +27,7 @@ import dataclasses
 import hashlib
 from collections.abc import Callable, Sequence
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,6 +53,7 @@ from scheduling.plan_import import (
 )
 from scheduling.weeks import (
     PLAN_YEAR_WEEKS,
+    commercialized_within_year,
     horizon_for,
     plan_until_presets,
     plan_year_end_week,
@@ -70,6 +71,7 @@ from scheduling.workflow import (
     effective_lead_weeks,
     is_step_skipped,
 )
+from schemas.delivery import LeftOutReason
 from schemas.whatif_import import (
     MAX_SIMULATED_FILE_PROJECTS,
     BreakdownBucketOut,
@@ -109,7 +111,12 @@ from schemas.whatif_import import (
     WindowLoadOut,
 )
 from services.categories import unknown_category_error
-from services.delivery_serving import result_delivery, result_row
+from services.delivery_serving import (
+    horizon_years_of,
+    left_out_reason_label,
+    result_delivery,
+    result_row,
+)
 from services.hub_scope import hub_scope_filter
 from services.plan_import_xlsx import (
     BASE_YEAR,
@@ -131,6 +138,12 @@ from services.whatif import (
     run_capped,
 )
 from services.whatif_baseline import WhatIfContext
+from services.whatif_import_register import (
+    edits_in_place,
+    plan_overrides,
+    run_plan_import_in_place,
+    with_plan_overrides,
+)
 
 IMPORT_FORMAT = "IMPORT_FORMAT"
 INVALID_IMPORT = "INVALID_IMPORT"
@@ -491,7 +504,19 @@ async def build_parse_context(
         categories={c.code: c.workflow_id for c in ctx.baseline.schedule.categories},
         # P58-B: a re-uploaded Projects list is compared with the list as served.
         register=await build_register_context(db, principal, ctx),
+        inactive_names=await inactive_engineer_names(db),
     )
+
+
+async def inactive_engineer_names(db: AsyncSession) -> frozenset[str]:
+    """P38-T05: name keys of inactive engineers (plan import matches them,
+    warns `ENGINEER_INACTIVE` and auto-assigns)."""
+
+    from models.engineer import Engineer
+    from services.plan_import_xlsx import inactive_name_key
+
+    names = (await db.execute(select(Engineer.name).where(Engineer.active.is_(False)))).scalars()
+    return frozenset(k for k in (inactive_name_key(n) for n in names) if k)
 
 
 def steps_meta_out(meta: tuple[StepMeta, ...]) -> list[StepMetaOut]:
@@ -702,12 +727,16 @@ def to_engine_request(
     # Owner rule (2026-11-04): a non-schedulable row is never simulated, even
     # with include=true (its plan project, if matched, is removed upstream:
     # `removed_project_ids`).
+    # 2026-11-23 audit B2: a changed Projects list row whose current step is
+    # kept edits its plan project in place (`plan_overrides`), never a file project.
+    plan_by_id = {p.project_id: p for p in ctx.baseline.schedule.projects}
     rows = [
         r
         for r in body.rows
         if r.include
         and r.status in dc.SCHEDULABLE_STATUS_ORDER
         and not keeps_plan_project(r, body.mode)
+        and not edits_in_place(r, body.mode, plan_by_id)
     ]
     base_ids = {p.project_id for p in ctx.baseline.schedule.projects}
     keys: set[str] = set()
@@ -946,7 +975,10 @@ def _step_out(st: Any, eng_name: dict[str, str], ch_code: dict[str, str]) -> Imp
 
 
 def _project_out(
-    p: PlanImportProject, eng_name: dict[str, str], ch_code: dict[str, str]
+    p: PlanImportProject,
+    eng_name: dict[str, str],
+    ch_code: dict[str, str],
+    horizon_years: int | None = None,
 ) -> ImportProjectOut:
     return ImportProjectOut(
         ref=p.ref,
@@ -981,12 +1013,18 @@ def _project_out(
         steps=[_step_out(st, eng_name, ch_code) for st in p.steps],
         counts_toward_year=p.counts_toward_year,
         not_scheduled_priority=p.not_scheduled_priority,
+        # Audit M1 (I58): the not-placed reason, as the What-if serves it.
+        left_out_reason=cast("LeftOutReason | None", p.left_out_reason),
+        left_out_reason_label=left_out_reason_label(
+            p.left_out_reason, no_chamber_step_id=p.no_chamber_step_id, horizon_years=horizon_years
+        ),
     )
 
 
 # --- served breakdowns (P32-R05, docs/API_CONTRACT_P32.md C1) ---------------------------------
 
 _NOT_PLACED_OUTCOMES = frozenset({"left_out", "blocked", "data_error"})
+_COMMERCIALIZED = ProjectStatus.COMMERCIALIZED.value
 _PLACED_OUTCOMES = frozenset({"within_year", "spillover"})
 #: Every outcome class (`scheduling.whatif.OUTCOME_CLASSES`; P42 adds
 #: `not_scheduled_priority` and `queued`), the keys of `BreakdownOutcomesOut`.
@@ -1178,13 +1216,24 @@ def scope_import_result(
     # P42 (R42-6): a hidden plan project that is a non-frozen P4/Q is
     # `not_scheduled_priority`, not `excluded` (P42-T02 resolution (c)).
     hidden_not_scheduled = sum(1 for bp in hidden_plan if is_not_scheduled_priority(bp))
+    # Audit M2 (2026-11-23; I59, R53-2b / I61): a hidden Commercialized
+    # project delivered in the plan year is within the year, as on the
+    # Dashboard and in the What-if (`services.whatif.served_outcome`), so an
+    # unedited Projects-list import equals the Dashboard.
+    hidden_delivered = [
+        bp
+        for bp in hidden_plan
+        if bp.status == _COMMERCIALIZED
+        and commercialized_within_year(bp.actual_end_week, raw.current_week)
+    ]
 
     rows = file_rows + plan_rows
     oc = dict.fromkeys(_OUTCOME_KEYS, 0)
     for p in rows:
         oc[p.outcome] += 1
-    oc["excluded"] += excluded_plan_in_scope - hidden_not_scheduled
+    oc["excluded"] += excluded_plan_in_scope - hidden_not_scheduled - len(hidden_delivered)
     oc["not_scheduled_priority"] += hidden_not_scheduled
+    oc["within_year"] += len(hidden_delivered)
 
     def ch_ok(c: Any) -> bool:
         return scope.hub_ok(c.hub)
@@ -1325,7 +1374,8 @@ def scope_import_result(
             # R49-12 (the engine's own workings already say it for an
             # all-hubs caller): "Simulated from W{cw}" keeps meaning cw.
             workings.append(f"File projects start from {plan_week_label(er.window.from_week)}.")
-    served = [_project_out(p, eng_name, ch_code) for p in rows]
+    years = horizon_years_of(raw.current_week, raw.horizon_weeks)
+    served = [_project_out(p, eng_name, ch_code, years) for p in rows]
     return ImportSimulateResponse(
         base_year=BASE_YEAR,
         current_week=raw.current_week,
@@ -1361,6 +1411,20 @@ def scope_import_result(
                     data_error=p.data_error,
                 )
                 for p in rows
+            ]
+            # Audit M2: delivered this year, counted in Y0 under Other (ADR 0067).
+            + [
+                result_row(
+                    project_id=bp.project_id,
+                    priority=bp.priority,
+                    status=bp.status,
+                    outcome="within_year",
+                    within_year=True,
+                    finish_week=None,
+                    counts_toward_year=True,
+                    not_scheduled_priority=False,
+                )
+                for bp in hidden_delivered
             ],
             run_week=raw.current_week,
             within_year_week=raw.plan_until_week,
@@ -1369,12 +1433,19 @@ def scope_import_result(
     )
 
 
-def _run_or_error(ctx: WhatIfContext, req: PlanImportRequest) -> PlanImportResult | ValueError:
+def _run_or_error(
+    ctx: WhatIfContext, req: PlanImportRequest, live: WhatIfContext | None = None
+) -> PlanImportResult | ValueError:
     """Runs in the What-if pool. An engine `ValueError` is RETURNED so it maps
     to `INVALID_IMPORT` (not `run_capped`'s `INVALID_SCENARIO`);
-    `WhatIfBudgetExceeded` propagates (503 `WHATIF_TIMEOUT`)."""
+    `WhatIfBudgetExceeded` propagates (503 `WHATIF_TIMEOUT`). `live`: the
+    plan before its in-place edits (B2), the "before" run; None = `ctx`."""
 
     try:
+        if live is not None and live.baseline is not ctx.baseline:
+            return run_plan_import_in_place(
+                live.baseline, ctx.baseline, req, deadline_s=WHATIF_DEADLINE_SECONDS
+            )
         return run_plan_import(ctx.baseline, req, deadline_s=WHATIF_DEADLINE_SECONDS)
     except ValueError as exc:
         return exc
@@ -1502,12 +1573,14 @@ def pin_dropped_issues(
         return []
     already = {(i.ref, i.code) for i in existing}
     out: list[SimIssueOut] = []
+    plan_by_id = {p.project_id: p for p in ctx.baseline.schedule.projects}
     for r in body.rows:
         if (
             not r.include
             or r.status not in dc.SCHEDULABLE_STATUS_ORDER
             or r.matched_project_id is None
             or keeps_plan_project(r, body.mode)
+            or edits_in_place(r, body.mode, plan_by_id)
             or r.matched_project_id not in pinned
             or (r.key, PIN_DROPPED) in already
         ):
@@ -1540,8 +1613,22 @@ async def do_import_simulate(
     ctx = without_projects(ctx, excluded)
     window = resolve_plan_window(ctx, body)
     er = to_engine_request(ctx, body, window)
+    # 2026-11-23 audit B2: changed rows that keep their current step edit
+    # their plan project in place; the live plan stays the "before" run.
+    try:
+        overrides, new_engs = plan_overrides(ctx, body, er.request.new_engineers)
+    except ValueError as exc:
+        raise invalid_import(str(exc)) from None
+    if new_engs != er.request.new_engineers:
+        er = dataclasses.replace(
+            er,
+            request=dataclasses.replace(er.request, new_engineers=new_engs),
+            new_names={ne.key: ne.name for ne in new_engs},
+        )
+    live = ctx
+    ctx = with_plan_overrides(ctx, overrides)
     raw = await run_capped(
-        lambda: _run_or_error(ctx, er.request), WHATIF_TIME_CAP_SECONDS, user_key=ctx.user_key
+        lambda: _run_or_error(ctx, er.request, live), WHATIF_TIME_CAP_SECONDS, user_key=ctx.user_key
     )
     if isinstance(raw, ValueError):
         raise invalid_import(str(raw))

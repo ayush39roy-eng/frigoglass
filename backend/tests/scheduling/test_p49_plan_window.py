@@ -158,6 +158,9 @@ def _pre_r49_hash(res: PlanImportResult) -> str:
     assert isinstance(d, dict)
     d.pop("plan_from_week")
     d.pop("plan_until_week")
+    # Audit M1 (2026-11-23): the derived per-project `left_out_reason`.
+    for p in d["projects"]:
+        p.pop("left_out_reason", None)
     return hashlib.sha256(json.dumps(d, sort_keys=True).encode()).hexdigest()
 
 

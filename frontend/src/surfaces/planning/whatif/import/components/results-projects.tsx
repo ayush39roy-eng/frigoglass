@@ -68,6 +68,12 @@ function columns(base: number): ColumnDef<ImportResultProject>[] {
           <Badge tone={OUTCOME_TONE[row.original.outcome]}>{OUTCOME_LABEL[row.original.outcome]}</Badge>
           {row.original.eng_conflict ? <Badge tone="warning">designer conflict</Badge> : null}
           {row.original.lab_overlap ? <Badge tone="warning">lab overlap</Badge> : null}
+          {/* Audit M1 (I58): the served reason a project was not placed, verbatim. */}
+          {row.original.left_out_reason_label ? (
+            <span className="text-2xs text-text-muted" data-testid="import-left-out-reason">
+              {row.original.left_out_reason_label}
+            </span>
+          ) : null}
         </span>
       ),
     },

@@ -13,7 +13,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from schemas.delivery import DeliveryByYearOut, DeliveryUnavailable
+from schemas.delivery import DeliveryByYearOut, DeliveryUnavailable, LeftOutReason
 from schemas.whatif import (
     BookingStatusLiteral,
     CategoryLiteral,
@@ -354,6 +354,12 @@ class ImportProjectOut(BaseModel):
     #: P42 (R42-4): the engine's flags. Defaults keep P41 snapshots readable.
     counts_toward_year: bool = True
     not_scheduled_priority: bool = False
+    #: Audit M1 (I58): why the project was not placed, the same value the
+    #: What-if `ProjectResultOut` and the live run serve (`no_leader` /
+    #: `no_chamber` / `data_error` / `beyond_horizon`); null when placed.
+    left_out_reason: LeftOutReason | None = None
+    #: The reason in words (`delivery_serving.left_out_reason_label`).
+    left_out_reason_label: str | None = None
 
 
 class CapacityWindowOut(BaseModel):

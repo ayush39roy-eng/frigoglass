@@ -17,12 +17,17 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 import domain_constants as dc
 from core.principal import Principal
 from models.chamber import Chamber
+from models.engineer import Engineer
 from models.hub import Hub, HubWorkCalendar
+from scheduling import EngineerActiveWeeks, covered_plan_weeks
+from scheduling.weeks import year_end, year_of
 from scheduling.whatif import ChamberSupplyInput, HubCalendarInput, WhatIfBaseline
+from services.engineer_supply import load_inactive_periods
 from services.plan_clock import PlanClock
 from services.schedule_persistence import build_schedule_input_from_db
 
@@ -56,9 +61,7 @@ class Scope:
         if hub in dc.HUB_CAPACITY_HUB:
             return False
         return self.hub_ok(hub) or any(
-            self.hub_ok(member)
-            for member, parent in dc.HUB_CAPACITY_HUB.items()
-            if parent == hub
+            self.hub_ok(member) for member, parent in dc.HUB_CAPACITY_HUB.items() if parent == hub
         )
 
 
@@ -104,10 +107,51 @@ async def resolve_scope(db: AsyncSession, principal: Principal) -> Scope:
     )
 
 
+async def engineer_active_weeks(
+    db: AsyncSession, *, current_week: int, horizon_weeks: int
+) -> tuple[EngineerActiveWeeks, ...]:
+    """P38-T05 (R38-1 / R38-2, I43): one `EngineerActiveWeeks` per counted
+    engineer with any inactive period (inactive now or reactivated), sorted by
+    id. Inactive engineers are not in `ScheduleInput.engineers` (the builder
+    filters them), so this is their only supply: weeks up to and including the
+    deactivation week. Empty when no engineer has a period, which leaves every
+    What-if / plan-import figure as before P38 (R38-9)."""
+
+    periods = await load_inactive_periods(db)
+    if not periods:
+        return ()
+    rows = (
+        (
+            await db.execute(
+                select(Engineer)
+                .where(Engineer.id.in_(list(periods)), Engineer.counts_in_capacity.is_(True))
+                .options(selectinload(Engineer.hub))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    plan_year = year_of(current_week)
+    # R53-1: cover the run's whole search (at least the default two years).
+    last_week = max(horizon_weeks, year_end(plan_year + 1))
+    return tuple(
+        EngineerActiveWeeks(
+            engineer_id=str(e.id),
+            hub=e.hub.name.value,
+            fte=float(e.fte),
+            covered_weeks=covered_plan_weeks(periods[e.id], plan_year, last_week=last_week),
+        )
+        for e in sorted(rows, key=lambda r: str(r.id))
+    )
+
+
 async def load_context(
     db: AsyncSession, principal: Principal, *, clock: PlanClock
 ) -> WhatIfContext:
     schedule = await build_schedule_input_from_db(db, current_week=clock.week)
+    active_weeks = await engineer_active_weeks(
+        db, current_week=schedule.current_week, horizon_weeks=schedule.horizon_weeks
+    )
     calendars = tuple(
         HubCalendarInput(
             hub=hub_name.value,
@@ -141,7 +185,12 @@ async def load_context(
     )
     scope = await resolve_scope(db, principal)
     return WhatIfContext(
-        baseline=WhatIfBaseline(schedule=schedule, calendars=calendars, chamber_supply=supply),
+        baseline=WhatIfBaseline(
+            schedule=schedule,
+            calendars=calendars,
+            chamber_supply=supply,
+            engineer_active_weeks=active_weeks,
+        ),
         scope=scope,
         engineer_hub={e.engineer_id: e.hub for e in schedule.engineers},
         project_hub={p.project_id: p.hub for p in schedule.projects},
