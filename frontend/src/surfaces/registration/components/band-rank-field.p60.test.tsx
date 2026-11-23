@@ -45,7 +45,7 @@ describe('P60 (ADR 0068) hub rank display + edit', () => {
     field(false);
     expect(screen.getByTestId('board-rank-input')).toHaveValue('3');
     expect(screen.getByTestId('reg-band-rank')).toHaveAttribute('title', expect.stringContaining('Global: #16 of 40 in P1, all hubs'));
-    expect(screen.getByTestId('global-rank-marker')).toHaveTextContent('G16');
+    expect(screen.getByTestId('global-rank-marker')).toHaveTextContent('16');
   });
 
   it('with a hub filter: hub rank only, no global anywhere', () => {

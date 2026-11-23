@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Globe } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
@@ -20,12 +21,14 @@ export function GlobalRankMarker({
   if (hidden || typeof bandRank !== 'number') return null;
   return (
     <span
-      className={cn('shrink-0 font-mono text-2xs font-semibold leading-none tabular-nums text-text-muted', className)}
+      className={cn('inline-flex shrink-0 items-center font-mono text-2xs font-semibold leading-none tabular-nums text-text-muted', className)}
       aria-hidden="true"
       data-numeric=""
       data-testid="global-rank-marker"
+      title={`Global rank #${String(bandRank)} (all hubs)`}
     >
-      G{bandRank}
+      <Globe className="mr-0.5 inline size-3 align-[-2px]" aria-hidden="true" />
+      {bandRank}
     </span>
   );
 }

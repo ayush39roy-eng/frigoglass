@@ -29,6 +29,7 @@ import type { ProjectFilterRow } from '@/surfaces/dashboard/api/types';
 import type { EngineerOption } from '@/surfaces/registration/api/engineers-api';
 import { EditableBandRank } from '@/surfaces/registration/components/band-rank-field';
 import { GlobalRankMarker } from '@/components/shared/global-rank-marker';
+import { HubRankFlag } from '@/components/shared/hub-rank-flag';
 import { hubRankScope, rankTooltip } from '@/lib/hub-rank';
 
 import {
@@ -941,6 +942,7 @@ export function ProjectsTable({
           );
           return (
             <span className="inline-flex items-center gap-1 text-xs font-semibold tabular-nums text-text" data-testid="rank-cell" data-numeric="">
+              <HubRankFlag hub={row.hub} />
               {canMove ? (
                 <EditableBandRank
                   host={moveHost}

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { GripVertical, Loader2, Snowflake } from 'lucide-react';
 import { GlobalRankMarker } from '@/components/shared/global-rank-marker';
+import { HubRankFlag } from '@/components/shared/hub-rank-flag';
 import { hubRankScope, rankTooltip } from '@/lib/hub-rank';
 import { BoardHubFilterContext } from '../lib/board-hub-filter';
 
@@ -127,6 +128,7 @@ export const BoardListRow = React.memo(function BoardListRow({
           {rank !== null && !pending ? <span className="sr-only">{`Position ${String(rank)} in ${scope}.`}</span> : null}
         </>
       )}
+      {rank !== null ? <HubRankFlag hub={card.hub} className="mt-1.5" /> : null}
       {rank !== null && !pending ? <GlobalRankMarker bandRank={card.band_rank} hidden={hubFiltered} className="mt-1.5" /> : null}
       {draggable ? (
         <button

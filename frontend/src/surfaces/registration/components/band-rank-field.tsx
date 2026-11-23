@@ -3,6 +3,7 @@ import * as React from 'react';
 import type { PriorityMoveApi } from '@/components/shared/priority-move/priority-move-context';
 import { BandRankInput } from '@/surfaces/priority-board/components/band-rank-controls';
 import { GlobalRankMarker } from '@/components/shared/global-rank-marker';
+import { HubRankFlag } from '@/components/shared/hub-rank-flag';
 import { hubRankScope, rankTooltip } from '@/lib/hub-rank';
 import type { ProjectPriority } from '@/types/enums';
 
@@ -167,6 +168,7 @@ export function BandRankField({
         <span className="text-text-subtle">—</span>
       ) : (
         <>
+          <HubRankFlag hub={hub} />
           <EditableBandRank
             host={host}
             canMove={canMove}

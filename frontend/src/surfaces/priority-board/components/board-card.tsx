@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { GripVertical, Hourglass, Loader2 } from 'lucide-react';
 import { GlobalRankMarker } from '@/components/shared/global-rank-marker';
+import { HubRankFlag } from '@/components/shared/hub-rank-flag';
 import { hubRankScope, rankTooltip } from '@/lib/hub-rank';
 import { BoardHubFilterContext } from '../lib/board-hub-filter';
 
@@ -130,6 +131,7 @@ export const BoardCard = React.memo(function BoardCard({
             </span>
           )
         ) : null}
+        {rank !== null ? <HubRankFlag hub={card.hub} className="mt-1.5" /> : null}
         {rankControls ? (
           <BandRankInput
             name={card.name}

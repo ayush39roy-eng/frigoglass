@@ -75,7 +75,7 @@ describe('P54 (ADR 0064 R2): register Rank column', () => {
   it('renders the band and rank, "—" when unranked, read-only without the right', () => {
     renderTable(host(), false);
     const cells = screen.getAllByTestId('rank-cell').map((c) => c.textContent);
-    expect(cells).toEqual(['#1G1', '#3G3', '#1G1']);
+    expect(cells).toEqual(['#11', '#33', '#11']);
     const charlie = screen.getAllByTestId('projects-row').find((r) => r.getAttribute('data-project-id') === 'c');
     expect(within(charlie as HTMLElement).queryByTestId('rank-cell')).toBeNull();
     expect(screen.queryByTestId('board-rank-input')).not.toBeInTheDocument();
