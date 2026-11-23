@@ -316,7 +316,11 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
           }
         />
       ) : result.delivery_by_year === null ? (
-        <DeliveryByYearTable data={null} unavailable="pre_p53_run" testId="import-delivery-by-year" />
+        <DeliveryByYearTable
+          data={null}
+          unavailable={result.delivery_by_year_unavailable ?? 'pre_p53_run'}
+          testId="import-delivery-by-year"
+        />
       ) : null}
 
       {block === null ? (

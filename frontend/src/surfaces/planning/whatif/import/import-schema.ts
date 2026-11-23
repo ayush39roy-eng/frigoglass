@@ -263,8 +263,9 @@ const planProjectSchema = z.object({
   id: z.string(),
   name: z.string(),
   hub: z.string(),
-  category: z.string(),
-  priority: z.string(),
+  // Served nullable (`PlanProjectOut`); ADR 0067: priority null for Commercialized / Cancelled.
+  category: nstr,
+  priority: nstr,
   status: z.string(),
 });
 
@@ -272,7 +273,10 @@ export const importSimulateResponseSchema: z.ZodType<ImportSimulateResponse> = z
   // P53 (R53-3/4/6): served by the simulation; zod would strip them otherwise.
   // The delivery table is the server's own shape, passed through as served.
   delivery_by_year: z.custom<NonNullable<ImportSimulateResponse['delivery_by_year']>>((v) => typeof v === 'object' && v !== null).nullable().optional(),
+  // Why delivery_by_year is null (pre-P53 saved scenario); shown as served.
+  delivery_by_year_unavailable: z.enum(['pre_p53_run', 'no_active_run']).nullable().optional(),
   plan_until_presets: z.array(planUntilPreset).optional(),
+  // Not in the import OpenAPI model today; kept optional for the Gantt axis when served.
   last_finish_week: nint.optional(),
   base_year: int,
   current_week: int,
@@ -290,8 +294,12 @@ export const importSimulateResponseSchema: z.ZodType<ImportSimulateResponse> = z
       name: z.string(),
       hub: z.string(),
       capacity_hub: z.string(),
-      category: z.string(),
-      priority: z.string(),
+      // Served nullable; ADR 0067: priority null for Commercialized / Cancelled.
+      // A non-null schema here failed the whole response (ImportShapeError).
+      category: nstr,
+      priority: nstr,
+      // P57 (ADR 0067): served default true; zod would strip it otherwise.
+      priority_applicable: z.boolean().optional(),
       status: z.string(),
       leader_name: nstr,
       leader_ref: nstr,

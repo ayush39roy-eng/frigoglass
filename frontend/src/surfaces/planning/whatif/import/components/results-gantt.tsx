@@ -547,7 +547,7 @@ function ProjectLeft({
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-semibold text-text">{p.name}</span>
         <span className="flex min-w-0 items-center gap-1 text-2xs text-text-muted">
-          <span className="truncate">{`${p.hub} · ${priorityDisplayText(p.status, p.priority, '—')} · ${p.leader_name ?? 'no leader'}`}</span>
+          <span className="truncate">{`${p.hub} · ${priorityDisplayText(p.status, p.priority, '—', p.priority_applicable)} · ${p.leader_name ?? 'no leader'}`}</span>
           {p.source === 'file' ? <Badge tone="primary">file</Badge> : null}
           <Badge tone={OUTCOME_TONE[p.outcome]}>{OUTCOME_LABEL[p.outcome]}</Badge>
           <span className="sr-only">{`Finish ${weekOrDash(p.finish_week, base)}`}</span>

@@ -61,7 +61,12 @@ function projectColumns(drill: ProjectDrill, onGantt: (p: ImportResultProject) =
     },
     { id: 'hub', header: 'Hub', accessorKey: 'hub' },
     { id: 'category', header: 'Category', accessorKey: 'category' },
-    { id: 'priority', header: 'Priority', accessorKey: 'priority' },
+    // P57 (ADR 0067): the served priority_applicable / null priority reads "Not applicable".
+    {
+      id: 'priority',
+      header: 'Priority',
+      accessorFn: (p) => priorityDisplayText(p.status, p.priority, '', p.priority_applicable),
+    },
     { id: 'status', header: 'Status', accessorKey: 'status' },
     {
       id: 'leader',
@@ -195,7 +200,7 @@ const ROW_COLUMNS: ColumnDef<DrillRow>[] = [
 
 // P51-T02: the shared project search (`*` / `?` wildcards, everything else literal).
 function matchesProject(p: ImportResultProject, search: SearchMatcher): boolean {
-  return search(p.name, p.hub, p.category, priorityDisplayText(p.status, p.priority), p.status, p.leader_name);
+  return search(p.name, p.hub, p.category, priorityDisplayText(p.status, p.priority, '', p.priority_applicable), p.status, p.leader_name);
 }
 
 function matchesRow(d: DrillRow, search: SearchMatcher): boolean {

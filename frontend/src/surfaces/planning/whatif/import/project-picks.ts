@@ -55,7 +55,7 @@ export function pickItems(rows: readonly ImportRow[], planProjects: readonly Imp
       ref: p.id,
       name: p.name,
       hub: p.hub,
-      category: p.category,
+      category: p.category ?? '',
       priority: priorityDisplayText(p.status, p.priority),
       status: p.status,
       locked: null,
@@ -114,5 +114,5 @@ export function filterPicks(items: readonly PickItem[], f: PickFilters): PickIte
 
 /** Distinct values of a dimension, sorted, for the filter dropdowns. */
 export function pickValues(items: readonly PickItem[], dim: 'category' | 'hub' | 'priority'): string[] {
-  return [...new Set(items.map((it) => it[dim]))].sort((a, b) => a.localeCompare(b));
+  return [...new Set(items.map((it) => it[dim]))].filter((v) => v !== '').sort((a, b) => a.localeCompare(b));
 }

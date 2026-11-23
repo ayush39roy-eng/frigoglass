@@ -1,4 +1,4 @@
-import type { DeliveryByYear } from '@/types/delivery-by-year';
+import type { DeliveryByYear, DeliveryUnavailable } from '@/types/delivery-by-year';
 // Hand-authored mirror of docs/API_CONTRACT_P32.md Part B (B2 `POST /whatif/import/parse`,
 // B3 `POST /whatif/import/simulate`, ADR 0044). The runtime shape is checked by the zod
 // schemas in `import-schema.ts`; these types are what the rest of the import view reads.
@@ -261,8 +261,12 @@ export interface ImportResultProject {
   name: string;
   hub: string;
   capacity_hub: string;
-  category: string;
-  priority: string;
+  /** Served nullable (`ImportProjectOut.category: str | None`). */
+  category: string | null;
+  /** ADR 0067: the effective band; null for a Commercialized / Cancelled project. */
+  priority: string | null;
+  /** ADR 0067 (P57): false for a Commercialized / Cancelled project (served default true). */
+  priority_applicable?: boolean | undefined;
   status: string;
   leader_name: string | null;
   leader_ref: string | null;
@@ -425,6 +429,8 @@ export interface ImportSimulateResponse {
    *  outcomes (calendar years, whatever u is). Optional for pre-P53 stored
    *  responses. */
   delivery_by_year?: DeliveryByYear | null | undefined;
+  /** P53: why `delivery_by_year` is null (e.g. `pre_p53_run` for a scenario saved before P53). */
+  delivery_by_year_unavailable?: DeliveryUnavailable | null | undefined;
   /** P53 (R53-4): the served "Plan year" presets. */
   plan_until_presets?: PlanUntilPreset[] | undefined;
   /** P53 (R53-6): the largest end week of a non-skipped row, when served. */
@@ -476,8 +482,10 @@ export interface ImportPlanProject {
   id: string;
   name: string;
   hub: string;
-  category: string;
-  priority: string;
+  /** Served nullable (`PlanProjectOut`). */
+  category: string | null;
+  /** ADR 0067: null for a Commercialized / Cancelled project. */
+  priority: string | null;
   status: string;
 }
 

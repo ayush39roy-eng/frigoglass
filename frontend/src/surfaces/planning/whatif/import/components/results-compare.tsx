@@ -539,7 +539,7 @@ export function ResultsCompare(): React.JSX.Element {
                   <p className="text-xs font-semibold text-text">{s.name}</p>
                   <DeliveryByYearTable
                     data={s.response.delivery_by_year ?? null}
-                    unavailable={s.response.delivery_by_year ? null : 'pre_p53_run'}
+                    unavailable={s.response.delivery_by_year ? null : (s.response.delivery_by_year_unavailable ?? 'pre_p53_run')}
                     testId="compare-delivery-table"
                   />
                 </div>

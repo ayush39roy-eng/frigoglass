@@ -46415,3 +46415,21 @@ The owner asked to push fast, so this was pushed before the P56-T04 gate; the ga
 - Cause of What-if / live unplaced: Super Admin set PDD-J and PDD-L to `lab` on 2026-11-22 08:13; no chamber listed them → 73 LEFT_OUT `no_chamber` (run v217).
 - Owner said "ok do it": PATCH allowed_stages on the 8 chambers that list PDD-H (GR-CH1/2, IN-CH2/3, RO-CH1–4) += PDD-J, PDD-L; IN-CH1/IN-CH4 (PDD-F only) unchanged. Manual greedy recalc → run v218: left_out 1 (no_leader), by end 2026 97, 2027 112, 2028 37, 2029 10, 2030 4, 2031 1. What-if +5 P1 R&D-India A: all placed (2027 W33 … 2028 W50).
 - Owner asked why P1 count not > P2: band order holds on median finish (P1 2027 W8, P2 2027 W17, P3 2027 W44); yearly counts differ by band size / hub / stage. 8 P1 finish 2029, 1 in 2030 — offered to list (likely overloaded leaders).
+
+## [2026-11-23] Zod response-schema sweep (after fb17a84) — frontend-builder: DONE (not committed)
+- **Scope:** every zod schema that parses a server response. Only `planning/whatif/import/import-schema.ts` does, through `import-api.ts`: parse, simulate, format, saved scenario (`result` = the simulate schema), and the saved list. All other `z.object` / `safeParse` uses in `src/` are form or input validation, and the other `JSON.parse` sites cast without zod.
+- **Method:**
+  - A throwaway vitest dumped each schema's nested key tree with optional and nullable flags (since deleted).
+  - That tree was diffed against `app.openapi()` (`ImportParseResponse`, `ImportSimulateResponse`, `ImportFormatOut`, `SavedScenarioOut`, `SavedScenarioListOut`).
+  - TS interface keys in `import-types.ts` were checked against the zod keys; all are present.
+- **Fixed in `importSimulateResponseSchema`** (and so in `savedScenarioSchema.result`):
+  - Missing `delivery_by_year_unavailable` (`pre_p53_run|no_active_run`, nullable, optional). `results-executive.tsx` / `results-compare.tsx` now pass the served reason; `'pre_p53_run'` is only a fallback.
+  - Missing `projects[].priority_applicable` (optional boolean). `drill-sheet.tsx` (the Priority column now reads "Not applicable", and search) and `results-gantt.tsx` pass it to `priorityDisplayText`.
+  - **Nullability bug, worse than stripping:** `projects[].category` / `priority` and `plan_projects[].category` / `priority` are `str | None` server-side (ADR 0067: priority is null for Commercialized / Cancelled). Zod had `z.string()`, so one null failed the whole response with `ImportShapeError`. They are now `nstr`. The TS `ImportResultProject` / `ImportPlanProject` types are now `string | null`. `project-picks.ts` maps a null category to `''`, and `pickValues` drops `''`.
+- **No change needed:** the parse, format and saved-list schemas match. `last_finish_week` is in the zod schema but not in the import OpenAPI model; it stays optional and harmless (`gantt-geometry.ts` falls back to the step weeks). Fields with defaults (`include`, `priority_source`, …) are always serialised.
+- **Tests:** `p58-schema-keys.test.ts` gains 3 tests: a key check, a null priority / category safeParse with `priority_applicable` / `delivery_by_year_unavailable` kept, and the same for a saved scenario. All 3 fail on the HEAD schema.
+- **Results:**
+  - `tsc -b` clean; eslint clean on touched files.
+  - vitest `src/surfaces/planning/whatif`: 26 files, 258 passed.
+  - Backend `test_openapi_frontend_contract.py`: 271 passed.
+- Files: `frontend/src/surfaces/planning/whatif/import/{import-schema.ts,import-types.ts,project-picks.ts,p58-schema-keys.test.ts}`, `.../import/components/{drill-sheet.tsx,results-gantt.tsx,results-executive.tsx,results-compare.tsx}`.
