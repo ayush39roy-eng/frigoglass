@@ -34,6 +34,22 @@ export interface SuggestedBandChipProps {
   labelled?: boolean;
 }
 
+/**
+ * P59 (owner 2026-11-23): where a row shows the project's SET priority, the
+ * score's calculated band is not drawn beside it; it is this hover text on the
+ * priority control instead. Served values only (I9).
+ */
+export function calculatedBandText(
+  band: ProjectPriority | null | undefined,
+  opts: { capacityFill?: boolean | null | undefined; scoreBand?: ProjectPriority | null | undefined } = {},
+): string | null {
+  if (!band) return null;
+  if (opts.capacityFill === true) {
+    return `Calculated from score: ${band} (capacity fill${opts.scoreBand ? `; score band ${opts.scoreBand}` : ''})`;
+  }
+  return `Calculated from score: ${band}`;
+}
+
 /** The tooltip of a labelled suggested band: what it is, and that it is not the priority. */
 function suggestedBandTitle(band: ProjectPriority): string {
   return `Suggested band ${band}, from the project's score. It is not the project's priority; change that with the priority control.`;

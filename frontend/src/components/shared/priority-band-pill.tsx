@@ -91,6 +91,8 @@ export interface ProjectPriorityPillProps {
   fallback?: React.ReactNode;
   short?: boolean;
   className?: string;
+  /** P59: extra hover text after the band's own title (e.g. "Calculated from score: P2"). */
+  hint?: string | null | undefined;
 }
 
 /**
@@ -104,11 +106,20 @@ export function ProjectPriorityPill({
   fallback = null,
   short = false,
   className,
+  hint,
 }: ProjectPriorityPillProps): React.JSX.Element | null {
   if (isPriorityNotApplicable(status, priorityApplicable)) {
     return <NotApplicablePriorityPill short={short} className={className} />;
   }
   const effective = effectivePriority(status, priority, priorityApplicable);
-  if (effective) return <PriorityBandPill priority={effective} className={className} />;
+  if (effective) {
+    return (
+      <PriorityBandPill
+        priority={effective}
+        className={className}
+        {...(hint ? { title: `${PRIORITY_BAND_TITLE[effective]}. ${hint}` } : {})}
+      />
+    );
+  }
   return <>{fallback}</>;
 }

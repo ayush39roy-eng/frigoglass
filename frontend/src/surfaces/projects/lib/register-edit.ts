@@ -10,8 +10,9 @@
  * `*_weeks_calculated`, and the server re-splits a figure (I9, D35-1).
  */
 
+import { rowPriorityNotApplicable } from '@/lib/priority-applicability';
 import { snapshotBase, type BaseSnapshots, type EditBase } from '@/lib/api/edit-conflict';
-import type { ProjectStatus } from '@/types/enums';
+import type { ProjectCategory, ProjectPriority, ProjectStatus, ProjectType } from '@/types/enums';
 
 import type { ProjectFilterRow } from '@/surfaces/dashboard/api/types';
 
@@ -36,6 +37,10 @@ export const EDITABLE_FIELDS = [
   'lab_effort_weeks',
   'certification_testing_required',
   'current_step_code',
+  // P59 (owner 2026-11-23): set from the bulk bar; sent in the same batch.
+  'priority',
+  'category',
+  'project_type',
 ] as const;
 export type EditableField = (typeof EDITABLE_FIELDS)[number];
 
@@ -50,6 +55,11 @@ export interface RegisterValues {
   certification_testing_required: boolean | null;
   /** null = no current step served (every step done). Never sent as null. */
   current_step_code: string | null;
+  /** P59: the served priority (null = none / not applicable). */
+  priority: ProjectPriority | null;
+  category: ProjectCategory | null;
+  /** The served row's `type`; the batch key is `project_type`. */
+  project_type: ProjectType | null;
 }
 
 /** A row's draft: the changed scalars, plus (P44-T01, owner 2026-11-18) the
@@ -80,6 +90,9 @@ export function baseValues(row: RegisterRow): RegisterValues {
     lab_effort_weeks: row.lab_effort_weeks,
     certification_testing_required: row.certification_testing_required ?? null,
     current_step_code: row.current_step_code,
+    priority: row.priority,
+    category: row.category,
+    project_type: row.type,
   };
 }
 
@@ -126,10 +139,16 @@ export function setDraftField<F extends EditableField>(
   return withValues(drafts, row, { [field]: value } as RegisterDraft);
 }
 
+/** P59 (ADR 0067): a Commercialized / Cancelled row has no priority, so the
+ *  bulk bar never stages one on it (the server's `PRIORITY_NOT_APPLICABLE`). */
+export function priorityNotApplicable(row: Pick<ProjectFilterRow, 'status' | 'priority_applicable'>): boolean {
+  return rowPriorityNotApplicable(row);
+}
+
 /**
  * P35-T08: the bulk bar stages one patch on every ticked row (the same draft
- * the cells write). `skipStatus` lists rows whose status may not be set here
- * (a Draft row leaves Draft through Submit, ADR 0034).
+ * the cells write). A Draft row gets no status (it leaves Draft through
+ * Submit, ADR 0034); P59: a Commercialized / Cancelled row gets no priority.
  */
 export function setDraftBulk(
   drafts: RegisterDrafts,
@@ -140,6 +159,7 @@ export function setDraftBulk(
   for (const row of rows) {
     const rowPatch: RegisterDraft = { ...patch };
     if (row.status === 'Draft') delete rowPatch.status;
+    if ('priority' in rowPatch && priorityNotApplicable(row)) delete rowPatch.priority;
     next = withValues(next, row, rowPatch);
   }
   return next;

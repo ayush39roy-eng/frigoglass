@@ -258,11 +258,10 @@ describe('PriorityBoardPage — served grouping', () => {
     const gamma = cardEl('Gamma Queue');
     expect(within(gamma).getByTestId('finish-chip')).toHaveTextContent('No projected finish');
     expect(gamma).toHaveTextContent('Weighted score —');
-    // P25-T04: the served suggested band is shown beside the served weighted score, as the grid's chip.
-    // P58: labelled "Suggested", and its tooltip says it is not the priority (it used to read "Priority band P1").
-    const band = within(within(cardEl('Alpha Cooler')).getByTestId('board-card-band')).getByTestId('band-chip-suggested');
-    expect(band).toHaveTextContent(/^Suggested\s*P1$/);
-    expect(within(band).getAllByTitle(/^Suggested band P1, from the project's score/).length).toBeGreaterThan(0);
+    // P59 (owner 2026-11-23): only the set priority is drawn; the calculated band is its hover text.
+    const alpha = within(cardEl('Alpha Cooler'));
+    expect(alpha.queryByTestId('band-chip-suggested')).not.toBeInTheDocument();
+    expect(alpha.getByTestId('priority-move-trigger')).toHaveAttribute('title', expect.stringContaining('Calculated from score: P1'));
   });
 
   it('passes the global hub filter as hub_id', async () => {
@@ -575,19 +574,22 @@ describe('PriorityBoardPage — a drop is the P11 priority move', () => {
     // The set priority: labelled, and its control reads P3.
     expect(within(ngc).getByTestId('board-card-priority-label')).toHaveTextContent('Priority');
     expect(within(ngc).getByTestId('priority-move-trigger')).toHaveTextContent('P3');
-    // The suggested band still says P4 — but labelled "Suggested", with a tooltip saying it is not the priority.
-    const suggested = within(ngc).getByTestId('band-chip-suggested');
-    expect(suggested).toHaveTextContent(/^Suggested\s*P4$/);
-    expect(within(suggested).getAllByTitle(/It is not the project's priority/).length).toBeGreaterThan(0);
-    // No "P4" anywhere on the card outside that labelled chip.
-    const p4 = within(ngc).getAllByText('P4', { exact: false });
-    for (const el of p4) expect(suggested).toContainElement(el);
+    // P59 (owner 2026-11-23): the calculated band (still P4) is NOT drawn; it is the
+    // priority control's hover text, and no "P4" is visible on the card.
+    expect(within(ngc).queryByTestId('band-chip-suggested')).not.toBeInTheDocument();
+    expect(within(ngc).getByTestId('priority-move-trigger')).toHaveAttribute(
+      'title',
+      expect.stringContaining('Calculated from score: P4'),
+    );
+    expect(within(ngc).queryAllByText('P4', { exact: false })).toHaveLength(0);
 
-    // List layout: the band is labelled "Sugg." (full meaning in the tooltip).
+    // List layout: the row shows the set priority P3, with the calculated band in its tooltip.
     await user.click(screen.getByRole('button', { name: 'List' }));
     const row = screen.getAllByTestId('board-list-row').find((r) => r.textContent?.includes('NGC 450')) as HTMLElement;
-    expect(within(row).getByTestId('band-chip-suggested-label')).toHaveTextContent('Sugg.');
-    expect(within(row).getByTestId('band-chip-suggested')).toHaveTextContent(/Sugg\.\s*P4/);
+    const pill = within(row).getByTestId('board-list-priority');
+    expect(pill).toHaveTextContent(/^P3$/);
+    expect(within(pill).getByTitle(/Calculated from score: P4$/)).toBeInTheDocument();
+    expect(within(row).queryByTestId('band-chip-suggested')).not.toBeInTheDocument();
   });
 
   it('No on the preview rolls the card back (snap back) without a POST', async () => {
@@ -661,7 +663,8 @@ describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
     // Names only, plus the same suggested-band chip as the grid ("P1"). P36: the
     // position is the served band_rank — for a session that may re-rank, an
     // editable field (owner request 2026-11-17) labelled with its spoken form.
-    expect(alpha).toHaveTextContent(/^#Alpha CoolerSugg\.P1$/);
+    // P59: the set priority (P1) on the right, not the calculated band.
+    expect(alpha).toHaveTextContent(/^#Alpha CoolerP1$/);
     expect(within(alpha).getByRole('textbox', { name: /^Position of Alpha Cooler in P1/ })).toHaveValue('2');
     expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveAttribute('title', 'Alpha Cooler');
     // Owner feedback: the full name over up to two lines (fixed 46 px row), never one truncated line.
@@ -745,14 +748,13 @@ describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
     const user = userEvent.setup();
     renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Beta Freezer' });
-    // Card: the promoted chip, the score band as secondary text (it differs), the reason in the tooltip.
+    // P59: the card shows only the set priority (P2); the capacity-filled calculated band is its hover text.
     const beta = within(cardEl('Beta Freezer'));
-    expect(beta.getByTestId('band-chip-capacity-fill')).toHaveTextContent('P1 · capacity fill');
-    expect(beta.getByTestId('band-chip-score-band')).toHaveTextContent('score band P2');
-    await user.hover(beta.getByRole('button', { name: 'Suggested band P1 by capacity fill, score band P2' }));
-    expect((await screen.findAllByText(reason)).length).toBeGreaterThan(0);
-    // A base P1 card: plain chip, no score-band line (it equals the suggested band).
-    expect(within(cardEl('Alpha Cooler')).queryByTestId('band-chip-score-band')).not.toBeInTheDocument();
+    expect(beta.queryByTestId('band-chip-capacity-fill')).not.toBeInTheDocument();
+    expect(beta.getByTestId('priority-move-trigger')).toHaveAttribute(
+      'title',
+      expect.stringContaining('Calculated from score: P1 (capacity fill; score band P2)'),
+    );
 
     await user.click(screen.getByRole('button', { name: 'List' }));
     const rows = screen.getAllByTestId('board-list-row');
@@ -764,9 +766,10 @@ describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
     // Without a code: two lines for the name.
     expect(within(betaRow).queryByTestId('board-list-code')).not.toBeInTheDocument();
     expect(within(betaRow).getByRole('link', { name: 'Beta Freezer' })).toHaveClass('line-clamp-2');
-    // Dense chip: "P1" with the fill outline; the full label stays the accessible name.
-    const dense = within(betaRow).getByRole('button', { name: 'Suggested band P1 by capacity fill, score band P2' });
-    expect(dense).toHaveTextContent(/^P1$/);
+    // P59: the row shows the set priority P2; the calculated band is its tooltip.
+    const pill = within(betaRow).getByTestId('board-list-priority');
+    expect(pill).toHaveTextContent(/^P2$/);
+    expect(within(pill).getByTitle(/Calculated from score: P1 \(capacity fill; score band P2\)$/)).toBeInTheDocument();
   });
 
   it('list layout has no serious/critical axe violations', async () => {

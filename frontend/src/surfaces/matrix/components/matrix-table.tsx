@@ -5,6 +5,7 @@ import { FolderKanban, History, Layers, Star, Tag, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ProjectPriorityPill } from '@/components/shared/priority-band-pill';
+import { calculatedBandText } from '@/components/shared/suggested-band-chip';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { CategoryTag } from '@/components/ui/category-tag';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
@@ -23,7 +24,7 @@ import { GateCheckbox, GateHeader, GateMark, ScoreInput } from './grid-edit-cell
 import { groupByPillar } from '../lib/pillars';
 import { isVipRow } from '../lib/vip-row';
 import { dimensionColumnWidth, pillarTinted, widenForBand } from '../lib/grid-boxes';
-import { formatPoints, rowDimension } from '../lib/row-scores';
+import { formatPoints, rowBand, rowDimension } from '../lib/row-scores';
 import { scoreIntensity } from '../lib/score-chip';
 import { useScoringModel } from '../scoring-model';
 import { formatWeight, layoutDimensions, type ScoringModelEntry } from '../lib/scoring-model-core';
@@ -166,6 +167,14 @@ function DimCell({
 }
 
 /** P34-T02 (D34-1): the grid's inline edit session, owned by the page. */
+
+/** P59: the served calculated band as the Committed pill's hover text. */
+function matrixCalculatedBand(row: PriorityMatrixRow): string | null {
+  const band = rowBand(row);
+  if (band === null || band === 'Unscored') return null;
+  return calculatedBandText(band, { capacityFill: row.capacity_fill, scoreBand: row.score_band });
+}
+
 export interface MatrixGridEdit {
   drafts: GridDrafts;
   /** The base a draft is compared to: the served row, or in scenario mode the
@@ -496,13 +505,18 @@ export const MatrixTable = React.memo(function MatrixTable({
           align: 'center',
           box: INFO_BOX,
           // P57 (ADR 0067): Commercialized / Cancelled read "N/A".
+          // P59 (owner 2026-11-23): the score's calculated band is this pill's hover text.
           cell: (row) => (
-            <ProjectPriorityPill
-              status={row.status} priorityApplicable={row.priority_applicable}
-              priority={row.set_priority}
-              short
-              fallback={<span className="text-text-subtle">–</span>}
-            />
+            <span data-testid="matrix-set-priority">
+              <ProjectPriorityPill
+                status={row.status}
+                priorityApplicable={row.priority_applicable}
+                priority={row.set_priority}
+                short
+                hint={matrixCalculatedBand(row)}
+                fallback={<span className="text-text-subtle">–</span>}
+              />
+            </span>
           ),
         },
       );
@@ -577,7 +591,9 @@ export const MatrixTable = React.memo(function MatrixTable({
       width: 168,
       box: SCORE_BOX,
       headerClassName: 'text-text',
-      cell: (row) => <ScoreCell row={row} dense />,
+      // P59: with the Committed column shown, the calculated band is its hover
+      // text only; the compact view (no Committed column) keeps the chip.
+      cell: (row) => <ScoreCell row={row} dense showBand={!detailed} />,
     });
 
     if (columnFilters) {

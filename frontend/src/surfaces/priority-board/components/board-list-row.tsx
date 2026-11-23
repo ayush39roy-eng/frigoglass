@@ -2,7 +2,9 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { GripVertical, Loader2, Snowflake } from 'lucide-react';
 
-import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
+import { PRIORITY_BAND_TITLE } from '@/components/shared/priority-band-meta';
+import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { calculatedBandText } from '@/components/shared/suggested-band-chip';
 import { cn } from '@/lib/utils';
 
 import { BoardScenarioContext } from '../lib/board-scenario';
@@ -10,6 +12,7 @@ import { handleLabel, type DisplayCard } from '../lib/board-model';
 import type { BoardCardProps } from './board-card';
 import { HardGateLock } from './board-badges';
 import { BandRankInput, BandRankStepButtons } from './band-rank-controls';
+import { BoardSelectCheckbox } from './board-bulk-move';
 
 export interface BoardListRowProps extends Omit<BoardCardProps, 'item'> {
   item: DisplayCard;
@@ -24,8 +27,8 @@ export interface BoardListRowProps extends Omit<BoardCardProps, 'item'> {
  * from a row goes through the same preview → confirm flow. The name links to
  * the Project Workspace, like the card; the full name is the link text (the
  * clamp is visual only) and the tooltip. P25-T03: the served `external_code` (when
- * present) is the second line, and the same suggested-band chip as the grid sits on
- * the right (dense: "P1" plus the fill icon; full label and reason in the tooltip).
+ * present) is the second line. P59: the set priority sits on the right; the score's
+ * calculated band is its tooltip.
  */
 export const BoardListRow = React.memo(function BoardListRow({
   item,
@@ -48,7 +51,10 @@ export const BoardListRow = React.memo(function BoardListRow({
   // P25-T03: with a served external code, the name takes one line and the code the second (it
   // tells apart names with a shared prefix); without one, the name keeps two lines.
   const code = card.external_code ?? null;
-  const suggested = card.suggested_band ?? card.band;
+  const calculated = calculatedBandText(card.suggested_band ?? card.band, {
+    capacityFill: card.capacity_fill,
+    scoreBand: card.score_band,
+  });
   const rank = card.band_rank ?? null;
   const rankControls = rankable && rank !== null && onRankTo !== undefined;
   const rankTo = React.useCallback((toRank: number) => onRankTo?.(item, toRank), [item, onRankTo]);
@@ -69,6 +75,7 @@ export const BoardListRow = React.memo(function BoardListRow({
       data-pending={pending ? 'true' : undefined}
       data-staged={staged ? 'true' : undefined}
     >
+      <BoardSelectCheckbox projectId={card.project_id} projectName={card.name} className="mt-1.5" />
       {rankControls ? (
         // Owner request 2026-11-17: the position as an input in place, with ↑ / ↓ beside it.
         <>
@@ -151,18 +158,14 @@ export const BoardListRow = React.memo(function BoardListRow({
           <span className="sr-only">Frozen</span>
         </span>
       ) : null}
-      {suggested ? (
-        <span className="mt-0.5 shrink-0" data-testid="board-list-band">
-          <SuggestedBandChip
-            band={suggested}
-            capacityFill={card.capacity_fill}
-            reason={card.capacity_fill_reason}
-            scoreBand={card.score_band}
-            dense
-            labelled
-          />
-        </span>
-      ) : null}
+      {/* P59 (owner 2026-11-23): the row shows the SET priority only; the score's
+          calculated band is its hover text. */}
+      <span className="mt-0.5 shrink-0" data-testid="board-list-priority">
+        <PriorityBandPill
+          priority={servedPriority}
+          {...(calculated ? { title: `${PRIORITY_BAND_TITLE[servedPriority]}. ${calculated}` } : {})}
+        />
+      </span>
       {pending ? (
         <span className="inline-flex shrink-0 items-center" role="status">
           <Loader2 className="size-3 animate-spin text-text-muted motion-reduce:animate-none" aria-hidden="true" />

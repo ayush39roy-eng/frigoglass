@@ -9,7 +9,7 @@ import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
 import { VipBadge } from '@/components/shared/vip-badge';
 import { Badge } from '@/components/ui/badge';
 import { CategoryTag } from '@/components/ui/category-tag';
-import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
+import { calculatedBandText } from '@/components/shared/suggested-band-chip';
 import { formatDecimal } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -17,6 +17,7 @@ import { handleLabel, type DisplayCard } from '../lib/board-model';
 import { BoardScenarioContext } from '../lib/board-scenario';
 import { BandRankChip, FrozenBadge, HardGateLock } from './board-badges';
 import { BandRankInput, BandRankStepButtons } from './band-rank-controls';
+import { BoardSelectCheckbox } from './board-bulk-move';
 
 export interface BoardCardProps {
   item: DisplayCard;
@@ -70,7 +71,12 @@ export const BoardCard = React.memo(function BoardCard({
   const locked = card.hard_gated && servedPriority === 'P1';
   const staged = React.useContext(BoardScenarioContext).has(card.project_id);
   // P25-T03: the served suggested (promoted) band; a pre-P25-T03 API only serves `band`.
-  const suggested = card.suggested_band ?? card.band;
+  // P59 (owner 2026-11-23): only the SET priority is drawn; the calculated band
+  // is the priority control's hover text.
+  const calculated = calculatedBandText(card.suggested_band ?? card.band, {
+    capacityFill: card.capacity_fill,
+    scoreBand: card.score_band,
+  });
 
   return (
     <div
@@ -88,6 +94,7 @@ export const BoardCard = React.memo(function BoardCard({
       data-pending={pending ? 'true' : undefined}
     >
       <div className="flex items-start gap-1.5">
+        <BoardSelectCheckbox projectId={card.project_id} projectName={card.name} />
         {draggable ? (
           <button
             type="button"
@@ -151,18 +158,6 @@ export const BoardCard = React.memo(function BoardCard({
             {card.score === null ? '—' : formatDecimal(card.score)}
           </span>
         </span>
-        {suggested ? (
-          <span className="inline-flex" data-testid="board-card-band">
-            {/* P58: labelled "Suggested" so it is never read as the set priority (bottom right). */}
-            <SuggestedBandChip
-              band={suggested}
-              capacityFill={card.capacity_fill}
-              reason={card.capacity_fill_reason}
-              scoreBand={card.score_band}
-              labelled
-            />
-          </span>
-        ) : null}
       </p>
       {staged ? (
         <p className="text-2xs font-medium text-warning-subtle-fg" data-testid="board-card-staged">
@@ -210,6 +205,7 @@ export const BoardCard = React.memo(function BoardCard({
             projectName={card.name}
             priority={servedPriority}
             status={card.status}
+            hint={calculated}
           />
         </span>
       </div>

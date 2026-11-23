@@ -34,6 +34,12 @@ vi.mock('@/surfaces/dashboard/hooks/use-dashboard', () => ({
   useProjectFacets: () => ({ data: { leaders: [], steps: [] } }),
 }));
 vi.mock('@/lib/api/reference', () => ({
+  useWorkflowStepTemplates: () => ({
+    data: [
+      { id: 't1', workflow_id: 'PDD', code: 'PDD-A', name: 'Concept', kind: 'design', sequence_order: 1, predecessor_ids: [] },
+      { id: 't2', workflow_id: 'PDD', code: 'PDD-B', name: 'Design', kind: 'design', sequence_order: 2, predecessor_ids: ['t1'] },
+    ],
+  }),
   useHubs: () => ({
     data: [
       { id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },

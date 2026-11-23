@@ -13,7 +13,14 @@ import { ApiError, apiGet, apiSend, type ApiRequestOptions } from '@/lib/api/cli
 import type { EditBase } from '@/lib/api/edit-conflict';
 import type { RecalcStatus } from '@/lib/api/priority-move';
 import type { Id, WeekNumber } from '@/types/common';
-import type { ProjectStatus, WorkflowStepKind, WorkflowStepStatus } from '@/types/enums';
+import type {
+  ProjectCategory,
+  ProjectPriority,
+  ProjectStatus,
+  ProjectType,
+  WorkflowStepKind,
+  WorkflowStepStatus,
+} from '@/types/enums';
 
 /** Register popup (owner 2026-11-17, ADR 0049): one step's exclusion flag.
  *  `false` re-includes an excluded step; "include" on a step that is not
@@ -46,6 +53,16 @@ export interface RegisterEditPatch {
   /** The step the project is on now (§2.2): the server marks the earlier steps
    *  Done and the later ones Not Started. `null` = no change. */
   current_step_code?: string | null;
+  /** P59 (owner 2026-11-23, bulk edit): the project's priority band. A project
+   *  moved to a new band goes to the END of that band; the batch is still one
+   *  recalculation. Commercialized / Cancelled rows are refused per row with
+   *  `PRIORITY_NOT_APPLICABLE` (ADR 0067). `null` = no change. */
+  priority?: ProjectPriority | null;
+  /** P59: a category code (`GET /reference/categories`) of the project's
+   *  workflow. `null` = no change. */
+  category?: ProjectCategory | null;
+  /** P59: the project type (the register's "Type"). `null` = no change. */
+  project_type?: ProjectType | null;
   /** P47 (ADR 0059 C1): per row, the value the user started from for each
    *  field this patch changes (`step_exclusions` lists the served flag of each
    *  step it changes). A differing stored value is a 409 `EDIT_CONFLICT`. */
@@ -186,6 +203,8 @@ const ROW_ERROR_COPY: Record<string, string> = {
   UNKNOWN_HUB: 'That hub does not exist.',
   WORKFLOW_CHANGE_WITH_PROGRESS: 'This hub uses the other workflow, and the project has recorded progress: it cannot move.',
   INCONSISTENT_PROGRESS: 'The recorded weeks of the steps do not allow this current step.',
+  // P59: priority in the batch (ADR 0067).
+  PRIORITY_NOT_APPLICABLE: 'The project is Commercialized or Cancelled: a priority does not apply.',
 };
 
 /** Codes whose server message is more precise than the fixed copy (it names

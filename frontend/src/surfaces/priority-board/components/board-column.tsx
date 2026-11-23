@@ -10,6 +10,7 @@ import type { DisplayCard, DisplayColumn } from '../lib/board-model';
 import type { BoardLayout } from '../lib/board-layout';
 import { BoardCard, type BoardCardProps } from './board-card';
 import { BoardListRow } from './board-list-row';
+import { BoardColumnSelectAll } from './board-bulk-move';
 
 /** Above this many cards a column is virtualized (CLAUDE.md: any list over 100). */
 export const VIRTUALIZE_OVER = 100;
@@ -228,6 +229,7 @@ export function BoardColumn(props: BoardColumnProps): React.JSX.Element {
       >
         <div className="flex min-w-0 flex-col gap-0.5">
           <h2 id={headingId} className="flex items-center gap-1.5 text-sm font-bold text-text" title={PRIORITY_BAND_TITLE[column.priority]}>
+            <BoardColumnSelectAll band={column.priority} projectIds={column.cards.map((c) => c.card.project_id)} />
             <span className={cn('size-2 rounded-full', style.dot)} aria-hidden="true" />
             {/* P42 (R42-1): the served band label; Q is shown as "Q". */}
             <span className="min-w-0 truncate">{priorityBandName(column.priority, column.label)}</span>

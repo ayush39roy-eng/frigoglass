@@ -21,7 +21,8 @@ import { hubsInScope } from '@/components/shared/hub-filter/hub-scope';
 import { PriorityMoveContext } from '@/components/shared/priority-move/priority-move-context';
 import { usePriorityMoveFlow } from '@/components/shared/priority-move/use-priority-move-flow';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
-import { useHubs } from '@/lib/api/reference';
+import { useCategories, type Category } from '@/lib/api/categories';
+import { useHubs, useWorkflowStepTemplates, type WorkflowStepTemplate } from '@/lib/api/reference';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { formatInteger } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
@@ -86,6 +87,7 @@ import {
   dropDraftExclusions,
   fieldChanged,
   setDraftBulk,
+  priorityNotApplicable,
   toggleDraftExclusion,
   setDraftField,
   valuesFor,
@@ -601,6 +603,41 @@ export default function ProjectsPage(): React.JSX.Element {
       : { options: null, note: 'The ticked rows share no design resource: tick rows of one hub to set one.' };
   }, [tickedRows, engineersByHub, hubIdByName]);
 
+  // P59: the ticked rows' ONE workflow (served hub `is_oem`, the draft hub
+  // when staged): its categories and steps are offered in bulk. The server
+  // still validates each row.
+  const { categories: allCategories } = useCategories();
+  const stepTemplates = useWorkflowStepTemplates();
+  const bulkWorkflow = React.useMemo((): {
+    options: { categories: readonly Category[]; steps: readonly WorkflowStepTemplate[] } | null;
+    note: string | null;
+  } => {
+    if (tickedRows.length === 0) return { options: null, note: null };
+    const workflows = new Set(
+      tickedRows.map((r) => {
+        const id = drafts[r.project_id]?.hub_id ?? hubIdByName.get(r.hub);
+        const hub = id === undefined || id === null ? undefined : hubById.get(id);
+        return hub === undefined ? undefined : hub.is_oem ? 'OEM' : 'PDD';
+      }),
+    );
+    if (workflows.size > 1 && !workflows.has(undefined)) {
+      return { options: null, note: 'Pick projects of one workflow to set the current step or category.' };
+    }
+    const [workflow] = [...workflows];
+    if (workflow === undefined || allCategories.length === 0 || !stepTemplates.data) {
+      return { options: null, note: 'Loading the steps and categories…' };
+    }
+    return {
+      options: {
+        categories: allCategories.filter((c) => c.workflow_id === workflow),
+        steps: stepTemplates.data
+          .filter((t) => t.workflow_id === workflow)
+          .sort((a, b) => a.sequence_order - b.sequence_order),
+      },
+      note: null,
+    };
+  }, [tickedRows, drafts, hubIdByName, hubById, allCategories, stepTemplates.data]);
+
   const applyBulk = React.useCallback(
     (patch: RegisterDraft) => {
       setEditBases((b) =>
@@ -1092,8 +1129,11 @@ export default function ProjectsPage(): React.JSX.Element {
               <BulkEditBar
                 selectedCount={tickedRows.length}
                 draftCount={tickedRows.filter((r) => r.status === 'Draft').length}
+                notApplicableCount={tickedRows.filter((r) => priorityNotApplicable(r)).length}
                 leaderOptions={bulkLeaders.options}
                 leaderNote={bulkLeaders.note}
+                workflowOptions={bulkWorkflow.options}
+                workflowNote={bulkWorkflow.note}
                 onApply={applyBulk}
                 onClearSelection={() => setSelected(new Set())}
               />

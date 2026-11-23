@@ -530,7 +530,15 @@ export function ProjectsTable({
         min: 3.5,
         align: 'center',
         resizable: true,
-        cell: (row) => (row.category ? <CategoryTag category={row.category} /> : DASH),
+        cell: (row) => {
+          // P59: a category staged from the bulk bar shows as an unsaved change.
+          const category = edit ? edit.values(row).category : row.category;
+          return (
+            <Pending on={edit !== undefined && edit.changed(row, 'category')}>
+              {category ? <CategoryTag category={category} /> : DASH}
+            </Pending>
+          );
+        },
       },
       {
         id: 'type',
@@ -538,14 +546,20 @@ export function ProjectsTable({
         min: 3.25,
         align: 'center',
         resizable: true,
-        cell: (row) =>
-          row.type ? (
-            <span className="text-xs font-bold text-text" title={PROJECT_TYPE_LABELS[row.type]}>
-              {row.type}
-            </span>
-          ) : (
-            DASH
-          ),
+        cell: (row) => {
+          const type = edit ? edit.values(row).project_type : row.type;
+          return (
+            <Pending on={edit !== undefined && edit.changed(row, 'project_type')}>
+              {type ? (
+                <span className="text-xs font-bold text-text" title={PROJECT_TYPE_LABELS[type]}>
+                  {type}
+                </span>
+              ) : (
+                DASH
+              )}
+            </Pending>
+          );
+        },
       },
       // P24-T02 (ADR 0035): the served charter fields, verbatim, when asked for.
       ...(showCharter
@@ -860,6 +874,17 @@ export function ProjectsTable({
               #{formatInteger(row.priority_rank)}
             </span>
           ) : null;
+          // P59: a priority staged from the bulk bar is part of the draft and
+          // goes with Save (one batch); it shows as an unsaved change.
+          if (edit !== undefined && edit.changed(row, 'priority')) {
+            return (
+              <span className="inline-flex items-center gap-1" data-testid="register-priority-staged">
+                <Pending on>
+                  <ProjectPriorityPill status={row.status} priorityApplicable={row.priority_applicable} priority={edit.values(row).priority} short />
+                </Pending>
+              </span>
+            );
+          }
           // A priority move is not part of the row's draft: it previews and
           // applies on its own (ADR 0015 / 0026), through the page's move host.
           if (inEdit(row)) {

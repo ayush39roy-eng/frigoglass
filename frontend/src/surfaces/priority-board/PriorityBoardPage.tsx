@@ -28,6 +28,7 @@ import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useBoardLeaderFacets, usePriorityBoard, type BandRankAnchorPlacement, type PriorityBoardFilters } from './api';
 import { selectionParam } from '@/lib/multi-select-filter';
 import { BoardColumn } from './components/board-column';
+import { BoardBulkMoveBar, BoardSelectionContext, useBoardSelectionState } from './components/board-bulk-move';
 import { BoardToolbar } from './components/board-toolbar';
 import { EMPTY_TOOLBAR, SEARCH_MAX, type BoardToolbarState } from './lib/toolbar-state';
 import { HubLoadStrip } from './components/hub-load-strip';
@@ -210,6 +211,9 @@ export function PriorityBoardView({
   const [announcement, setAnnouncement] = React.useState('');
 
   const busy = host?.busy ?? false;
+  // P59: multi-select + one-batch move (Registration write only, like the single move).
+  const selection = useBoardSelectionState();
+  const bulkEnabled = canWrite && host !== null;
   const dragEnabled = canWrite && host !== null && !busy;
 
   const columns = React.useMemo(
@@ -604,6 +608,17 @@ export function PriorityBoardView({
 
       <HubLoadStrip hub={hub} enabled={canReadCapacity} />
 
+      {bulkEnabled ? (
+        <BoardBulkMoveBar
+          selected={[...selection.selected]}
+          projectName={(id) => {
+            for (const c of columns) for (const item of c.cards) if (item.card.project_id === id) return item.card.name;
+            return undefined;
+          }}
+          onClear={selection.clear}
+        />
+      ) : null}
+
       {(() => {
         const bar = (
           <BoardToolbar
@@ -637,6 +652,7 @@ export function PriorityBoardView({
           />
         )
       ) : (
+        <BoardSelectionContext.Provider value={bulkEnabled ? selection : null}>
         <div
           className="relative grid auto-cols-[minmax(15rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-2"
           style={height ? { height } : undefined}
@@ -670,6 +686,7 @@ export function PriorityBoardView({
             />
           ))}
         </div>
+        </BoardSelectionContext.Provider>
       )}
     </BoardScenarioContext.Provider>
   );

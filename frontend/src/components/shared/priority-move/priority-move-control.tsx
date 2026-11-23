@@ -28,6 +28,9 @@ export interface PriorityMoveControlProps extends PriorityMoveTarget {
   className?: string;
   /** P57-T02: served `priority_applicable`, when the payload carries it (wins over `status`). */
   priorityApplicable?: boolean | null | undefined;
+  /** P59 (owner 2026-11-23): extra hover text, e.g. "Calculated from score: P2"
+   *  (the score's band is not drawn beside the set priority). */
+  hint?: string | null | undefined;
 }
 
 /**
@@ -43,6 +46,7 @@ export interface PriorityMoveControlProps extends PriorityMoveTarget {
 export function PriorityMoveControl({
   className,
   priorityApplicable,
+  hint,
   ...target
 }: PriorityMoveControlProps): React.JSX.Element | null {
   const host = usePriorityMoveHost();
@@ -72,7 +76,13 @@ export function PriorityMoveControl({
   }
 
   if (!host || !canWrite) {
-    return priority ? <PriorityBandPill priority={priority} className={className} /> : null;
+    return priority ? (
+      <PriorityBandPill
+        priority={priority}
+        className={className}
+        {...(hint ? { title: `${PRIORITY_BAND_TITLE[priority]}. ${hint}` } : {})}
+      />
+    ) : null;
   }
 
   const style = priority ? PRIORITY_BAND_STYLES[priority] : null;
@@ -83,7 +93,11 @@ export function PriorityMoveControl({
           type="button"
           disabled={host.busy}
           aria-label={`Priority ${priority ?? 'not set'} for ${projectName}. Change priority`}
-          title={host.busy ? 'A priority move is being recalculated' : 'Change priority (recalculates the timeline)'}
+          title={
+            host.busy
+              ? 'A priority move is being recalculated'
+              : `Change priority (recalculates the timeline)${hint ? `. ${hint}` : ''}`
+          }
           className={cn(
             'inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-2xs font-semibold leading-none text-text',
             'ring-1 ring-inset ring-border-strong/60 transition-colors hover:ring-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',

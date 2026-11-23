@@ -60,7 +60,17 @@ function BandDerivationTooltip({
 /** `dense` (the scoring grid's narrow cell): the capacity-fill chip reads "P1" with its
  *  icon and outline, so a promoted row stays one line tall (owner ask 2026-10-22). The
  *  full "P1 by capacity fill, score band …" stays the accessible name and tooltip. */
-export function ScoreCell({ row, dense = false }: { row: PriorityMatrixRow; dense?: boolean }): React.JSX.Element {
+export function ScoreCell({
+  row,
+  dense = false,
+  showBand = true,
+}: {
+  row: PriorityMatrixRow;
+  dense?: boolean;
+  /** P59 (owner 2026-11-23): false where the row already shows the SET priority
+   *  (the Matrix grid's Committed column carries the calculated band as hover text). */
+  showBand?: boolean;
+}): React.JSX.Element {
   const score = rowNormalizedScore(row);
   const band = rowBand(row);
   if (!row.has_score || score === null || band === null || band === 'Unscored') {
@@ -88,13 +98,15 @@ export function ScoreCell({ row, dense = false }: { row: PriorityMatrixRow; dens
         </TooltipTrigger>
         <BandDerivationTooltip pct={score} weighted={row.weighted_score} />
       </Tooltip>
-      <SuggestedBandChip
-        band={band}
-        capacityFill={row.capacity_fill}
-        reason={row.capacity_fill_reason}
-        scoreBand={row.score_band}
-        dense={dense}
-      />
+      {showBand ? (
+        <SuggestedBandChip
+          band={band}
+          capacityFill={row.capacity_fill}
+          reason={row.capacity_fill_reason}
+          scoreBand={row.score_band}
+          dense={dense}
+        />
+      ) : null}
       <IncompleteScoreMarker missingLabels={missing} compact />
     </span>
   );
