@@ -865,15 +865,11 @@ export function ProjectsTable({
         align: 'center',
         resizable: true,
         cell: (row) => {
-          const rank = row.priority_rank ? (
-            <span
-              className="text-2xs font-semibold tabular-nums text-text-subtle"
-              title="Rank by score within the filtered set"
-              data-numeric=""
-            >
-              #{formatInteger(row.priority_rank)}
-            </span>
-          ) : null;
+          // Owner 2026-11-23: show only the set priority; the score rank is
+          // the calculated one, shown on hover only (the Rank column is the
+          // priority-board position).
+          const rank = null;
+          const scoreTitle = row.priority_rank ? `Calculated: rank #${formatInteger(row.priority_rank)} by score within the filtered set` : undefined;
           // P59: a priority staged from the bulk bar is part of the draft and
           // goes with Save (one batch); it shows as an unsaved change.
           if (edit !== undefined && edit.changed(row, 'priority')) {
@@ -902,7 +898,7 @@ export function ProjectsTable({
           }
           // P57 (ADR 0067): Commercialized / Cancelled read "Not applicable".
           return row.priority || row.priority_rank || rowPriorityNotApplicable(row) ? (
-            <span className="inline-flex items-center gap-1">
+            <span className="inline-flex items-center gap-1" title={scoreTitle}>
               <ProjectPriorityPill status={row.status} priorityApplicable={row.priority_applicable} priority={row.priority} short />
               {rank}
             </span>
@@ -928,7 +924,6 @@ export function ProjectsTable({
             <span className="inline-flex items-center gap-1 text-xs font-semibold tabular-nums text-text" data-testid="rank-cell" data-numeric="">
               {canMove ? (
                 <>
-                  <span>{row.priority} ·</span>
                   <EditableBandRank
                     host={moveHost}
                     canMove
@@ -942,7 +937,7 @@ export function ProjectsTable({
                 </>
               ) : (
                 <span title={row.band_size ? `Position ${String(rank)} of ${String(row.band_size)} in ${row.priority}` : undefined}>
-                  {row.priority} · {rank}
+                  #{rank}
                 </span>
               )}
             </span>

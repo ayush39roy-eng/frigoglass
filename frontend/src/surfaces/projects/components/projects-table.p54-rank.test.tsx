@@ -73,7 +73,7 @@ describe('P54 (ADR 0064 R2): register Rank column', () => {
   it('renders the band and rank, "—" when unranked, read-only without the right', () => {
     renderTable(host(), false);
     const cells = screen.getAllByTestId('rank-cell').map((c) => c.textContent);
-    expect(cells).toEqual(['P2 · 1', 'P1 · 3', 'P1 · 1']);
+    expect(cells).toEqual(['#1', '#3', '#1']);
     const charlie = screen.getAllByTestId('projects-row').find((r) => r.getAttribute('data-project-id') === 'c');
     expect(within(charlie as HTMLElement).queryByTestId('rank-cell')).toBeNull();
     expect(screen.queryByTestId('board-rank-input')).not.toBeInTheDocument();
@@ -112,6 +112,6 @@ describe('P54 (ADR 0064 R2): register Rank column', () => {
   it('no move host: read-only text, no input', () => {
     renderTable(null);
     expect(screen.queryByTestId('board-rank-input')).not.toBeInTheDocument();
-    expect(screen.getAllByTestId('rank-cell')[1]).toHaveTextContent('P1 · 3');
+    expect(screen.getAllByTestId('rank-cell')[1]).toHaveTextContent('#3');
   });
 });
