@@ -205,6 +205,10 @@ class ProjectUpdateRequest(BaseModel):
     #: P47 (ADR 0059): the values the user started from, per changed field
     #: (`{"status": "In Queue", ...}`). Optional; see `schemas.edit_conflict`.
     base: EditBase = Field(default_factory=dict)
+    #: ADR 0069 (manual recalculation mode): `true` saves, audits and marks
+    #: the changed projects `schedule_stale` as usual but dispatches NO run
+    #: (`recalc_status: "deferred"`). Default `false`: unchanged behaviour.
+    defer_recalc: bool = Field(default=False, strict=True)
 
 
 class ProjectRead(BaseModel):
@@ -368,6 +372,10 @@ class PriorityMoveRequest(BaseModel):
     preview_token: str | None = Field(default=None, min_length=16, max_length=128)
     #: P47 (ADR 0059): `{"priority": <the priority the user started from>}`.
     base: EditBase = Field(default_factory=dict)
+    #: ADR 0069 (manual recalculation mode): `true` saves, audits and marks
+    #: the changed projects `schedule_stale` as usual but dispatches NO run
+    #: (`recalc_status: "deferred"`). Default `false`: unchanged behaviour.
+    defer_recalc: bool = Field(default=False, strict=True)
 
 
 class PriorityPreviewRequest(BaseModel):
@@ -376,6 +384,9 @@ class PriorityPreviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     priority: ProjectPriority = Field(strict=False)
+    #: ADR 0069: accepted so the UI can send one body shape; a preview
+    #: writes nothing and dispatches nothing either way, so it is ignored.
+    defer_recalc: bool = Field(default=False, strict=True)
 
 
 class BandRankPreviewRequest(BaseModel):
@@ -404,6 +415,10 @@ class BandRankPreviewRequest(BaseModel):
     #: `hub_rank` (422 `RANK_AND_HUB_RANK`); not with an anchor (422
     #: `ANCHOR_AND_RANK`); below 1 is 422 `BAD_RANK`. Strict JSON integer.
     hub_rank: int | None = Field(default=None, strict=True)
+    #: ADR 0069: on the preview it is ignored (a preview writes nothing); on
+    #: `BandRankMoveRequest` (which inherits it) `true` writes the re-rank but
+    #: applies NO run (`recalc_status: "deferred"`). Default `false`.
+    defer_recalc: bool = Field(default=False, strict=True)
 
 
 class BandRankMoveRequest(BandRankPreviewRequest):
@@ -630,6 +645,10 @@ class RegisterEditsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     edits: list[RegisterEditPatch] = Field(min_length=1, max_length=REGISTER_EDITS_MAX)
+    #: ADR 0069 (manual recalculation mode): `true` saves, audits and marks
+    #: the changed projects `schedule_stale` as usual but dispatches NO run
+    #: (`recalc_status: "deferred"`). Default `false`: unchanged behaviour.
+    defer_recalc: bool = Field(default=False, strict=True)
 
 
 class RegisterEditError(BaseModel):

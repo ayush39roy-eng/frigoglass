@@ -1163,7 +1163,10 @@ def test_band_rank_request_union_p36_to_rank() -> None:
     hub_rank = _resolve_ts_fields_with_imports(_PRIORITY_MOVE_TS, "BandRankHubRankPlacement")
     assert set(hub_rank) == {"hub_rank"}
     preview_props, preview_required = _backend_fields("BandRankPreviewRequest")
-    assert preview_props == set(anchors) | set(to_rank) | set(hub_rank)
+    # P61 (ADR 0069): plus the request option `defer_recalc` (optional bool),
+    # which the TS client adds centrally (`lib/api/defer-recalc.ts`), not in
+    # the placement types.
+    assert preview_props == set(anchors) | set(to_rank) | set(hub_rank) | {"defer_recalc"}
     assert preview_required == set()
     move_props, move_required = _backend_fields("BandRankMoveRequest")
     assert move_props == preview_props | {"preview_token"}

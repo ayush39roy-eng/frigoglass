@@ -254,6 +254,9 @@ class StageUpdateRequest(BaseModel):
     #: P47 (ADR 0059): the stage's values the user started from, per changed
     #: field. Optional.
     base: EditBase = Field(default_factory=dict)
+    #: ADR 0069: accepted so the UI can send it on every plan write; a stage
+    #: progress edit never dispatches a run (ADR 0006), so it changes nothing.
+    defer_recalc: bool = Field(default=False, strict=True)
 
 
 class RecalculateResponse(BaseModel):

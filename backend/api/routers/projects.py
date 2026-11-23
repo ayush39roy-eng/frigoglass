@@ -852,14 +852,16 @@ async def update_project(
     await check_category_code(db, body.category, loc=("body", "category"))
     project = await _get_project_or_404(db, project_id, current_user)
     await _authorize_registration_write(db, project, current_user)
-    refuse_hidden_financials(current_user, body.model_fields_set - {"base"}, body.base)
+    refuse_hidden_financials(
+        current_user, body.model_fields_set - {"base", "defer_recalc"}, body.base
+    )
     if body.model_fields_set & {"status", "priority"}:
         # ADR 0050 / R36-8: a status or priority change may move the band
         # rank; the band-rank lock is the first lock of the write, taken only
         # after lookup + authorisation (P36-R01), and the project is re-read
         # and re-authorised under it.
         project = await _lock_bands_and_reload(db, project, current_user)
-    updates = body.model_dump(exclude_unset=True, exclude={"base"})
+    updates = body.model_dump(exclude_unset=True, exclude={"base", "defer_recalc"})
     if body.base:
         # P47 (ADR 0059 C1): lock the row the way the register batch does,
         # then compare `base` before anything is written. P47-R01 (M-1):
@@ -877,7 +879,9 @@ async def update_project(
     staged = await stage_project_update(db, project, updates, current_user, clock=clock)
     if staged.priority_moves:
         # Commits everything above together with the move.
-        move = await apply_priority_change(db, project, staged.new_priority, current_user)
+        move = await apply_priority_change(
+            db, project, staged.new_priority, current_user, defer=body.defer_recalc
+        )
         response.headers.update(move.response_headers())
     else:
         await db.commit()
@@ -1629,7 +1633,8 @@ async def save_register_edits(
         for p in changed
     )
     recalc, baseline_id = await decide_auto_recalc_batch(
-        db, needs_run=needs_run, trigger_reason=REGISTER_EDIT_TRIGGER_REASON
+        db, needs_run=needs_run, trigger_reason=REGISTER_EDIT_TRIGGER_REASON,
+        defer=body.defer_recalc,
     )
     for pid, result in staged.items():
         if result.priority_moves:
@@ -1742,9 +1747,12 @@ async def move_project_priority(
         await check_project_base(db, current_user, project, body.base, {"priority": body.priority})
     if body.preview_token is not None:
         return await confirm_priority_move(
-            db, project, body.priority, current_user, body.preview_token
+            db, project, body.priority, current_user, body.preview_token,
+            defer=body.defer_recalc,
         )
-    move = await apply_priority_change(db, project, body.priority, current_user)
+    move = await apply_priority_change(
+        db, project, body.priority, current_user, defer=body.defer_recalc
+    )
     assert move.priority_after is not None  # the request schema forbids null
     return PriorityMoveResponse(
         project_id=move.project_id,
@@ -1873,6 +1881,7 @@ async def move_project_band_rank(
         db, project, current_user,
         before=body.before_project_id, after=body.after_project_id,
         preview_token=body.preview_token, to_rank=body.to_rank, hub_rank=body.hub_rank,
+        defer=body.defer_recalc,
     )
     response.headers.update(
         AutoRecalcOutcome(

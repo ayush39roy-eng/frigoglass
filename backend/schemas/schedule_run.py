@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
@@ -185,3 +185,40 @@ class ScheduleRunChanges(BaseModel):
     #: P53 (R53-7): the baseline is a pre-P53 run and this run is a P53 run;
     #: the UI labels the list "includes the scheduling-rule change (P53)".
     includes_rule_change: bool = False
+
+
+class PlanFreshnessResponse(BaseModel):
+    """`GET /schedule-runs/freshness` (ADR 0069): is the active plan up to
+    date with the saved inputs? Global (not hub-scoped): counts only.
+
+    - `stale_project_count`: schedulable projects with `schedule_stale` set.
+    - `last_run_at` / `last_run_version`: the active run (completion time,
+      else creation time); null before the first run.
+    - `run_in_flight`: a queued or running run inside the in-flight window.
+    - `oldest_stale_since`: not tracked (no stale-since column); always null.
+    """
+
+    stale_project_count: int
+    last_run_at: datetime | None
+    last_run_version: int | None
+    run_in_flight: bool
+    oldest_stale_since: datetime | None = None
+
+
+#: ADR 0069 "Recalculate now": `queued` = one greedy run dispatched (follow
+#: `schedule_run_id` on the SSE stream); `deferred` = a run was already in
+#: flight, so the one ADR 0023 follow-up run is registered and starts when it
+#: ends (`in_flight_run_id` is the run to follow meanwhile);
+#: `dispatch_failed` = the broker refused (the run row is FAILED).
+RecalculateNowStatus = Literal["queued", "deferred", "dispatch_failed"]
+
+
+class RecalculateNowResponse(BaseModel):
+    """`POST /schedule-runs/recalculate` (202, ADR 0069)."""
+
+    recalc_status: RecalculateNowStatus
+    schedule_run_id: uuid.UUID | None
+    baseline_run_id: uuid.UUID | None
+    task_id: str | None
+    in_flight_run_id: uuid.UUID | None
+    stale_project_count: int

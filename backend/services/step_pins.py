@@ -283,8 +283,10 @@ async def save_step_pins(
     principal: Principal,
     *,
     current_week: int,
+    defer: bool = False,
 ) -> StepPinSaveResult:
-    """See the module docstring. The caller has checked the role (403)."""
+    """See the module docstring. The caller has checked the role (403).
+    ADR 0069: `defer=True` saves and marks stale but dispatches no run."""
 
     # --- 1. shape, before any lock ------------------------------------------------------
     errors: list[StepPinError] = []
@@ -494,7 +496,7 @@ async def save_step_pins(
     await mark_projects_stale(db, stale_ids)
     needs_run = any(p.status not in NON_SCHEDULABLE_STATUSES for p in changed_projects.values())
     recalc, baseline_id = await decide_auto_recalc_batch(
-        db, needs_run=needs_run, trigger_reason=TRIGGER_REASON
+        db, needs_run=needs_run, trigger_reason=TRIGGER_REASON, defer=defer
     )
     outcome = await dispatch_auto_recalc_batch(
         db,

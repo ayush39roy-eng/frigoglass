@@ -498,6 +498,9 @@ async def submit_check_ins(
     recalc: CheckInRecalcStatus
     if not changed_ids:
         recalc = "not_needed"
+    elif body.defer_recalc:
+        # ADR 0069: deferred by the caller; no run, no ADR 0023 follow-up.
+        recalc = "deferred"
     elif await find_in_flight_run(db, trigger_reason=TRIGGER_REASON) is not None:
         recalc = "deferred"
     else:

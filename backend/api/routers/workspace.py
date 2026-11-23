@@ -291,7 +291,7 @@ async def patch_stage(
             "of its own.",
         )
 
-    explicit = body.model_dump(exclude_unset=True, exclude={"base"})
+    explicit = body.model_dump(exclude_unset=True, exclude={"base", "defer_recalc"})
     if "status" in explicit and explicit["status"] is None:
         raise CodedHTTPException(
             HTTP_422,

@@ -74,3 +74,21 @@ async def clear_stale_for_run(db: AsyncSession, schedule_run_id: uuid.UUID) -> N
         .values(schedule_stale=False)
         .execution_options(synchronize_session=False)
     )
+
+
+async def count_stale_schedulable(db: AsyncSession) -> int:
+    """ADR 0069 plan freshness: how many schedulable projects are
+    `schedule_stale`. One parameterised `COUNT`, not hub-scoped."""
+
+    return int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(Project)
+                .where(
+                    Project.schedule_stale.is_(True),
+                    Project.status.not_in(list(NON_SCHEDULABLE_STATUSES)),
+                )
+            )
+        ).scalar_one()
+    )

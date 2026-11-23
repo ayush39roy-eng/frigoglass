@@ -957,7 +957,9 @@ async def save_pins(
             headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
         )
 
-    result = await save_step_pins(db, body.items, current_user, current_week=clock.week)
+    result = await save_step_pins(
+        db, body.items, current_user, current_week=clock.week, defer=body.defer_recalc
+    )
     response.headers.update(result.response_headers())
     outcome = result.outcome
     return StepPinsResponse(

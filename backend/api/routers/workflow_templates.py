@@ -444,7 +444,8 @@ async def apply_template(
     own_effort = evaluation.in_list("own_effort")
     schedulable_changed = [p for p, _ in changed if p.status not in NON_SCHEDULABLE_STATUSES]
     recalc, baseline_id = await decide_auto_recalc_batch(
-        db, needs_run=bool(schedulable_changed), trigger_reason=TEMPLATE_APPLY_TRIGGER_REASON
+        db, needs_run=bool(schedulable_changed), trigger_reason=TEMPLATE_APPLY_TRIGGER_REASON,
+        defer=body.defer_recalc,
     )
     # 8. the summary row: every affected project id, with reasons.
     db.add(

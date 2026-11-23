@@ -316,7 +316,7 @@ async def set_project_vip(
     # ADR 0040: a pin is a scheduling input, same lifecycle as a priority move.
     project.schedule_stale = True
     recalc, baseline_id = await decide_auto_recalc(
-        db, project, trigger_reason=VIP_PIN_TRIGGER_REASON
+        db, project, trigger_reason=VIP_PIN_TRIGGER_REASON, defer=body.defer_recalc
     )
     db.add(
         AuditLogEntry(

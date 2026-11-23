@@ -133,6 +133,10 @@ class TemplateApplyRequest(TemplateChangeSet):
 
     selection: ApplySelection
     reason: str | None = Field(default=None, max_length=500)
+    #: ADR 0069 (manual recalculation mode): `true` saves, audits and marks
+    #: the changed projects `schedule_stale` as usual but dispatches NO run
+    #: (`recalc_status: "deferred"`). Default `false`: unchanged behaviour.
+    defer_recalc: bool = Field(default=False, strict=True)
 
 
 StepFlag = Literal[

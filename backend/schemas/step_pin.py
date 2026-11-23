@@ -58,6 +58,10 @@ class StepPinsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: list[StepPinItem] = Field(min_length=1, max_length=STEP_PINS_MAX)
+    #: ADR 0069 (manual recalculation mode): `true` saves, audits and marks
+    #: the changed projects `schedule_stale` as usual but dispatches NO run
+    #: (`recalc_status: "deferred"`). Default `false`: unchanged behaviour.
+    defer_recalc: bool = Field(default=False, strict=True)
 
 
 class StepPinError(BaseModel):

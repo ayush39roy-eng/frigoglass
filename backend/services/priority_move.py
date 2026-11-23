@@ -196,8 +196,13 @@ async def apply_priority_change(
     project: Project,
     new_priority: ProjectPriority | None,
     principal: Principal,
+    *,
+    defer: bool = False,
 ) -> PriorityMoveResult:
     """Apply one priority move and commit (see module docstring).
+
+    ADR 0069: `defer=True` (the request's `defer_recalc`) saves, audits and
+    marks stale exactly as usual but dispatches no run (`deferred`).
 
     The caller has already resolved the project through the hub-scoped
     lookup and authorised the write. On the PATCH path the caller may have
@@ -227,7 +232,9 @@ async def apply_priority_change(
         db, project, status_before=project.status, priority_before=before
     )
 
-    recalc, baseline_id = await decide_auto_recalc(db, project, trigger_reason=TRIGGER_REASON)
+    recalc, baseline_id = await decide_auto_recalc(
+        db, project, trigger_reason=TRIGGER_REASON, defer=defer
+    )
     add_priority_move_audit(
         db, project, before, new_priority, principal, recalc=recalc, baseline_id=baseline_id,
         band_rank_before=rank_before,
@@ -271,7 +278,7 @@ class AutoRecalcOutcome:
 
 
 async def decide_auto_recalc(
-    db: AsyncSession, project: Project, *, trigger_reason: str
+    db: AsyncSession, project: Project, *, trigger_reason: str, defer: bool = False
 ) -> tuple[RecalcStatus, uuid.UUID | None]:
     """Step 1 of the auto-recalc lifecycle, after the caller has written the
     scheduler input and set `schedule_stale`: `not_needed` for a
@@ -285,11 +292,12 @@ async def decide_auto_recalc(
         db,
         needs_run=project.status not in NON_SCHEDULABLE_STATUSES,
         trigger_reason=trigger_reason,
+        defer=defer,
     )
 
 
 async def decide_auto_recalc_batch(
-    db: AsyncSession, *, needs_run: bool, trigger_reason: str
+    db: AsyncSession, *, needs_run: bool, trigger_reason: str, defer: bool = False
 ) -> tuple[RecalcStatus, uuid.UUID | None]:
     """`decide_auto_recalc` for a caller that has decided itself whether the
     change can move the plan (`needs_run`): `not_needed` when not, else
@@ -300,6 +308,12 @@ async def decide_auto_recalc_batch(
     recalc: RecalcStatus
     if not needs_run:
         recalc = "not_needed"
+    elif defer:
+        # ADR 0069 (manual recalculation mode): the caller asked to defer.
+        # No run and no ADR 0023 follow-up either; the changed projects stay
+        # `schedule_stale` until "Recalculate now", the next non-deferred
+        # save or the weekly rollover.
+        recalc = "deferred"
     elif await find_in_flight_run(db, trigger_reason=trigger_reason) is not None:
         recalc = "deferred"
     else:

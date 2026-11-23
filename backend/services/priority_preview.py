@@ -575,14 +575,21 @@ async def confirm_priority_move(
     target: ProjectPriority,
     principal: Principal,
     preview_token: str,
+    *,
+    defer: bool = False,
 ) -> PriorityMoveResponse:
     """ADR 0026 §2–§3 (module docstring). The caller has resolved and
     authorised the project exactly as the ADR 0015 move.
+
+    ADR 0069: `defer=True` checks the token and writes the move as usual but
+    applies no run (`deferred`, no ADR 0023 follow-up).
     """
 
     before_priority = project.priority
     if target == before_priority:
-        return _plain_response(await apply_priority_change(db, project, target, principal))
+        return _plain_response(
+            await apply_priority_change(db, project, target, principal, defer=defer)
+        )
     await ensure_priority_move_allowed(db, project, target)
 
     if project.status in NON_SCHEDULABLE_STATUSES:
@@ -590,14 +597,20 @@ async def confirm_priority_move(
         if snap.token != preview_token:
             raise _stale()
         # No run either way; ADR 0015's `not_needed` path writes the move.
-        return _plain_response(await apply_priority_change(db, project, target, principal))
+        return _plain_response(
+            await apply_priority_change(db, project, target, principal, defer=defer)
+        )
 
     # ADR 0050 / R36-8: the band-rank lock before the dispatch lock
     # (re-entrant: the route takes it before reading the project).
     await lock_band_ranks(db)
     # Dispatch lock (held until commit/rollback), abandoned-run reaping, and
     # the ADR 0023 follow-up flag when a worker run is genuinely in flight.
-    in_flight = await find_in_flight_run(db, trigger_reason=TRIGGER_REASON)
+    # ADR 0069: a deferred confirm takes no dispatch lock and registers no
+    # follow-up; it is answered like the in-flight branch below.
+    in_flight = (
+        None if defer else await find_in_flight_run(db, trigger_reason=TRIGGER_REASON)
+    )
     snap = await _snapshot(db, project, target)
     if snap.token != preview_token:
         # Nothing is committed: raising straight away ends the handler, and the
@@ -617,7 +630,7 @@ async def confirm_priority_move(
         db, project, status_before=project.status, priority_before=before_priority
     )
 
-    if in_flight is not None:
+    if defer or in_flight is not None:
         add_priority_move_audit(
             db, project, before_priority, target, principal, recalc="deferred", baseline_id=None,
             band_rank_before=rank_before,
@@ -1000,8 +1013,10 @@ async def confirm_band_rank_move(
     preview_token: str,
     to_rank: int | None = None,
     hub_rank: int | None = None,
+    defer: bool = False,
 ) -> PriorityMoveResponse:
-    """Contract §3: the priority confirm's lifecycle for a re-rank. The
+    """Contract §3: the priority confirm's lifecycle for a re-rank.
+    ADR 0069: `defer=True` writes the re-rank but applies no run (`deferred`). The
     route has taken the band-rank lock and re-read the project. Under the
     dispatch lock: the token is checked against a fresh snapshot (409
     `PREVIEW_STALE`, nothing written), the band renumbered with the project
@@ -1039,7 +1054,9 @@ async def confirm_band_rank_move(
         return response("unchanged")
 
     await lock_band_ranks(db)  # re-entrant; the route took it first
-    in_flight = await find_in_flight_run(db, trigger_reason=RANK_TRIGGER_REASON)
+    in_flight = (
+        None if defer else await find_in_flight_run(db, trigger_reason=RANK_TRIGGER_REASON)
+    )
     snap = await _rank_snapshot(
         db, project, band, before=before, after=after, to_rank=to_rank, hub_rank=hub_rank
     )
@@ -1050,7 +1067,7 @@ async def confirm_band_rank_move(
     await place_in_band(db, project, before=before, after=after)
     project.schedule_stale = True
 
-    if in_flight is not None:
+    if defer or in_flight is not None:
         _add_rank_audit(
             db,
             project,

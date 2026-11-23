@@ -222,6 +222,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Literal
 
 import redis.asyncio as redis_asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -230,7 +231,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db, get_session_factory
-from api.deps import require_any_permission, require_roles
+from api.deps import get_current_principal, require_any_permission, require_roles
 from api.errors import CodedHTTPException
 from api.super_admin import ensure_super_admin
 from core.celery_config import get_celery_settings, get_redis_settings
@@ -244,10 +245,15 @@ from schemas.schedule_run import (
     CpSatDispatchRequest,
     CpSatDispatchResponse,
     GreedyRecalcResponse,
+    PlanFreshnessResponse,
+    RecalculateNowResponse,
     ScheduleRunChanges,
     ScheduleRunSummary,
 )
+from services.active_run import get_active_run
 from services.plan_clock import PlanClock, get_plan_clock
+from services.plan_week import any_run_in_flight
+from services.priority_move import dispatch_auto_recalc_batch
 from services.run_changes import compute_run_changes
 from services.run_dispatch import enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import (
@@ -255,6 +261,7 @@ from services.schedule_persistence import (
     create_queued_schedule_run,
     persist_schedule_output,
 )
+from services.schedule_stale import count_stale_schedulable
 from workers.celery_app import celery_app
 from workers.progress import channel_name, publish_progress
 from workers.schedule_tasks import run_cp_sat_schedule
@@ -323,6 +330,99 @@ async def get_active_schedule_run(
             detail="No active ScheduleRun yet — trigger one via POST /schedule-runs/greedy-recalc.",
         )
     return run
+
+
+@router.get("/freshness", response_model=PlanFreshnessResponse)
+async def get_plan_freshness(
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(get_current_principal),
+) -> PlanFreshnessResponse:
+    """ADR 0069: whether the active plan reflects every saved input. Any
+    signed-in user; global counts (not hub-scoped, no project data): one
+    `COUNT` of stale schedulable projects, the active run, and one in-flight
+    probe (no lock). `oldest_stale_since` is not tracked (always null)."""
+
+    stale = await count_stale_schedulable(db)
+    active = await get_active_run(db)
+    return PlanFreshnessResponse(
+        stale_project_count=stale,
+        last_run_at=(active.completed_at or active.created_at) if active is not None else None,
+        last_run_version=active.version if active is not None else None,
+        run_in_flight=await any_run_in_flight(db),
+        oldest_stale_since=None,
+    )
+
+
+#: `ScheduleRun.trigger_reason` of an ADR 0069 "Recalculate now" run (the
+#: same label as the synchronous `POST /schedule-runs/greedy-recalc`).
+RECALCULATE_TRIGGER_REASON = "manual_recalc"
+
+
+@router.post(
+    "/recalculate",
+    response_model=RecalculateNowResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def recalculate_now(
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_admin_only),
+) -> RecalculateNowResponse:
+    """ADR 0069 "Recalculate now" (Admin / Super Admin, else 403). Dispatches
+    ONE greedy run the way an auto-recalc does (`activate=True`, never solved
+    in this process): `queued` with the run id to follow on
+    `GET /schedule-runs/{id}/progress`. A run already in flight answers
+    `deferred` and registers the one ADR 0023 coalesced follow-up run, which
+    starts when that run ends and reads every input saved by then. Activation
+    clears `schedule_stale`. Audit `schedule_run.recalculate_requested`
+    (committed with the QUEUED run)."""
+
+    stale = await count_stale_schedulable(db)
+    # Dispatch lock (held until commit), abandoned-run reaping, and the
+    # ADR 0023 follow-up flag when a run is in flight.
+    in_flight = await find_in_flight_run(db, trigger_reason=RECALCULATE_TRIGGER_REASON)
+    baseline_id: uuid.UUID | None = None
+    if in_flight is None:
+        active = await get_active_run(db)
+        baseline_id = active.id if active is not None else None
+    recalc: Literal["queued", "deferred"] = "deferred" if in_flight is not None else "queued"
+    db.add(
+        AuditLogEntry(
+            actor_user_id=current_user.user_id,
+            action="schedule_run.recalculate_requested",
+            entity_type="ScheduleRun",
+            entity_id=str(in_flight or baseline_id or "none"),
+            hub_id=None,
+            before_state=None,
+            after_state={
+                "recalc_status": recalc,
+                "stale_project_count": stale,
+                "in_flight_run_id": str(in_flight) if in_flight is not None else None,
+                "baseline_run_id": str(baseline_id) if baseline_id is not None else None,
+                "trigger_reason": RECALCULATE_TRIGGER_REASON,
+            },
+        )
+    )
+    # Commits the audit row (and the follow-up flag) on `deferred`; on
+    # `queued` commits it with the QUEUED run, then enqueues it.
+    outcome = await dispatch_auto_recalc_batch(
+        db, [], current_user,
+        recalc=recalc, baseline_id=baseline_id, trigger_reason=RECALCULATE_TRIGGER_REASON,
+    )
+    status_out: Literal["queued", "deferred", "dispatch_failed"]
+    if outcome.recalc_status == "dispatch_failed":
+        status_out = "dispatch_failed"
+    elif outcome.recalc_status == "queued":
+        status_out = "queued"
+    else:
+        status_out = "deferred"
+    return RecalculateNowResponse(
+        recalc_status=status_out,
+        schedule_run_id=outcome.schedule_run_id,
+        baseline_run_id=outcome.baseline_run_id,
+        task_id=outcome.task_id,
+        in_flight_run_id=in_flight,
+        stale_project_count=stale,
+    )
 
 
 @router.get("/{run_id}/changes", response_model=ScheduleRunChanges)

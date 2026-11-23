@@ -71,6 +71,10 @@ class VipPinRequest(BaseModel):
     is_vip: bool
     #: P47 (ADR 0059): `{"is_vip": <bool as the user read it>}`. Optional.
     base: EditBase = Field(default_factory=dict)
+    #: ADR 0069 (manual recalculation mode): `true` saves, audits and marks
+    #: the changed projects `schedule_stale` as usual but dispatches NO run
+    #: (`recalc_status: "deferred"`). Default `false`: unchanged behaviour.
+    defer_recalc: bool = Field(default=False, strict=True)
 
 
 class VipPinResponse(BaseModel):

@@ -295,6 +295,9 @@ async def test_post_unchanged_writes_nothing(db_session, dispatch):
         "summary": None,
         "changes": [],
         "hidden_count": 0,
+        # P60 (ADR 0068): set only on a band-rank move.
+        "band_rank": None,
+        "hub_rank": None,
     }
     assert dispatch.calls == []
     assert await _audits(db_session, "project.priority_move", w.project) == []

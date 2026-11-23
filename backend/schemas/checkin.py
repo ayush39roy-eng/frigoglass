@@ -58,6 +58,10 @@ class CheckInRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     entries: list[CheckInEntry] = Field(min_length=1, max_length=CHECKIN_MAX_ENTRIES)
+    #: ADR 0069 (manual recalculation mode): `true` saves, audits and marks
+    #: the changed projects `schedule_stale` as usual but dispatches NO run
+    #: (`recalc_status: "deferred"`). Default `false`: unchanged behaviour.
+    defer_recalc: bool = Field(default=False, strict=True)
 
 
 class CheckInResponse(BaseModel):
