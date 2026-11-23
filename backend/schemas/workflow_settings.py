@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from models.enums import HubName, LabRegion, WorkflowStepKind
 from schemas.category import CategoryCodeOut
@@ -136,6 +136,20 @@ class StepsUpdateRequest(BaseModel):
     #: Bounded loosely; the exact "all 14, each once" rule is the router's
     #: `BAD_STEP_SET` check, so a wrong count gets that code.
     steps: list[StepPrecedenceUpdate] = Field(min_length=1, max_length=28)
+    #: P58 (docs/API_CONTRACT_P58.md §1): a step that becomes `lab` while no
+    #: chamber lists it in `allowed_stages` is 409 `LAB_STEP_HAS_NO_CHAMBER`
+    #: unless the request says where it may run. `add_to_chambers`: these
+    #: chambers get every lab step of this workflow that no chamber lists.
+    add_to_chambers: list[uuid.UUID] | None = Field(default=None, min_length=1, max_length=100)
+    #: P58: the same, onto every chamber that lists this existing lab step
+    #: (e.g. "PDD-H"). Mutually exclusive with `add_to_chambers`.
+    add_to_chambers_like: str | None = Field(default=None, min_length=1, max_length=10)
+
+    @model_validator(mode="after")
+    def _one_chamber_target(self) -> StepsUpdateRequest:
+        if self.add_to_chambers is not None and self.add_to_chambers_like is not None:
+            raise ValueError("give add_to_chambers or add_to_chambers_like, not both")
+        return self
 
 
 class HubCalendarUpdateRequest(BaseModel):

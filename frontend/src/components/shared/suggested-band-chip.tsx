@@ -25,16 +25,58 @@ export interface SuggestedBandChipProps {
   /** List rows: the fill variant reads "P1" with its icon and outline (the full label stays the
    *  accessible name and the tooltip). Implies `compact`. */
   dense?: boolean;
+  /**
+   * P58 (owner bug 2026-11-23): show a visible "Suggested" label ("Sugg." when `dense`) and an
+   * outlined pill, for places with no column header saying what the band is (the Priority
+   * board card and list row). Without it the score's band reads exactly like the project's
+   * set priority, so after a priority move the card still seemed to show the old priority.
+   */
+  labelled?: boolean;
 }
 
-export function SuggestedBandChip({
+/** The tooltip of a labelled suggested band: what it is, and that it is not the priority. */
+function suggestedBandTitle(band: ProjectPriority): string {
+  return `Suggested band ${band}, from the project's score. It is not the project's priority; change that with the priority control.`;
+}
+
+export function SuggestedBandChip({ labelled = false, ...props }: SuggestedBandChipProps): React.JSX.Element {
+  if (!labelled) return <BandChip {...props} />;
+  const title = suggestedBandTitle(props.band);
+  return (
+    <span className="inline-flex items-center gap-1" data-testid="band-chip-suggested">
+      <span className="text-2xs leading-none text-text-muted" title={title} data-testid="band-chip-suggested-label">
+        {props.dense ? (
+          <abbr title={title} className="no-underline">
+            Sugg.
+          </abbr>
+        ) : (
+          'Suggested'
+        )}
+      </span>
+      <BandChip {...props} outlined />
+    </span>
+  );
+}
+
+function BandChip({
   band,
   capacityFill,
   reason,
   scoreBand,
   compact = false,
   dense = false,
-}: SuggestedBandChipProps): React.JSX.Element {
+  outlined = false,
+}: Omit<SuggestedBandChipProps, 'labelled'> & { outlined?: boolean }): React.JSX.Element {
+  // P58: a labelled chip is outlined so it never looks like the set-priority pill.
+  const pill = outlined ? (
+    <PriorityBandPill
+      priority={band}
+      className="bg-transparent ring-1 ring-inset ring-border-strong/60"
+      title={suggestedBandTitle(band)}
+    />
+  ) : (
+    <PriorityBandPill priority={band} />
+  );
   if (capacityFill === true) {
     const name = `Suggested band P1 by capacity fill${scoreBand ? `, score band ${scoreBand}` : ''}`;
     const chip = (
@@ -77,7 +119,7 @@ export function SuggestedBandChip({
             className={cn('rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring')}
             data-testid="band-chip-with-reason"
           >
-            <PriorityBandPill priority={band} />
+            {pill}
           </button>
         </TooltipTrigger>
         <TooltipContent className="max-w-xs text-left" data-testid="band-chip-reason">
@@ -86,5 +128,5 @@ export function SuggestedBandChip({
       </Tooltip>
     );
   }
-  return <PriorityBandPill priority={band} />;
+  return pill;
 }

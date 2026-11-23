@@ -120,6 +120,10 @@ class ParseContext:
     #: workbook spellings below is taken as that category. Default: the
     #: seeded seven.
     categories: Mapping[str, str] = field(default_factory=lambda: dict(_SEED_CATEGORIES))
+    #: P58-B: the served Projects list of the caller's scope and the plan
+    #: details a re-uploaded Projects list download is compared against
+    #: (`services.whatif_import_register.RegisterContext`); None = an empty one.
+    register: Any = None
 
 
 # --- output ----------------------------------------------------------------------------------
@@ -147,6 +151,19 @@ class Leader:
     kind: str  # "existing" | "new" | "auto"
     engineer_id: str | None = None
     name: str | None = None
+
+
+@dataclass(frozen=True)
+class RowChange:
+    """P58-B: one cell of a re-uploaded Projects list that differs from the
+    project as served. `simulated` is False for a column that is not a
+    scheduling input (code, type, actual dates)."""
+
+    field: str
+    label: str
+    before: str | None
+    after: str | None
+    simulated: bool = True
 
 
 @dataclass(frozen=True)
@@ -185,6 +202,10 @@ class ParsedRow:
     #: ADR 0061 (R49-2): the most urgent band whose column(s) say Yes ("P1"
     #: from "Must Do" / "Must Do (P1)", then "P2", "P3", "P4"); None if none.
     file_band: str | None = None
+    #: P58-B (a Projects list file only): "new" | "changed" | "unchanged";
+    #: None for the capacity-planning format.
+    change_kind: str | None = None
+    changes: tuple[RowChange, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -203,6 +224,9 @@ class ParseCounts:
     derived_status: int = 0
     #: Rows excluded as budget lines (`NOT_A_PROJECT`, P32-R06).
     not_a_project: int = 0
+    #: P58-B (a Projects list file): matched rows with / without a change.
+    changed: int = 0
+    unchanged: int = 0
 
 
 @dataclass(frozen=True)
@@ -216,6 +240,9 @@ class ParseResult:
     #: Engineer ids matched by at least one row (the response's roster adds
     #: these to the caller's in-scope designers).
     matched_engineer_ids: frozenset[str]
+    #: P58-B: "plan" (the capacity-planning workbook) | "projects_list" (a
+    #: Projects page download, `services.whatif_import_register`).
+    file_format: str = "plan"
 
 
 # --- raw reading -----------------------------------------------------------------------------
@@ -1479,4 +1506,11 @@ def parse_plan_workbook(
 
     if len(data) > MAX_FILE_BYTES:
         raise ImportFormatError("The file is larger than 5 MB.")
+    # P58-B: a Projects list download (found by its header row) is read as
+    # such; anything else is the capacity-planning workbook.
+    from services.whatif_import_register import parse_register_workbook
+
+    register = parse_register_workbook(data, ctx)
+    if register is not None:
+        return register
     return map_rows(read_workbook(data, aliases), ctx)

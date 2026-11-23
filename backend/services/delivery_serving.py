@@ -50,6 +50,29 @@ def horizon_years_of(run_week: int, horizon_weeks: int) -> int | None:
     return None
 
 
+def left_out_reason_label(
+    reason: str | None, *, no_chamber_step_id: str | None, horizon_years: int | None
+) -> str | None:
+    """P58: a served not-placed reason in words (the frontend's
+    `lib/left-out-reason.ts` copy, with the step named for `no_chamber`).
+    `None` for a placed project."""
+
+    if reason is None:
+        return None
+    if reason == "no_leader":
+        return "No leader assigned"
+    if reason == "no_chamber":
+        if no_chamber_step_id:
+            return f"No lab chamber accepts step {no_chamber_step_id}"
+        return "No lab chamber can run a lab step"
+    if reason == "data_error":
+        return "Data error — check the project setup"
+    if horizon_years is None:
+        return "Cannot be scheduled within the search limit — check resources"
+    unit = "year" if horizon_years == 1 else "years"
+    return f"Cannot be scheduled within {horizon_years} {unit} — check resources"
+
+
 def _band_cells(c: BandCounts) -> dict[str, int]:
     return {"p1": c.p1, "p2": c.p2, "p3": c.p3, "other": c.other, "total": c.total}
 
@@ -355,6 +378,7 @@ __all__ = [
     "delivery_year_of",
     "horizon_years_of",
     "is_p53_run",
+    "left_out_reason_label",
     "result_delivery",
     "result_row",
     "stored_delivery",

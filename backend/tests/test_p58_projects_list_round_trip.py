@@ -1,0 +1,356 @@
+"""P58-B: the Projects list download has exactly the Projects table's columns,
+and an edited copy of it is accepted by the What-if import.
+
+Disposable Postgres (the shared fixture), the real engine, the world of
+`tests.test_p32_whatif_import_api`.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+from typing import Any
+
+import openpyxl
+import pytest
+
+from models.enums import RoleName
+from services.register_export import (
+    REGISTER_COLUMNS,
+    parse_number,
+    parse_rank,
+    parse_step,
+    parse_week,
+    resolve_columns,
+)
+from tests.plan_import_helpers import SECRET_CUSTOMER
+from tests.test_p32_whatif_import_api import (
+    XLSX,
+    _cleanup,  # noqa: F401  (autouse fixture)
+    act_as,
+    client_for,
+    make_world,
+    parse,
+)
+
+DEFAULT_HEADERS = [
+    "#",
+    "Project",
+    "Project code",
+    "Hub",
+    "Category",
+    "Type",
+    "Status",
+    "Leader",
+    "Actual start",
+    "Actual end",
+    "Design time",
+    "Lab time",
+    "End week",
+    "Current step",
+    "Steps",
+    "Priority",
+    "Rank",
+    "Project ID",
+]
+HEADER_ROW = 5  # the styled writer's table header row (title block above)
+
+
+async def _export(c: Any, **params: Any) -> bytes:
+    resp = await c.get(
+        "/exports/dashboard", params={"view": "register", "format": "xlsx", **params}
+    )
+    assert resp.status_code == 200, resp.text
+    assert 'filename="projects-list.xlsx"' in resp.headers["content-disposition"]
+    return resp.content
+
+
+def _sheet(data: bytes) -> tuple[Any, Any, list[str]]:
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    assert wb.sheetnames == ["Projects"]
+    ws = wb["Projects"]
+    headers = [c.value for c in ws[HEADER_ROW] if c.value is not None]
+    return wb, ws, headers
+
+
+def _rows_by_name(ws: Any, headers: list[str]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for r in ws.iter_rows(min_row=HEADER_ROW + 1, values_only=True):
+        cells = dict(zip(headers, r, strict=False))
+        if cells.get("Project"):
+            out[str(cells["Project"])] = cells
+    return out
+
+
+def _set(ws: Any, headers: list[str], name: str, column: str, value: Any) -> None:
+    col = headers.index(column) + 1
+    for r in range(HEADER_ROW + 1, ws.max_row + 1):
+        if ws.cell(r, headers.index("Project") + 1).value == name:
+            ws.cell(r, col).value = value
+            return
+    raise AssertionError(name)
+
+
+def _save(wb: Any) -> bytes:
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# --- the download ---------------------------------------------------------------------------
+
+
+def test_resolve_columns_default_and_selection():
+    assert [c.header for c in resolve_columns(None)] == DEFAULT_HEADERS
+    picked = resolve_columns(["current-step", "hub", "charter-plant"])
+    assert [c.header for c in picked] == [
+        "#", "Project", "Project code", "Hub", "Plant", "Current step", "Project ID",
+    ]  # fmt: skip
+    with pytest.raises(ValueError):
+        resolve_columns(["hub", "tcogs_eur"])
+    assert REGISTER_COLUMNS[-1].header == "Project ID"
+
+
+def test_cell_readers():
+    assert parse_week("W12 2026") == (12, True)
+    assert parse_week("W1 2027") == (53, True)
+    assert parse_week("W5 '27") == (57, True)
+    assert parse_week(30) == (30, True)
+    assert parse_week("") == (None, True)
+    assert parse_week("soon")[1] is False
+    assert parse_step("PDD-C · Concept") == ("PDD-C", True)
+    assert parse_step("oem - b") == ("OEM-B", True)
+    assert parse_step("later")[1] is False
+    assert parse_rank("P1 · 3") == (3, True)
+    assert parse_rank(4.0) == (4, True)
+    assert parse_number("2.5") == (2.5, True)
+    assert parse_number(20000)[1] is False and parse_number(-1)[1] is False
+
+
+async def test_register_download_has_exactly_the_screen_columns(db_session):
+    world = await make_world(db_session)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        data = await _export(c)
+        csv_resp = await c.get("/exports/dashboard", params={"view": "register"})
+        picked = await _export(c, columns=["hub", "current-step"])
+        bad = await c.get(
+            "/exports/dashboard", params={"view": "register", "columns": ["hub", "customer_name"]}
+        )
+        dashboard = await c.get("/exports/dashboard", params={"format": "xlsx"})
+    _, ws, headers = _sheet(data)
+    assert headers == DEFAULT_HEADERS
+    rows = _rows_by_name(ws, headers)
+    assert set(rows) == {"Alpha Cooler", "Beta Cooler", "Gamma Cooler", "Delta Held"}
+    alpha = rows["Alpha Cooler"]
+    assert alpha["Project ID"] == str(world.alpha.id)
+    assert alpha["Project code"] == "26-00001"
+    assert alpha["Priority"] == "P2" and alpha["Status"] == "In Queue"
+    # The world has no step rows, so the served current step is empty.
+    assert alpha["Current step"] is None
+    # No financial value anywhere in the file.
+    assert all(
+        SECRET_CUSTOMER not in str(v) for r in ws.iter_rows(values_only=True) for v in r if v
+    )
+    # CSV: the same headers, in order.
+    assert csv_resp.status_code == 200
+    first = next(csv.reader(io.StringIO(csv_resp.content.decode("utf-8-sig"))))
+    assert first == DEFAULT_HEADERS
+    # `columns`: the fixed columns plus the visible ones, in screen order.
+    _, _, picked_headers = _sheet(picked)
+    assert picked_headers == ["#", "Project", "Project code", "Hub", "Current step", "Project ID"]
+    assert bad.status_code == 422 and bad.json()["code"] == "INVALID_COLUMNS"
+    # The Dashboard's own export is unchanged (its own sheets).
+    wb = openpyxl.load_workbook(io.BytesIO(dashboard.content))
+    assert "Dashboard" in wb.sheetnames
+
+
+# --- the round trip -------------------------------------------------------------------------
+
+
+async def test_round_trip_without_edits_has_no_change(db_session):
+    await make_world(db_session)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        data = await _export(c)
+        resp = await parse(c, data, name="projects-list.xlsx", ctype=XLSX)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        sim = await c.post("/whatif/import/simulate", json={"rows": body["rows"]})
+    assert body["file_format"] == "projects_list"
+    assert body["projects_sheet"] == "Projects"
+    assert {r["change_kind"] for r in body["rows"]} == {"unchanged"}
+    assert all(r["changes"] == [] for r in body["rows"])
+    assert all(r["match_by"] == "id" for r in body["rows"])
+    assert body["counts"]["changed"] == 0 and body["counts"]["unchanged"] == 4
+    assert body["counts"]["projects_after_expansion"] == 0
+    assert not [i for i in body["issues"] if i["code"] in ("CHANGED", "NOT_SIMULATED")]
+    # Simulated: nothing replaces anything; the plan runs as it is.
+    assert sim.status_code == 200, sim.text
+    s = sim.json()
+    assert s["kpis"]["file_projects"] == 0
+    assert {p["source"] for p in s["projects"]} == {"plan"}
+    assert s["changes"]["newly_slipping"] == [] and s["changes"]["moved"] == []
+
+
+async def test_edited_rows_and_a_new_row_are_the_changes(db_session):
+    world = await make_world(db_session)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        wb, ws, headers = _sheet(await _export(c))
+        _set(ws, headers, "Alpha Cooler", "Priority", "P1")
+        _set(ws, headers, "Gamma Cooler", "Category", "B")
+        # Renamed, still matched by its Project ID; a code is not simulated.
+        _set(ws, headers, "Beta Cooler", "Project code", "26-99999")
+        new_row = {
+            "Project": "Brand New Cooler",
+            "Hub": "R&D-Greece",
+            "Category": "C",
+            "Status": "In Queue",
+            "Priority": "P2",
+            "Design time": 6,
+        }
+        ws.append([new_row.get(h) for h in headers])
+        resp = await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        by = {r["name"]: r for r in body["rows"]}
+        sim = await c.post(
+            "/whatif/import/simulate", json={"rows": body["rows"], "plan_year_end_week": 104}
+        )
+
+    alpha, gamma, beta = by["Alpha Cooler"], by["Gamma Cooler"], by["Beta Cooler"]
+    assert alpha["change_kind"] == "changed" and alpha["priority"] == "P1"
+    assert [(x["field"], x["before"], x["after"]) for x in alpha["changes"]] == [
+        ("priority", "P2", "P1")
+    ]
+    assert alpha["matched_project_id"] == str(world.alpha.id)
+    assert alpha["lead_time_label"] == "plan"
+    assert gamma["change_kind"] == "changed" and gamma["category"] == "B"
+    assert [(x["field"], x["before"], x["after"]) for x in gamma["changes"]] == [
+        ("category", "C", "B")
+    ]
+    assert gamma["lead_time_label"] == "app"
+    # A code-only edit is listed but is not a scheduling change.
+    assert beta["change_kind"] == "unchanged"
+    assert [(x["field"], x["simulated"]) for x in beta["changes"]] == [("code", False)]
+    assert by["Delta Held"]["change_kind"] == "unchanged"
+    new = by["Brand New Cooler"]
+    assert new["change_kind"] == "new" and new["matched_project_id"] is None
+    assert (new["hub"], new["category"], new["priority"], new["status"]) == (
+        "R&D-Greece", "C", "P2", "In Queue",
+    )  # fmt: skip
+    design_steps = {
+        m["step_id"] for m in body["steps_meta"] if m["workflow"] == "PDD" and m["kind"] == "design"
+    }
+    assert sum(w for s, w in new["step_weeks"].items() if s in design_steps) == 6
+    counts = body["counts"]
+    assert (counts["changed"], counts["unchanged"], counts["new"]) == (2, 2, 1)
+    codes = {(i["row_key"], i["code"]) for i in body["issues"]}
+    assert (alpha["key"], "CHANGED") in codes and (beta["key"], "NOT_SIMULATED") in codes
+
+    assert sim.status_code == 200, sim.text
+    s = sim.json()
+    files = [p for p in s["projects"] if p["source"] == "file"]
+    assert {p["name"] for p in files} == {"Alpha Cooler", "Gamma Cooler", "Brand New Cooler"}
+    assert s["kpis"]["file_projects"] == 3
+    plan_refs = {p["ref"] for p in s["projects"] if p["source"] == "plan"}
+    assert str(world.beta.id) in plan_refs
+    assert str(world.alpha.id) not in plan_refs and str(world.gamma.id) not in plan_refs
+    alpha_sim = next(p for p in files if p["name"] == "Alpha Cooler")
+    assert alpha_sim["replaces_project_id"] == str(world.alpha.id)
+    assert alpha_sim["priority"] == "P1"
+
+
+async def test_project_id_match_survives_a_rename_and_unknown_id_is_new(db_session):
+    world = await make_world(db_session)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        wb, ws, headers = _sheet(await _export(c))
+        _set(ws, headers, "Alpha Cooler", "Project", "Alpha Cooler Mk2")
+        _set(ws, headers, "Gamma Cooler", "Project ID", "00000000-0000-0000-0000-000000000000")
+        _set(ws, headers, "Gamma Cooler", "Project", "Gamma Elsewhere")
+        resp = await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)
+    assert resp.status_code == 200, resp.text
+    by = {r["name"]: r for r in resp.json()["rows"]}
+    mk2 = by["Alpha Cooler Mk2"]
+    assert mk2["matched_project_id"] == str(world.alpha.id) and mk2["match_by"] == "id"
+    assert [x["field"] for x in mk2["changes"]] == ["project"]
+    assert by["Gamma Elsewhere"]["change_kind"] == "new"
+    codes = {i["code"] for i in resp.json()["issues"]}
+    assert "PROJECT_ID_UNKNOWN" in codes
+
+
+async def test_hub_planner_sees_only_their_projects_in_the_round_trip(db_session):
+    world = await make_world(db_session)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        admin_file = await _export(c)
+    await act_as(db_session, RoleName.HUB_PLANNER, hub_ids=[world.gr.id])
+    async with client_for(db_session) as c:
+        own = await _export(c)
+        resp = await parse(c, admin_file, name="projects-list.xlsx", ctype=XLSX)
+    _, ws, headers = _sheet(own)
+    assert set(_rows_by_name(ws, headers)) == {"Alpha Cooler", "Gamma Cooler"}
+    assert resp.status_code == 200, resp.text
+    by = {r["name"]: r for r in resp.json()["rows"]}
+    # India projects are outside the planner's scope: read as new, never matched.
+    assert by["Beta Cooler"]["change_kind"] == "new"
+    assert by["Beta Cooler"]["matched_project_id"] is None
+    assert by["Alpha Cooler"]["change_kind"] == "unchanged"
+
+
+async def _start(db_session, project: Any) -> None:
+    """Give `project` its 14 PDD step rows: A to C Done, D In Progress."""
+
+    from models.enums import ProjectStatus, WorkflowStepStatus
+    from models.workflow import ProjectWorkflowStep
+
+    for i, letter in enumerate("ABCDEFGHIJKLMN", start=1):
+        status = (
+            WorkflowStepStatus.DONE
+            if letter in "ABC"
+            else WorkflowStepStatus.IN_PROGRESS
+            if letter == "D"
+            else WorkflowStepStatus.NOT_STARTED
+        )
+        db_session.add(
+            ProjectWorkflowStep(
+                project_id=project.id,
+                step_template_id=f"PDD-{letter}",
+                sequence_order=i,
+                duration_weeks=2,
+                status=status,
+                actual_start_week=10 if letter in "ABCD" else None,
+                actual_end_week=11 if letter in "ABC" else None,
+                percent_complete=100 if letter in "ABC" else 0,
+            )
+        )
+    project.status = ProjectStatus.IN_DEVELOPMENT
+    await db_session.flush()
+
+
+async def test_started_project_keeps_its_stage_and_round_trips(db_session):
+    world = await make_world(db_session)
+    await _start(db_session, world.gamma)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        wb, ws, headers = _sheet(await _export(c))
+        served_step = _rows_by_name(ws, headers)["Gamma Cooler"]["Current step"]
+        same = await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)
+        _set(ws, headers, "Gamma Cooler", "Priority", "P1")
+        resp = await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)
+        body = resp.json()
+        sim = await c.post("/whatif/import/simulate", json={"rows": body["rows"]})
+    assert served_step is not None and served_step.startswith("PDD-")
+    code = served_step.split(" ")[0]
+    assert {r["change_kind"] for r in same.json()["rows"]} == {"unchanged"}
+    gamma = next(r for r in body["rows"] if r["name"] == "Gamma Cooler")
+    assert gamma["change_kind"] == "changed" and gamma["status"] == "In Development"
+    assert gamma["stage_step_id"] == code
+    assert sim.status_code == 200, sim.text
+    g = next(p for p in sim.json()["projects"] if p["name"] == "Gamma Cooler")
+    assert g["source"] == "file" and g["priority"] == "P1"
+    steps = {s["step_id"]: s for s in g["steps"]}
+    assert steps["PDD-A"]["done_before_import"] and steps["PDD-B"]["done_before_import"]
+    assert steps[code]["status"] == "In Progress"

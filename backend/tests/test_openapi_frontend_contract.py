@@ -1031,7 +1031,9 @@ def test_steps_update_request_shape() -> None:
     """
 
     props, required = _backend_fields("StepsUpdateRequest")
-    assert props == {"steps"} and required == {"steps"}
+    # P58 (API_CONTRACT_P58 §1): plus the two optional chamber targets.
+    assert props == {"steps", "add_to_chambers", "add_to_chambers_like"}
+    assert required == {"steps"}
     props, required = _backend_fields("StepPrecedenceUpdate")
     # P47 (ADR 0059): plus the optional per-step `base`.
     assert props == {"step_id", "kind", "predecessor_ids", "base"}

@@ -159,6 +159,7 @@ export const BoardListRow = React.memo(function BoardListRow({
             reason={card.capacity_fill_reason}
             scoreBand={card.score_band}
             dense
+            labelled
           />
         </span>
       ) : null}

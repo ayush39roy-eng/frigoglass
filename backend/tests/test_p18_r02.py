@@ -141,10 +141,11 @@ async def test_zero_scenario_within_year_equals_the_dashboard(db_session, restri
     d = sim["diff"]
     assert d["within_year_before"] == d["within_year_after"] == dash
     assert d["within_year_delta"] == 0
-    # The class count alone would have dropped the Commercialized project(s).
-    class_wy = sim["outcome_counts_after"]["within_year"]
-    assert dash == class_wy + (1 if restricted else 2)
-    assert sim["outcome_counts_after"]["excluded"] == (1 if restricted else 2)
+    # P58 (I9 / I58): the served classes are the Dashboard's buckets, so the
+    # Commercialized project(s) are in the within-year count, not `excluded`.
+    assert sim["outcome_counts_after"]["within_year"] == dash
+    assert sim["outcome_counts_before"]["within_year"] == dash
+    assert sim["outcome_counts_after"]["excluded"] == 0
     assert f"{dash} -> {dash}" in sim["workings"][1]
 
 

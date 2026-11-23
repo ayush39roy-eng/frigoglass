@@ -1566,6 +1566,10 @@ class ProjectResult:
     no_chamber_step_id: str | None = None
     data_error: str | None = None
     left_out_reason: str | None = None
+    #: P58 (I9 / I58): the outcome's `blocked` flag, so the serving layer can
+    #: bucket a result exactly as the Dashboard does (`blocked` outranks
+    #: `left_out` there; `classify_outcome` ranks it below).
+    blocked: bool = False
 
 
 @dataclass(frozen=True)
@@ -1796,6 +1800,7 @@ def _simulate_with(
                 no_chamber_step_id=o.no_chamber_step_id,
                 data_error=o.data_error,
                 left_out_reason=outcome_left_out_reason(o),
+                blocked=o.blocked,
             )
         )
 

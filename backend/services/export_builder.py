@@ -502,6 +502,8 @@ async def build_dashboard_sheets(
     leader_engineer_id: _ListFilter = None,
     current_step: _ListFilter = None,
     sort: str | None = None,
+    view: str | None = None,
+    columns: _ListFilter = None,
 ) -> ExportSheets:
     """The Dashboard's own filterable "analytics breakdown" table
     (`docs/PROJECT_AND_STACK.md` §2: "An analytics breakdown with filters (by
@@ -509,6 +511,10 @@ async def build_dashboard_sheets(
     project view among Dashboard's several summary widgets, and therefore
     the natural "current view" to export; the pipeline-totals/status-
     overview/hub-type-pipeline widgets are aggregate counts, not row data.
+
+    P58-B: `view="register"` is the Projects page's list instead: one sheet,
+    exactly the table's columns (`services.register_export`), `columns` the
+    visible optional column ids (None = the screen's default set).
     """
 
     from api.routers.dashboard import analytics_projects
@@ -530,6 +536,8 @@ async def build_dashboard_sheets(
     )
     from schemas.dashboard import ProjectFilterRow
 
+    if view == "register":
+        return await _register_book(db, result.rows, columns)
     headers, rows = rows_from_models(result.rows, ProjectFilterRow)
     summary, delivery = await _dashboard_summary(
         db, principal, hub_id=hub_id, category=category, region=region, type_=type_
@@ -540,6 +548,44 @@ async def build_dashboard_sheets(
         context=[f"{len(rows)} project(s)"],
         summaries={SUMMARY_SHEET: summary, DELIVERY_SHEET: delivery},
         order=[SUMMARY_SHEET, DELIVERY_SHEET, "Dashboard"],
+    )
+
+
+#: P58-B: the Projects list download's one sheet.
+REGISTER_SHEET = "Projects"
+
+
+async def _register_book(
+    db: AsyncSession, served: Sequence[Any], columns: _ListFilter
+) -> SheetBook:
+    """P58-B: the Projects page table as served (`analytics_projects` rows,
+    already hub-scoped), only its columns, its headers, its order."""
+
+    from services.register_export import (
+        excluded_steps_by_project,
+        register_cells,
+        resolve_columns,
+    )
+
+    cols = resolve_columns(None if columns is None else as_list(columns))
+    keys = {c.key for c in cols}
+    excluded = (
+        await excluded_steps_by_project(db, [r.project_id for r in served])
+        if "steps" in keys
+        else {}
+    )
+    headers = [c.header for c in cols]
+    rows: list[dict[str, Any]] = []
+    for i, r in enumerate(served, start=1):
+        cells = register_cells(r, i, excluded.get(r.project_id))
+        rows.append({c.header: cells[c.key] for c in cols})
+    return SheetBook(
+        {REGISTER_SHEET: (headers, rows)},
+        title="Projects list",
+        context=[f"{len(rows)} project(s)"],
+        order=[REGISTER_SHEET],
+        # The headers are the screen's names, in the screen's order.
+        raw_headers=True,
     )
 
 
@@ -1313,7 +1359,7 @@ async def _filter_lines(db: AsyncSession, filters: ExportFilters) -> list[str]:
     parts: list[str] = []
     for key, value in filters.items():
         values = as_list(value)
-        if not values or key in ("sort", "currency"):
+        if not values or key in ("sort", "currency", "view", "columns"):
             continue
         name = _FILTER_NAMES.get(key, key)
         if key == "hub_id":

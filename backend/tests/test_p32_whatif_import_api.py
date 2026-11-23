@@ -242,7 +242,11 @@ async def test_parse_maps_against_the_plan_and_audits_counts_only(db_session):
     assert body["counts"] == {"rows": 5, "schedulable": 5, "not_scheduled": 0, "matched": 2,
                               "new": 3, "auto_assign": 1, "new_designers": 1,
                               "projects_after_expansion": 5, "derived_status": 0,
-                              "not_a_project": 0}  # fmt: skip
+                              "not_a_project": 0,
+                              # P58-B: Projects list files only (0 here).
+                              "changed": 0, "unchanged": 0}  # fmt: skip
+    assert body["file_format"] == "plan"
+    assert all(r["change_kind"] is None and r["changes"] == [] for r in body["rows"])
     for secret in (SECRET_CUSTOMER, SECRET_NOTE, "secret business case"):
         assert secret not in resp.text
 

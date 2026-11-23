@@ -263,9 +263,10 @@ def _summary_rows(body: SimulateExportIn, sim: SimulateResponse, name: str) -> l
         ("Existing projects otherwise moved", len(d.moved)),
         ("Outcomes after the scenario", SECTION),
     ]
-    # P43-R02 (G5): a Commercialized project is classed `excluded` but counts
-    # as within year (`within_year_bucket`, OQ #109). The served classes are
-    # shown with that split, so each table reconciles to the headline.
+    # P43-R02 (G5): a Commercialized project counts as within year
+    # (`within_year_bucket`, OQ #109). P58: the served class is already
+    # `within_year` (the Dashboard bucket), so the delivered ones are shown as
+    # an "of which" line under it and each table reconciles to the headline.
     delivered_after = sum(1 for p in sim.projects if _delivered(p))
     delivered_before = sum(1 for p in sim.projects if _delivered(p) and not p.is_new)
     items.extend(_outcome_rows(sim.outcome_counts_after, delivered_after))
@@ -278,26 +279,30 @@ def _summary_rows(body: SimulateExportIn, sim: SimulateResponse, name: str) -> l
 
 _OUTCOME_NAMES: dict[str, str] = {k: v[0] for k, v in OUTCOME_STYLES.items()}
 
-DELIVERED_LABEL = "Delivered (Commercialized) — counts as within year"
+DELIVERED_LABEL = "of which Delivered (Commercialized) — counts as within year"
 WITHIN_YEAR_TOTAL_LABEL = "Within year, in total (the headline above)"
 
 
 def _delivered(p: Any) -> bool:
-    """Served flags only: an `excluded` project that is within the year is a
-    Commercialized one (`services.whatif.within_year_bucket`)."""
+    """Served fields only: a project served `within_year` with no finish week
+    and no band (`priority_applicable` false, ADR 0067) is a Commercialized
+    one delivered in the plan year (P58 `services.whatif.served_outcome`)."""
 
-    return bool(p.outcome == "excluded" and p.within_year)
+    return bool(
+        p.outcome == "within_year"
+        and p.within_year
+        and not p.priority_applicable
+        and p.finish_week is None
+    )
 
 
 def _outcome_rows(counts: Any, delivered: int) -> list[tuple[str, Any]]:
     rows: list[tuple[str, Any]] = []
     for k, v in counts.items():
-        if k == "excluded":
-            rows.append((label_for(k, _OUTCOME_NAMES), v - delivered))
+        rows.append((label_for(k, _OUTCOME_NAMES), v))
+        if k == "within_year":
             rows.append((DELIVERED_LABEL, delivered))
-        else:
-            rows.append((label_for(k, _OUTCOME_NAMES), v))
-    rows.append((WITHIN_YEAR_TOTAL_LABEL, counts.get("within_year", 0) + delivered))
+    rows.append((WITHIN_YEAR_TOTAL_LABEL, counts.get("within_year", 0)))
     return rows
 
 

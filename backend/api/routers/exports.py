@@ -76,6 +76,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
 from api.deps import get_current_principal, require_permission
+from api.errors import HTTP_422, CodedHTTPException
 from api.query_params import (
     MAX_FILTER_VALUES,
     CategoryListQuery,
@@ -106,6 +107,7 @@ from schemas.export import ExportJobAccepted, ExportJobListItem, ExportJobStatus
 from services.category_type_filter import stored_filter
 from services.currency import rate_to_eur as currency_rate_to_eur
 from services.export_builder import ExportFilters, build_export_sheets, csv_bytes, xlsx_bytes
+from services.register_export import REGISTER_COLUMNS, UnknownColumns, resolve_columns
 from services.xlsx_writer import book_labels
 
 router = APIRouter(prefix="/exports", tags=["exports"])
@@ -249,6 +251,8 @@ async def export_dashboard(
     leader_engineer_id: LeaderListQuery = None,
     current_step: CurrentStepListQuery = None,
     sort: Literal["name", "priority"] = "name",
+    view: Literal["analytics", "register"] = "analytics",
+    columns: Annotated[list[str] | None, Query(max_length=len(REGISTER_COLUMNS))] = None,
     async_export: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read_dashboard),
@@ -260,6 +264,16 @@ async def export_dashboard(
     P31: `category` / `type` are repeatable like `GET /dashboard/projects`.
     A job stores one value as the bare string (the pre-P31 shape) and
     several as a list.
+
+    P58-B: `view=register` is the Projects page's list: exactly the table's
+    columns, in its order, with its headers, plus `Project ID` last.
+    `columns` (repeatable) names the visible optional column ids of the
+    table (`hub`, `category`, `type`, `status`, `leader`, `actual-start`,
+    `actual-end`, `design-time`, `lab-time`, `end-week`, `current-step`,
+    `steps`, `priority`, `rank`, `charter-plant`,
+    `charter-requesting_department`, `charter-product_type`); absent = the
+    screen's default set. An unknown id is 422 `INVALID_COLUMNS`. `columns`
+    without `view=register` is ignored.
     """
 
     # ADR 0051: every list filter is stored as `stored_filter` stores it (a
@@ -281,6 +295,20 @@ async def export_dashboard(
         "sort": sort if sort != "name" else None,
     }
     filters.update({k: v for k, v in p13_filters.items() if v is not None})
+    if view == "register":
+        # P58-B: stored only for the register view, so every other job's
+        # persisted filter shape is unchanged.
+        try:
+            resolve_columns(columns)
+        except UnknownColumns as exc:
+            raise CodedHTTPException(
+                HTTP_422,
+                "INVALID_COLUMNS",
+                f"Unknown column id(s): {', '.join(exc.keys)[:300]}.",
+            ) from exc
+        filters["view"] = "register"
+        if columns is not None:
+            filters["columns"] = list(dict.fromkeys(columns))
     return await _respond(
         db,
         current_user,
@@ -289,7 +317,7 @@ async def export_dashboard(
         filters=filters,
         export_format=format,
         async_export=async_export,
-        filename_stem="dashboard-export",
+        filename_stem="projects-list" if view == "register" else "dashboard-export",
     )
 
 

@@ -259,7 +259,10 @@ describe('PriorityBoardPage — served grouping', () => {
     expect(within(gamma).getByTestId('finish-chip')).toHaveTextContent('No projected finish');
     expect(gamma).toHaveTextContent('Weighted score —');
     // P25-T04: the served suggested band is shown beside the served weighted score, as the grid's chip.
-    expect(within(within(cardEl('Alpha Cooler')).getByTestId('board-card-band')).getByTitle(/Priority band P1/)).toBeInTheDocument();
+    // P58: labelled "Suggested", and its tooltip says it is not the priority (it used to read "Priority band P1").
+    const band = within(within(cardEl('Alpha Cooler')).getByTestId('board-card-band')).getByTestId('band-chip-suggested');
+    expect(band).toHaveTextContent(/^Suggested\s*P1$/);
+    expect(within(band).getAllByTitle(/^Suggested band P1, from the project's score/).length).toBeGreaterThan(0);
   });
 
   it('passes the global hub filter as hub_id', async () => {
@@ -538,6 +541,55 @@ describe('PriorityBoardPage — a drop is the P11 priority move', () => {
     expect(screen.getByTestId('board-announcer')).toHaveTextContent('Alpha Cooler moved to P2.');
   });
 
+  it('P58 (owner bug "the priority remains the same"): after a move the card reads the new priority; the unchanged suggested band is labelled, never a bare old-band pill', async () => {
+    // The score's suggested band does not follow a priority move. Before P58 the
+    // card drew it as the same unlabelled pill as a priority, next to the score,
+    // so a project moved P4 → P3 still showed "P4" on its card.
+    const before = board({ P4: [card('ngc', { name: 'NGC 450', band: 'P4', suggested_band: 'P4', score_band: 'P4' })] });
+    const after = board({ P3: [card('ngc', { name: 'NGC 450', band: 'P4', suggested_band: 'P4', score_band: 'P4', band_rank: 92 })] });
+    let moved = false;
+    client.apiGet.mockImplementation((path: string) => {
+      if (path === '/priority-board') return Promise.resolve(moved ? after : before);
+      if (path === '/dashboard/projects/facets') return Promise.resolve(FACETS);
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+    move.moveProjectPriority.mockImplementation(() => {
+      moved = true;
+      return Promise.resolve(
+        response({ project_id: 'ngc', priority_before: 'P4', priority_after: 'P3', recalc_status: 'applied', task_id: null }),
+      );
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'NGC 450' });
+    pointerDrop('NGC 450', 'P3');
+    await clickYes(user, await screen.findByRole('dialog', { name: 'Move to P3?' }));
+    expect(move.moveProjectPriority).toHaveBeenCalledWith('ngc', 'P3', 'tok-b');
+    await user.keyboard('{Escape}');
+
+    // The refetched board serves the card in P3, no longer pending.
+    await waitFor(() => expect(cardEl('NGC 450')).not.toHaveAttribute('data-pending'));
+    const ngc = cardEl('NGC 450');
+    expect(column('P3')).toContainElement(ngc);
+    expect(within(column('P4')).queryByRole('link', { name: 'NGC 450', hidden: true })).toBeNull();
+    // The set priority: labelled, and its control reads P3.
+    expect(within(ngc).getByTestId('board-card-priority-label')).toHaveTextContent('Priority');
+    expect(within(ngc).getByTestId('priority-move-trigger')).toHaveTextContent('P3');
+    // The suggested band still says P4 — but labelled "Suggested", with a tooltip saying it is not the priority.
+    const suggested = within(ngc).getByTestId('band-chip-suggested');
+    expect(suggested).toHaveTextContent(/^Suggested\s*P4$/);
+    expect(within(suggested).getAllByTitle(/It is not the project's priority/).length).toBeGreaterThan(0);
+    // No "P4" anywhere on the card outside that labelled chip.
+    const p4 = within(ngc).getAllByText('P4', { exact: false });
+    for (const el of p4) expect(suggested).toContainElement(el);
+
+    // List layout: the band is labelled "Sugg." (full meaning in the tooltip).
+    await user.click(screen.getByRole('button', { name: 'List' }));
+    const row = screen.getAllByTestId('board-list-row').find((r) => r.textContent?.includes('NGC 450')) as HTMLElement;
+    expect(within(row).getByTestId('band-chip-suggested-label')).toHaveTextContent('Sugg.');
+    expect(within(row).getByTestId('band-chip-suggested')).toHaveTextContent(/Sugg\.\s*P4/);
+  });
+
   it('No on the preview rolls the card back (snap back) without a POST', async () => {
     const user = userEvent.setup();
     renderWithProviders(<PriorityBoardPage />);
@@ -609,7 +661,7 @@ describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
     // Names only, plus the same suggested-band chip as the grid ("P1"). P36: the
     // position is the served band_rank — for a session that may re-rank, an
     // editable field (owner request 2026-11-17) labelled with its spoken form.
-    expect(alpha).toHaveTextContent(/^#Alpha CoolerP1$/);
+    expect(alpha).toHaveTextContent(/^#Alpha CoolerSugg\.P1$/);
     expect(within(alpha).getByRole('textbox', { name: /^Position of Alpha Cooler in P1/ })).toHaveValue('2');
     expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveAttribute('title', 'Alpha Cooler');
     // Owner feedback: the full name over up to two lines (fixed 46 px row), never one truncated line.

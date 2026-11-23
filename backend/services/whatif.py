@@ -34,7 +34,7 @@ from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -68,6 +68,7 @@ from schemas.whatif import (
     EstimateResponse,
     HubDesignRequirementOut,
     LabRegionRequirementOut,
+    OutcomeLiteral,
     ProjectChangeOut,
     ProjectResultOut,
     ScenarioDiffOut,
@@ -78,7 +79,12 @@ from schemas.whatif import (
     UnattainableProjectOut,
     UtilizationRowOut,
 )
-from services.delivery_serving import result_delivery, result_row
+from services.delivery_serving import (
+    horizon_years_of,
+    left_out_reason_label,
+    result_delivery,
+    result_row,
+)
 from services.priority_applicability import priority_applicable
 from services.whatif_baseline import Scope, WhatIfContext, principal_audit_hub_id
 
@@ -307,6 +313,33 @@ def within_year_bucket(within_year: bool, outcome: str) -> bool:
     return within_year and outcome != "blocked"
 
 
+def served_outcome(outcome: str, *, blocked: bool, within_year: bool) -> OutcomeLiteral:
+    """P58 (I9 / I58): the served What-if outcome of one project, bucketed
+    exactly as the Dashboard buckets a stored run row
+    (`services.outcome_buckets.outcome_bucket`, R42-6 precedence
+    NOT_SCHEDULED_PRIORITY > QUEUED > BLOCKED > WITHIN_YEAR > SPILLOVER >
+    LEFT_OUT), so `outcome_counts_before` of an unchanged plan equals the
+    Dashboard's counts. The engine class (`scheduling.whatif.
+    classify_outcome`) differs in two places only:
+
+    - a Commercialized project delivered in the plan year is classed
+      `excluded` with `within_year` true; the Dashboard counts it within the
+      year (R53-2b / I61), so it is served `within_year`;
+    - `blocked` outranks `left_out` on the Dashboard (a blocked project the
+      engine also left out is served `blocked`).
+
+    A row in none of the Dashboard's six buckets stays `excluded` or
+    `data_error` (the Dashboard's `excluded_count` is their sum)."""
+
+    if outcome in ("not_scheduled_priority", "queued"):
+        return cast(OutcomeLiteral, outcome)
+    if blocked and outcome not in ("excluded", "data_error"):
+        return "blocked"
+    if outcome == "excluded" and within_year:
+        return "within_year"
+    return cast(OutcomeLiteral, outcome)
+
+
 def scope_info(scope: Scope) -> ScopeInfo:
     return ScopeInfo(
         all_hubs=scope.all_hubs,
@@ -372,17 +405,25 @@ def _util_ok(row_scope: str, key: str, scope: Scope) -> bool:
     return scope.capacity_row_ok(key) if row_scope == "hub" else scope.region_ok(key)
 
 
-def _change_out(c: Any) -> ProjectChangeOut:
+def _change_out(
+    c: Any, before_outcome: OutcomeLiteral, after_outcome: OutcomeLiteral
+) -> ProjectChangeOut:
     return ProjectChangeOut(
         project_id=c.project_id,
         name=c.name,
         hub=c.hub,
         kind=c.kind,
-        before_outcome=c.before_outcome,
-        after_outcome=c.after_outcome,
+        before_outcome=before_outcome,
+        after_outcome=after_outcome,
         before_finish_week=c.before_finish_week,
         after_finish_week=c.after_finish_week,
     )
+
+
+#: `ProjectResultOut` fields not copied from the engine's `ProjectResult`:
+#: `priority_applicable` and `left_out_reason_label` are set in
+#: `with_delivery`; `outcome` is the served class (`served_outcome`).
+_SERVED_ELSEWHERE = frozenset({"priority_applicable", "left_out_reason_label", "outcome"})
 
 
 def scope_simulation(raw: SimulationResult, scope: Scope) -> SimulateResponse:
@@ -392,11 +433,26 @@ def scope_simulation(raw: SimulationResult, scope: Scope) -> SimulateResponse:
     engine lists every existing project whose result changed)."""
 
     projects = [p for p in raw.projects if scope.hub_ok(p.hub)]
+    # P58: every served class is the Dashboard's bucket (`served_outcome`).
+    # `blocked` comes from stage statuses and the Commercialized flag from
+    # status and actual end week; a scenario changes neither, so an existing
+    # project's BEFORE class is mapped with its AFTER flags.
+    by_id = {p.project_id: p for p in raw.projects}
+
+    def served(cls: str, project_id: str) -> OutcomeLiteral:
+        r = by_id.get(project_id)
+        if r is None:
+            return cast(OutcomeLiteral, cls)
+        return served_outcome(cls, blocked=r.blocked, within_year=r.within_year)
+
     changes = [*raw.diff.newly_slipping, *raw.diff.recovered, *raw.diff.moved]
-    before_class = {c.project_id: c.before_outcome for c in changes}
+    before_class = {c.project_id: served(c.before_outcome, c.project_id) for c in changes}
+    after_class = {p.project_id: served(p.outcome, p.project_id) for p in projects}
     existing = [p for p in projects if not p.is_new]
-    after_counts = Counter(p.outcome for p in projects)
-    before_counts = Counter(before_class.get(p.project_id, p.outcome) for p in existing)
+    after_counts: Counter[str] = Counter(after_class.values())
+    before_counts: Counter[str] = Counter(
+        before_class.get(p.project_id, after_class[p.project_id]) for p in existing
+    )
     kept = {p.project_id for p in projects}
 
     # D1 (I9): "within the year" is the Dashboard's bucket, `within_year AND
@@ -406,7 +462,7 @@ def scope_simulation(raw: SimulationResult, scope: Scope) -> SimulateResponse:
     # diff, where the flag before is "its before class was within_year" (a
     # project that changed cannot have been excluded).
     def counts(p: Any) -> bool:
-        return within_year_bucket(p.within_year, p.outcome)
+        return within_year_bucket(p.within_year, after_class[p.project_id])
 
     new_total = sum(1 for p in projects if p.is_new)
     new_wy = sum(1 for p in projects if p.is_new and counts(p))
@@ -423,7 +479,11 @@ def scope_simulation(raw: SimulationResult, scope: Scope) -> SimulateResponse:
     wy_after = ex_after + new_wy
 
     def lst(items: Any) -> list[ProjectChangeOut]:
-        return [_change_out(c) for c in items if scope.hub_ok(c.hub)]
+        return [
+            _change_out(c, before_class[c.project_id], served(c.after_outcome, c.project_id))
+            for c in items
+            if scope.hub_ok(c.hub)
+        ]
 
     diff = ScenarioDiffOut(
         within_year_before=ex_before,
@@ -464,8 +524,9 @@ def scope_simulation(raw: SimulationResult, scope: Scope) -> SimulateResponse:
                 **{
                     k: getattr(p, k)
                     for k in ProjectResultOut.model_fields
-                    if k != "priority_applicable"
-                }
+                    if k not in _SERVED_ELSEWHERE
+                },
+                outcome=after_class[p.project_id],
             )
             for p in projects
         ],
@@ -597,11 +658,18 @@ def with_delivery(
     P53-R01 (F53-1, I58): each not-placed row carries the engine's
     diagnostics (`no_leader` / `no_chamber_step_id` / `data_error`) from the
     unscoped `raw` result, so a What-if serves the same `left_out_reason` as
-    the Dashboard; `beyond_horizon` only when none applies. The diagnostics
-    stay off the wire (`ProjectResultOut` is unchanged)."""
+    the Dashboard; `beyond_horizon` only when none applies. P58: each project
+    also serves `left_out_reason`, `no_chamber_step_id` and
+    `left_out_reason_label`."""
 
     diag = {p.project_id: p for p in raw.projects}
     si = ctx.baseline.schedule
+    # P58 (I58): the reason in words on every not-placed project.
+    years = horizon_years_of(si.current_week, si.horizon_weeks)
+    for p in resp.projects:
+        p.left_out_reason_label = left_out_reason_label(
+            p.left_out_reason, no_chamber_step_id=p.no_chamber_step_id, horizon_years=years
+        )
     # ADR 0067: a Commercialized / Cancelled project has no band in the
     # results (served `priority` null, `priority_applicable` false) and is
     # counted under Other. Added projects are always schedulable.

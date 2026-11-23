@@ -153,11 +153,13 @@ export const BoardCard = React.memo(function BoardCard({
         </span>
         {suggested ? (
           <span className="inline-flex" data-testid="board-card-band">
+            {/* P58: labelled "Suggested" so it is never read as the set priority (bottom right). */}
             <SuggestedBandChip
               band={suggested}
               capacityFill={card.capacity_fill}
               reason={card.capacity_fill_reason}
               scoreBand={card.score_band}
+              labelled
             />
           </span>
         ) : null}
@@ -199,6 +201,10 @@ export const BoardCard = React.memo(function BoardCard({
               onMove={rankTo}
             />
           ) : null}
+          {/* P58 (owner bug 2026-11-23): the set priority is labelled, next to its control. */}
+          <span className="text-2xs text-text-subtle" aria-hidden="true" data-testid="board-card-priority-label">
+            Priority
+          </span>
           <PriorityMoveControl
             projectId={card.project_id}
             projectName={card.name}

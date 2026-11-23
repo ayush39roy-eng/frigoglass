@@ -42,6 +42,9 @@ pre-check runs first to pick the contract's specific 422 `code`:
 `build_workflows` still rejects after that is a cycle (`CYCLE`). Changing a
 step away from `lab` while a chamber lists it in `allowed_stages` is
 rejected with `KIND_IN_USE` (I4: chambers book lab-kind steps only).
+P58: changing a step TO `lab` while no chamber lists it is 409
+`LAB_STEP_HAS_NO_CHAMBER` unless the body names the chambers that take it
+(`add_to_chambers` / `add_to_chambers_like`), docs/API_CONTRACT_P58.md §1.
 """
 
 from __future__ import annotations
@@ -409,6 +412,73 @@ def _step_refs(workflow_id: str, step_id: str) -> Callable[[str], Sequence[Audit
     return refs
 
 
+LAB_STEP_HAS_NO_CHAMBER = "LAB_STEP_HAS_NO_CHAMBER"
+
+
+async def _resolve_lab_chamber_coverage(
+    db: AsyncSession,
+    templates: dict[str, WorkflowStepTemplate],
+    proposed: dict[str, Any],
+    body: StepsUpdateRequest,
+) -> list[tuple[Chamber, list[str]]]:
+    """P58 (docs/API_CONTRACT_P58.md §1): a lab step that no chamber lists in
+    `allowed_stages` can never be booked, so every project that reaches it is
+    LEFT_OUT `no_chamber`. Making a step `lab` without saying where it may run
+    is therefore refused (409 `LAB_STEP_HAS_NO_CHAMBER`, `steps` listed).
+
+    With `add_to_chambers` / `add_to_chambers_like`, every proposed lab step
+    of this workflow that no chamber lists (the newly lab ones, and any left
+    uncovered by an earlier save) is appended to those chambers. Returns the
+    (chamber, steps to append) pairs; the caller writes and audits them. A
+    step that was already `lab` and uncovered does not block a save on its
+    own (the save that caused it predates this rule)."""
+
+    lab_ids = sorted(sid for sid, s in proposed.items() if s.kind == WorkflowStepKind.LAB)
+    if not lab_ids:
+        return []
+    adding = body.add_to_chambers is not None or body.add_to_chambers_like is not None
+    chamber_stmt = select(Chamber).order_by(Chamber.code)
+    if adding:
+        chamber_stmt = chamber_stmt.with_for_update().execution_options(populate_existing=True)
+    chambers = list((await db.execute(chamber_stmt)).scalars().all())
+    covered = {sid for c in chambers for sid in (c.allowed_stages or [])}
+    uncovered = [sid for sid in lab_ids if sid not in covered]
+    becoming = [sid for sid in uncovered if templates[sid].kind != WorkflowStepKind.LAB]
+    if not adding:
+        if becoming:
+            raise CodedHTTPException(
+                status.HTTP_409_CONFLICT,
+                LAB_STEP_HAS_NO_CHAMBER,
+                f"No chamber accepts lab step(s) {becoming}. Every project reaching such a "
+                "step could not be scheduled. Say which chambers may run them "
+                "(add_to_chambers or add_to_chambers_like), or add them on the Chambers tab "
+                "first.",
+                extra={"steps": becoming},
+            )
+        return []
+
+    if body.add_to_chambers is not None:
+        by_id = {c.id: c for c in chambers}
+        unknown = [str(cid) for cid in body.add_to_chambers if cid not in by_id]
+        if unknown:
+            raise _step_error("UNKNOWN_CHAMBER", f"unknown chamber id(s) {unknown}")
+        targets = [by_id[cid] for cid in dict.fromkeys(body.add_to_chambers)]
+    else:
+        like = body.add_to_chambers_like
+        targets = [c for c in chambers if like in (c.allowed_stages or [])]
+        if not targets:
+            raise _step_error(
+                "UNKNOWN_LIKE_STEP",
+                f"no chamber lists step {like!r}; name a lab step a chamber already accepts",
+            )
+    out: list[tuple[Chamber, list[str]]] = []
+    for c in targets:
+        missing = [sid for sid in uncovered if sid not in (c.allowed_stages or [])]
+        if missing:
+            out.append((c, missing))
+    return out
+
+
 @router.put("/steps/{workflow_id}", response_model=WorkflowSettings)
 async def put_workflow_steps(
     workflow_id: str,
@@ -517,6 +587,8 @@ async def put_workflow_steps(
                 f"{sorted(in_use)}; remove them there before changing the kind",
             )
 
+    chamber_additions = await _resolve_lab_chamber_coverage(db, templates, proposed, body)
+
     before = {
         sid: {"kind": t.kind.value, "predecessor_ids": list(t.predecessor_ids or [])}
         for sid, t in sorted(templates.items())
@@ -543,6 +615,31 @@ async def put_workflow_steps(
         sid: {"kind": t.kind.value, "predecessor_ids": list(t.predecessor_ids or [])}
         for sid, t in sorted(templates.items())
     }
+    # P58: the chambers that now accept the new lab step(s), one audit row
+    # each (the chamber's own before / after state), in this transaction.
+    added_by_code: dict[str, list[str]] = {}
+    for chamber, steps in chamber_additions:
+        chamber_before = chamber_audit_state(chamber)
+        chamber.allowed_stages = [*(chamber.allowed_stages or []), *steps]
+        added_by_code[chamber.code] = steps
+        db.add(
+            AuditLogEntry(
+                actor_user_id=current_user.user_id,
+                action=f"{AUDIT_ACTION_PREFIX}chamber_allowed_stages_add",
+                entity_type="Chamber",
+                entity_id=str(chamber.id),
+                hub_id=None,
+                before_state=chamber_before,
+                after_state={
+                    **chamber_audit_state(chamber),
+                    "added_stages": steps,
+                    "via": f"{AUDIT_ACTION_PREFIX}steps_update",
+                    "workflow_id": workflow_id,
+                },
+            )
+        )
+    if chamber_additions:
+        await db.flush()
     return await _finish_put(
         db,
         response,
@@ -553,7 +650,11 @@ async def put_workflow_steps(
         entity_id=workflow_id,
         hub_id=None,
         before_state={"steps": before},
-        after_state={"steps": after, "effort_rederived_projects": rederived},
+        after_state={
+            "steps": after,
+            "effort_rederived_projects": rederived,
+            **({"chamber_stages_added": added_by_code} if added_by_code else {}),
+        },
     )
 
 

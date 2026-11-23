@@ -371,7 +371,8 @@ describe('P21-T05 Matrix tabs', () => {
     await user.click(screen.getByRole('tab', { name: 'Priority board' }));
     const card = within(boardCard('Alpha Cooler'));
     await waitFor(() => expect(card.getByTestId('board-card-score')).toHaveTextContent('59'));
-    expect(within(card.getByTestId('board-card-band')).getByTitle(/Priority band P4/)).toBeInTheDocument();
+    // P58: the board card's suggested band is labelled "Suggested" (its tooltip says it is not the priority).
+    expect(within(card.getByTestId('board-card-band')).getByTestId('band-chip-suggested')).toHaveTextContent(/^Suggested\s*P4$/);
     // Thirteen typed inputs: allow for a loaded runner.
   }, 20_000);
 

@@ -77,6 +77,18 @@ class LeaderAuto(_Strict):
 Leader = Annotated[LeaderExisting | LeaderNew | LeaderAuto, Field(discriminator="kind")]
 
 
+class ImportRowChange(_Strict):
+    """P58-B: one cell of a re-uploaded Projects list that differs from the
+    project as served. `field` is the Projects table column id."""
+
+    field: str = Field(min_length=1, max_length=40)
+    label: str = Field(min_length=1, max_length=40)
+    before: str | None = Field(default=None, max_length=200)
+    after: str | None = Field(default=None, max_length=200)
+    #: False for a column that is not a scheduling input (code, type, dates).
+    simulated: bool = True
+
+
 class ImportRow(_Strict):
     key: _RowKey
     file_row: int = Field(ge=1, le=99_999)
@@ -102,7 +114,7 @@ class ImportRow(_Strict):
     leader: Leader
     matched_project_id: _Id | None = None
     matched_project_name: str | None = Field(default=None, max_length=300)
-    match_by: Literal["name", "code"] | None = None
+    match_by: Literal["name", "code", "id"] | None = None
     num_projects: int | None = Field(default=None, ge=1, le=MAX_NUM_PROJECTS)
     must_do: bool | None = None
     spillover_from_previous: bool | None = None
@@ -114,6 +126,13 @@ class ImportRow(_Strict):
     #: ADR 0061 (R49-2, R49-6): the most urgent band column saying Yes, for
     #: display and audit only. Simulate never re-derives `priority` from it.
     file_band: Literal["P1", "P2", "P3", "P4"] | None = None
+    #: P58-B (a Projects list file only; null for the capacity-planning
+    #: format): "unchanged" = no scheduling input differs from the plan
+    #: project, so in merge mode the row is NOT a file project (the plan
+    #: project stays as it is); "changed" = it replaces its plan project;
+    #: "new" = no project matched.
+    change_kind: Literal["new", "changed", "unchanged"] | None = None
+    changes: list[ImportRowChange] = Field(default_factory=list, max_length=30)
 
 
 class ImportIssue(BaseModel):
@@ -164,6 +183,10 @@ class ImportCounts(BaseModel):
     derived_status: int
     #: Rows excluded as budget lines, `NOT_A_PROJECT` (P32-R06).
     not_a_project: int
+    #: P58-B (a Projects list file): matched rows with / without a
+    #: scheduling change. 0 for the capacity-planning format.
+    changed: int = 0
+    unchanged: int = 0
 
 
 class PlanWeekChoiceOut(BaseModel):
@@ -185,6 +208,9 @@ class PlanUntilPresetOut(BaseModel):
 
 class ImportParseResponse(BaseModel):
     file_name: str
+    #: P58-B: "plan" = the capacity-planning workbook; "projects_list" = a
+    #: Projects page download (rows carry `change_kind` / `changes`).
+    file_format: Literal["plan", "projects_list"] = "plan"
     projects_sheet: str
     steps_sheet: str | None
     base_year: int

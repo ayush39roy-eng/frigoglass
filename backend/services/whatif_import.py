@@ -478,6 +478,8 @@ async def matchable_projects(
 async def build_parse_context(
     db: AsyncSession, principal: Principal, ctx: WhatIfContext
 ) -> ParseContext:
+    from services.whatif_import_register import build_register_context
+
     return ParseContext(
         roster=roster_of(ctx),
         projects=await matchable_projects(db, principal, ctx),
@@ -487,6 +489,8 @@ async def build_parse_context(
         base_year=BASE_YEAR,
         horizon_weeks=ctx.baseline.schedule.horizon_weeks,
         categories={c.code: c.workflow_id for c in ctx.baseline.schedule.categories},
+        # P58-B: a re-uploaded Projects list is compared with the list as served.
+        register=await build_register_context(db, principal, ctx),
     )
 
 
@@ -560,11 +564,23 @@ def parse_response(
                     "step_weeks": dict(r.step_weeks),
                     "include": r.include,
                     "file_band": r.file_band,
+                    "change_kind": r.change_kind,
+                    "changes": [
+                        {
+                            "field": c.field,
+                            "label": c.label,
+                            "before": c.before,
+                            "after": c.after,
+                            "simulated": c.simulated,
+                        }
+                        for c in r.changes
+                    ],
                 }
             )
         )
     return ImportParseResponse(
         file_name=file_name,
+        file_format=res.file_format,
         projects_sheet=res.projects_sheet,
         steps_sheet=res.steps_sheet,
         base_year=pctx.base_year,
@@ -613,12 +629,23 @@ async def audit_parse(
     issue_counts: dict[str, int] = {}
     for i in res.issues:
         issue_counts[i.code] = issue_counts.get(i.code, 0) + 1
+    counts = dict(vars(res.counts))
+    extra: dict[str, Any] = {
+        "issue_counts": issue_counts,
+        "steps_sheet": res.steps_sheet is not None,
+    }
+    if res.file_format == "plan":
+        # P58-B: the capacity-planning audit shape is unchanged.
+        counts.pop("changed", None)
+        counts.pop("unchanged", None)
+    else:
+        extra["file_format"] = res.file_format
     await audit_whatif(
         db,
         principal,
         "import_parse",
-        {"file_sha256": file_sha256, "counts": vars(res.counts)},
-        extra={"issue_counts": issue_counts, "steps_sheet": res.steps_sheet is not None},
+        {"file_sha256": file_sha256, "counts": counts},
+        extra=extra,
     )
 
 
@@ -648,6 +675,14 @@ def _norm_name(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
+def keeps_plan_project(r: ImportRow, mode: str) -> bool:
+    """P58-B: an "unchanged" Projects list row in merge mode is no file
+    project: its plan project stays in the run exactly as it is (neither
+    replaced nor removed)."""
+
+    return mode == "merge" and r.change_kind == "unchanged"
+
+
 def to_engine_request(
     ctx: WhatIfContext, body: ImportSimulateRequest, window: PlanWindow | None = None
 ) -> EngineRequest:
@@ -667,7 +702,13 @@ def to_engine_request(
     # Owner rule (2026-11-04): a non-schedulable row is never simulated, even
     # with include=true (its plan project, if matched, is removed upstream:
     # `removed_project_ids`).
-    rows = [r for r in body.rows if r.include and r.status in dc.SCHEDULABLE_STATUS_ORDER]
+    rows = [
+        r
+        for r in body.rows
+        if r.include
+        and r.status in dc.SCHEDULABLE_STATUS_ORDER
+        and not keeps_plan_project(r, body.mode)
+    ]
     base_ids = {p.project_id for p in ctx.baseline.schedule.projects}
     keys: set[str] = set()
     new_keys: dict[tuple[str, str], ImportNewEngineer] = {}
@@ -1349,7 +1390,11 @@ def removed_project_ids(ctx: WhatIfContext, body: ImportSimulateRequest) -> froz
         return frozenset()
     out: set[str] = set()
     for r in body.rows:
-        if r.status in dc.SCHEDULABLE_STATUS_ORDER or r.matched_project_id is None:
+        if (
+            r.status in dc.SCHEDULABLE_STATUS_ORDER
+            or r.matched_project_id is None
+            or keeps_plan_project(r, body.mode)
+        ):
             continue
         hub = ctx.project_hub.get(r.matched_project_id)
         if hub is None or not ctx.scope.hub_ok(hub):
@@ -1404,7 +1449,10 @@ def excluded_plan_project_ids(
     replaced = {
         r.matched_project_id
         for r in body.rows
-        if r.include and r.status in dc.SCHEDULABLE_STATUS_ORDER and r.matched_project_id
+        if r.include
+        and r.status in dc.SCHEDULABLE_STATUS_ORDER
+        and r.matched_project_id
+        and not keeps_plan_project(r, body.mode)
     }
     return frozenset(pid for pid in ids if pid in pickable and pid not in replaced)
 
@@ -1459,6 +1507,7 @@ def pin_dropped_issues(
             not r.include
             or r.status not in dc.SCHEDULABLE_STATUS_ORDER
             or r.matched_project_id is None
+            or keeps_plan_project(r, body.mode)
             or r.matched_project_id not in pinned
             or (r.key, PIN_DROPPED) in already
         ):
@@ -1535,13 +1584,16 @@ async def audit_import_simulate(
         "expand_multi": body.expand_multi,
         "rows": len(body.rows),
         "included": len(included),
-        "replacing": sum(1 for r in included if r.matched_project_id),
+        "replacing": sum(
+            1 for r in included if r.matched_project_id and not keeps_plan_project(r, body.mode)
+        ),
         "removing": sum(
             1
             for r in body.rows
             if body.mode == "merge"
             and r.matched_project_id
             and r.status not in dc.SCHEDULABLE_STATUS_ORDER
+            and not keeps_plan_project(r, body.mode)
         ),
         "auto_leaders": sum(1 for r in included if r.leader.kind == "auto"),
         "new_leaders": sum(1 for r in included if r.leader.kind == "new"),

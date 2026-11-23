@@ -122,12 +122,16 @@ async def test_planner_summary_reconciles_to_the_headline(db_session: Any) -> No
     before_at = items.index(("Outcomes before the scenario", None))
     after = dict(items[after_at + 1 : before_at])
     headline = dict(items)
-    delivered = sum(1 for p in sim["projects"] if p["outcome"] == "excluded" and p["within_year"])
+    # P58: the Commercialized project is served `within_year` (the Dashboard
+    # bucket); the Summary shows it as an "of which" line.
+    delivered = sum(
+        1 for p in sim["projects"] if p["outcome"] == "within_year" and not p["priority_applicable"]
+    )
     assert delivered >= 1  # the Commercialized project counts as within year
-    assert after["Delivered (Commercialized) — counts as within year"] == delivered
+    assert after["of which Delivered (Commercialized) — counts as within year"] == delivered
     total = after["Within year, in total (the headline above)"]
     assert total == headline["Projects within the year after"] == sim["diff"]["within_year_after"]
-    assert after["Within year"] + delivered == total
+    assert after["Within year"] == total
     # The planner chart draws it in the Delivered section.
     body = _body(_wb(resp.content)["Gantt"])
     assert body[body.index(DELIVERED_HEADING) + 1] == "Shipped Cooler"

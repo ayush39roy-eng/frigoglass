@@ -46272,3 +46272,105 @@ The owner asked to push fast, so this was pushed before the P56-T04 gate; the ga
     - 14 are `test_openapi_frontend_contract`. It needs the frontend `api/types.ts` mirrors updated for the new fields: `priority_applicable` (required, non-null) on the interfaces listed, `NA` on PriorityLoadSplit / PriorityCountSplit, `priority_not_applicable_count`, and GanttProjectRow `status: ProjectStatus` (required). This is frontend-owned.
   - ruff is clean on new and touched code. The pre-existing E501 / format diffs are untouched. mypy shows no new errors.
 - **Incident.** A `git stash` / `pop` during the lint comparison unstaged the orchestrator's staged doc changes. Their content was unchanged, and they were re-staged right away with `git add`.
+
+## [2026-11-23] P58-A — What-if real scheduling: no silent lab step without a chamber, left-out reason served, before-counts = Dashboard — backend-builder: DONE (not committed)
+- **Owner:** "adding 5 projects it is giving some unplaced … what if should use correct logic and do the real future scheduling". Hosted root cause (orchestrator, read-only): PDD-J / PDD-L set to `lab` on 2026-11-22 via the P52 Effort matrix, and no chamber lists them, so everything reaching J/L is LEFT_OUT `no_chamber`. The data question (add J/L to chambers?) is with the owner. No hosted data was touched.
+- **(a) Steps save** `PUT /workflow-settings/steps/{wf}`:
+  - A step becoming `lab` while no chamber lists it is now 409 `LAB_STEP_HAS_NO_CHAMBER` with `steps: [...]`, and nothing is written.
+  - New optional request fields, mutually exclusive (both given → 422): `add_to_chambers: [uuid]` and `add_to_chambers_like: "<step id>"`. Either one appends every uncovered proposed lab step of the workflow (the newly lab ones and the old uncovered ones, so the hosted state can be repaired) to those chambers in the same transaction. Errors: 422 `UNKNOWN_CHAMBER`, 422 `UNKNOWN_LIKE_STEP`.
+  - Audit: one `workflow_settings.chamber_allowed_stages_add` row per chamber, plus `chamber_stages_added` on the steps_update row.
+  - A step that was already lab and uncovered does not block an unrelated save. Lab region is not checked.
+- **(b) What-if `ProjectResultOut`** gains `left_out_reason` (same values as live), `left_out_reason_label` (e.g. "No lab chamber accepts step PDD-J"; helper `services.delivery_serving.left_out_reason_label`) and `no_chamber_step_id`.
+- **(2) Before-counts mismatch** (hosted What-if within_year 27 / excluded 134 vs Dashboard 95 / 66):
+  - Cause: the What-if served the engine's `classify_outcome` class, which puts Commercialized-delivered under `excluded` (and `left_out` above `blocked`). The Dashboard uses `outcome_bucket`.
+  - Fix: new `services.whatif.served_outcome` maps to the Dashboard precedence. It is used for each project's `outcome`, both `outcome_counts_*` and the diff's before/after classes. Now before == Dashboard (`excluded + data_error` = Dashboard `excluded_count`).
+  - This supersedes the P43-R02 G5 "Delivered" split for What-if. The planner export Summary now shows "of which Delivered (Commercialized) — counts as within year" under "Within year", and the total = within_year.
+  - Plan import (`scheduling.plan_import` KPIs) still uses `classify_outcome`, so the same mismatch likely exists there. It is not changed here and needs a follow-up.
+- **Engine edit (authorized, flagged):** `scheduling/whatif.py` `ProjectResult` gains `blocked: bool = False`, copied from the outcome in `_simulate_with`. It is additive only. `tests/scheduling/_whatif_fixtures.without_p53_r01_fields` also strips it, and the P38/P42 pinned simulate hashes are unchanged, which proves nothing else moved.
+- **(3) Verified:** What-if uses the same `build_schedule_input_from_db` (plan-clock week, N×52 horizon, frozen/stage state, P56 drops) and the same `run_greedy_sgs` as live greedy runs. Added projects have no earliest start, so they are placed from the current week. Tested: the empty scenario's finish weeks equal a direct live greedy run.
+- **Tests:** new `backend/tests/test_p58_whatif_real_scheduling.py` (11) covers:
+  - 409 + nothing written; like / by-id appends + audit; errors; the legacy uncovered state doesn't block and can be repaired;
+  - 5 added projects all placed with finish weeks;
+  - same engine/input as live;
+  - PDD-J lab with no chamber → `no_chamber` + `PDD-J` + label, then placed after adding J to chambers;
+  - before-counts == Dashboard with a Commercialized + Cancelled project, empty and with 5 added;
+  - unit tests for `served_outcome` and the label.
+  
+  Updated: `test_p18_r02` (Commercialized now in within_year, excluded 0), `test_p43_r02` (Summary "of which" row), `test_openapi_frontend_contract::test_steps_update_request_shape`.
+- **Results:** whatif / p18 / p32 / p41 / p43 / p47 / p53 / p57 / workflow_settings / export / contract / tests/scheduling: 1660+ pass. Remaining failures, none caused by this task:
+  - contract `ProjectResultOut`: the frontend `whatif-types.ts` must add the 3 fields;
+  - `test_p32_whatif_import_api::test_parse_maps…` (`changed` / `unchanged` audit keys) and `test_p53_r53_8_week_bounds`: both caused by another session's uncommitted P58 work (`services/whatif_import.py`, untracked `register_export.py` / `whatif_import_register.py`).
+  
+  ruff is clean on touched files, apart from pre-existing format diffs in `workflow_settings.py:816`, `services/whatif.py` (solve), `test_p18_r02.py:231` and the contract test. mypy reports no errors in touched files.
+- **Docs:** `docs/API_CONTRACT_P58.md` (new). IMPLEMENTATION_PLAN is not marked.
+
+## [2026-11-23] P58-C — owner bug "priority changed on the priority board doesn't change, it remains the same" — frontend-builder: DONE (not committed)
+- **Reproduced end to end; the move itself is NOT broken.**
+  - Local: current main (009c077) on a scratch DB (`rpd_p58c`, migrated to head and seeded; dropped afterwards). Driven with Playwright through `/matrix?view=board` as superadmin and admin, using the card menu, a pointer drag, and four sequential moves.
+  - Every move went preview → Yes → `POST /projects/{id}/priority` → `applied`. `projects.priority` was persisted, the board was refetched, and the card left the old column.
+  - Hosted (READ only):
+    - the audit log shows the owner's last moves, both `applied` and both persisted: 2026-11-22 08:31 NGC 450 A rating Project P4→P1, and 08:33 P1→P3.
+    - Hosted `/priority/preview` (read-only by contract and code) answers in about 1 s, with an identical token across 4 calls on 2 workers, so a confirm succeeds.
+    - The hosted bundle (009c077) was driven with every non-GET intercepted in the browser. It fires the preview and then the confirm correctly.
+  - P57 did not break normal moves. `isPriorityNotApplicable(status)` is false for every board status, and backend `ensure_priority_applicable` only refuses Commercialized / Cancelled.
+- **Root cause (UI ambiguity).**
+  - The board card drew the score's SUGGESTED band with the same unlabelled `PriorityBandPill` as a priority. It sat prominently next to "Weighted score", and its tooltip read "Priority band P4 …". The real priority was only the small dropdown at the bottom right.
+  - The suggested band never follows a priority move, so a moved card kept showing its old band. Hosted screenshot of the owner's project after P4→P1→P3: "● P4" beside the score, "P3 ▾" in the corner.
+  - In the List layout the suggested pill was the only band shown on the row.
+- **Fix (frontend only, no backend change).**
+  - `components/shared/suggested-band-chip.tsx`: new opt-in `labelled` prop. It shows a visible "Suggested" label ("Sugg." in an `abbr` when `dense`) and an outlined pill. The tooltip says "Suggested band Px, from the project's score. It is not the project's priority; change that with the priority control."
+  - Unlabelled callers are unchanged: Matrix grid, Compare, Workspace scoring.
+  - `surfaces/priority-board/components/board-card.tsx`: the chip is `labelled`, plus a visible "Priority" label (aria-hidden; the control's aria-label already names the priority) before the move control.
+  - `board-list-row.tsx`: the chip is `labelled`.
+- **Tests.**
+  - New `PriorityBoardPage.test.tsx` "P58 …": a P4 card dropped on P3, Yes, and the refetched board serves it in P3 with suggested P4. It asserts that the control reads P3, the "Priority" label is shown, the suggested chip reads "Suggested P4" with the not-the-priority tooltip, no other "P4" appears on the card, and the list row shows "Sugg. P4". It fails on the pre-fix components (verified) and passes now.
+  - Three assertions that pinned the old misleading tooltip / unlabelled text were updated: PriorityBoardPage "served card facts" and "Cards | List layout", and MatrixPage.board "edit-mode save".
+  - vitest `src/surfaces/priority-board` + `src/surfaces/matrix` + `components/shared/priority-move` + workspace scoring-section: all pass (309 + 9 move-flow files).
+  - tsc clean. eslint is clean on the touched files.
+- **Not changed / follow-ups.**
+  - The drag in a Playwright `dragTo` once moved a different card. That was a harness artifact (`dragTo` scrolls the target into view between mousedown and the first move). Explicit mouse steps move the right card.
+  - The List layout still shows no explicit set priority per row; the column header carries it. If the owner still finds it unclear, consider showing the priority pill on list rows.
+
+## [2026-11-23] P58-B — Projects list download = the Projects table's columns; an edited download imports into the What-if — backend-builder: DONE (not committed)
+- **Owner:** "the project list download has too many columns — give exactly the columns in the list (e.g. Current step was missing)" and "the What-if planner should accept an edited project-list download as an import".
+- **(1) Export** `GET /exports/dashboard` gains `view=register` and a repeatable `columns`. The default `view=analytics` is byte-for-byte the old Dashboard export. The Dashboard page's breakdown still uses it.
+  - Register view: one sheet "Projects" (CSV the same).
+  - Headers are the screen's names, in screen order: `#`, Project, Project code (the code the screen prints under the name), Hub, Category, Type, [Plant, Req. dept, Product type], Status, Leader, Actual start, Actual end, Design time, Lab time, End week, Current step (`PDD-C · Name`), Steps (`All included` / `Excluded: …`), Priority (`Not applicable` for Commercialized / Cancelled, ADR 0067), Rank (band rank), Project ID.
+  - `#`, Project, Project code and Project ID are always included, with Project ID always last because the import matches on it.
+  - `columns` = the table's visible optional column ids: `hub category type status leader actual-start actual-end design-time lab-time end-week current-step steps priority rank charter-plant charter-requesting_department charter-product_type`. If `columns` is absent, the export uses the screen's default (every hideable column, no charter). An unknown id → 422 `INVALID_COLUMNS`. A financial id is unknown, so it is rejected too.
+  - No financial column is written: the Projects table shows none.
+  - Weeks are written as `week_label` ("W1 2027").
+  - Async jobs store `view` / `columns` only for the register view.
+  - Filename `projects-list.{csv,xlsx}`.
+  - Code: new `services/register_export.py` (`REGISTER_COLUMNS`, `resolve_columns`, `register_cells`, cell readers), `export_builder._register_book`, `api/routers/exports.py`.
+- **(2) Import** `POST /whatif/import/parse` auto-detects a Projects list file by its header row: `Project` + `Project ID`, or `Project` + Hub + Status + Current step. The screen's short labels ("Cat", "End wk", …) are accepted too. No router change: `build_parse_context` now also builds `ParseContext.register` (the caller's `analytics_projects` rows + the What-if baseline), and `parse_plan_workbook` dispatches to new `services/whatif_import_register.py`.
+  - **Match order:** Project ID (in the caller's scope), then a unique code, then a unique name. An unknown or out-of-scope id is read as new, with info `PROJECT_ID_UNKNOWN` (no existence leak).
+  - **Cell comparison:** each cell is compared with `register_cells` of the served row. Both directions use the same function, so a file uploaded without edits shows no change.
+  - **New `ImportRow` fields:** `change_kind` `new|changed|unchanged` (null for the capacity-planning format), `changes[] {field, label, before, after, simulated}`, and `match_by` adds `"id"`.
+  - **New response fields:** `ImportParseResponse.file_format` `plan|projects_list`, and `ImportCounts.changed` / `unchanged` (default 0).
+  - **Simulated vs listed-only columns:** these are simulated: Project (name), hub, category, status, priority, rank, leader, current step, design / lab time. Code, type, actual dates and charter are listed with `simulated=false` (info `NOT_SIMULATED`) and do not make a row "changed". `#`, End week, Steps and Project ID are read-only.
+  - **Decision (fidelity):** in merge mode an `unchanged` row is no file project. `keeps_plan_project` in `services/whatif_import.py` makes sure it neither replaces nor removes its project, is skipped by `excluded_plan_project_ids` / `pin_dropped_issues`, and does not count in the audit's `replacing` / `removing`. Its plan project therefore runs exactly as live: progress, effort, exclusions and pins. In file_only mode every row is simulated.
+  - **`changed` rows** replace their plan project like any matched import row, with info `CHANGED`. Unchanged fields come from the plan project. Step weeks are the plan project's own effective weeks while workflow and category are unchanged (`lead_time_label "plan"`); otherwise they are the app lead times for the new category (`"app"`). A changed Design / Lab time, or the plan's figure under a new category, is split by `scheduling.effort_split.apportion_effort`. The engine is called, not reimplemented.
+  - A started project keeps its stage: the current step's ancestors are done and the step is In Progress at f (existing engine rule).
+  - **`new` rows** read like a registration. Defaults: hub = the leader's capacity hub or R&D-Greece (`HUB_DEFAULTED`), category B / B-OEM (`CATEGORY_DEFAULTED`), In Queue, priority P3.
+  - Draft is listed as On Hold (`STATUS_DRAFT`).
+  - **Audit:** the parse audit for a capacity-planning file is unchanged (the two new count keys are dropped). For a projects list it adds `file_format`.
+  - Nothing is persisted.
+- **Tests:** new `tests/test_p58_projects_list_round_trip.py` (8):
+  - column set and order, `columns`, 422, CSV headers, no financial value, Dashboard export unchanged;
+  - round trip with no edits → all `unchanged`, simulate has 0 file projects and no moved / slipping;
+  - priority edit on Alpha and category edit on Gamma, plus a code-only edit on Beta (listed, not simulated) and one new row → exact `changes`, counts, simulate replaces Alpha / Gamma, keeps Beta as a plan project, new row placed;
+  - rename still matched by id, unknown id → new;
+  - Hub Planner scope (out-of-scope rows read as new);
+  - started project: stage kept, done-before-import, In Progress.
+
+  Updated `test_p32_whatif_import_api` (served counts gain `changed` / `unchanged` = 0, `file_format` "plan").
+- **Results:** export / export worker / P32 (4 files) / P41 / P43 / P50 / P57 / P58 / P53 week-bounds / P13 / P35 / P54 / dashboard suites: 660+ pass.
+  - The one failure is contract `ProjectResultOut`, from P58-A's `left_out_reason*` (frontend type), not this task.
+  - This entry closes P58-A's two notes about this work: the p32 audit test and R53-8 now pass (named bounds `EFFORT_STEP_MAX_WEEKS`, `EFFORT_FIGURE_MAX`).
+  - ruff check / format and mypy are clean on touched files. `whatif_import.py:340` E501 is pre-existing.
+- **Frontend to do (frontend-builder):**
+  - Projects page "Projects list" export sends `view=register` plus `columns` = the visible optional ids, including `charter-*` when the charter toggle is on.
+  - What-if import review shows `file_format` / `change_kind` / `changes`; for unchanged rows show "No change — plan project kept".
+  - Add the new optional fields to `ImportRow` / `ImportCounts` / `ImportParseResponse` TS types.
+- Files: `backend/services/register_export.py` (new), `backend/services/whatif_import_register.py` (new), `backend/services/export_builder.py`, `backend/api/routers/exports.py`, `backend/services/plan_import_xlsx.py`, `backend/services/whatif_import.py`, `backend/schemas/whatif_import.py`, `backend/tests/test_p58_projects_list_round_trip.py` (new), `backend/tests/test_p32_whatif_import_api.py`. IMPLEMENTATION_PLAN is not marked (no P58-B task row).

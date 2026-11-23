@@ -22,7 +22,7 @@ from scheduling.whatif import (
     MAX_REMOVED_DESIGNERS_TOTAL,
 )
 from schemas.category import CategoryCode
-from schemas.delivery import DeliveryByYearOut
+from schemas.delivery import DeliveryByYearOut, LeftOutReason
 
 HubLiteral = Literal["R&D-Greece", "R&D-India", "PD-India", "PD-Romania", "OEM-HCK", "OEM-Seitek"]
 RegionLiteral = Literal["Greece", "India", "Romania"]
@@ -279,6 +279,15 @@ class ProjectResultOut(BaseModel):
     #: P42 (R42-4): the run's flags, copied from the engine's outcome.
     counts_toward_year: bool
     not_scheduled_priority: bool
+    #: P58 (I58): why a project was not placed, the same value the live run
+    #: serves (`no_leader` / `no_chamber` / `data_error` / `beyond_horizon`);
+    #: null when placed.
+    left_out_reason: LeftOutReason | None = None
+    #: P58: the reason in words, e.g. "No lab chamber accepts step PDD-J" or
+    #: "Cannot be scheduled within 5 years — check resources"; null when placed.
+    left_out_reason_label: str | None = None
+    #: P58: the lab step no chamber accepts (with `no_chamber`), else null.
+    no_chamber_step_id: str | None = None
 
 
 class UtilizationRowOut(BaseModel):
