@@ -40,7 +40,7 @@ and is not audited per row (R36-8).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import Any
 
 from fastapi import status as http_status
@@ -149,35 +149,108 @@ def band_of_project(status: ProjectStatus | None, priority: ProjectPriority | No
     return br.band_of(status.value, _value(priority))
 
 
-async def band_sizes(db: AsyncSession) -> dict[ProjectPriority, int]:
+class BandSizes(Mapping[ProjectPriority, int]):
+    """`band_sizes`' result: a read-only mapping priority -> full band size
+    (ADR 0064 R1), plus every ranked project's hub position (ADR 0068):
+    `hub_position(project_id)` = (`hub_rank`, `hub_band_size`), the 1-based
+    position among the SAME hub's projects of the same band in `band_rank`
+    order, and that count. Both are over the full band, never hub-scoped, so
+    a Hub Planner sees the same hub rank as an Admin."""
+
+    __slots__ = ("_hub", "_sizes")
+
+    def __init__(
+        self,
+        sizes: Mapping[ProjectPriority, int],
+        hub: Mapping[uuid.UUID, tuple[int, int]] | None = None,
+    ) -> None:
+        self._sizes = dict(sizes)
+        self._hub = dict(hub or {})
+
+    def __getitem__(self, key: ProjectPriority) -> int:
+        return self._sizes[key]
+
+    def __iter__(self) -> Iterator[ProjectPriority]:
+        return iter(self._sizes)
+
+    def __len__(self) -> int:
+        return len(self._sizes)
+
+    def hub_position(self, project_id: uuid.UUID) -> tuple[int | None, int | None]:
+        """(`hub_rank`, `hub_band_size`) of a ranked project; (None, None)
+        for a non-member."""
+
+        return self._hub.get(project_id, (None, None))
+
+    def hub_rank(self, project_id: uuid.UUID) -> int | None:
+        return self.hub_position(project_id)[0]
+
+    def hub_band_size(self, project_id: uuid.UUID) -> int | None:
+        return self.hub_position(project_id)[1]
+
+
+async def band_sizes(db: AsyncSession) -> BandSizes:
     """ADR 0064 R1: the number of ranked projects per priority band, over the
     FULL band (every hub), so it is the `n` of the full-band `band_rank`
     numbering (dense 1..n, the same `n` the `to_rank` body is checked
-    against). One grouped count per request, never per row. Deliberately not
+    against). ADR 0068: plus each ranked project's hub rank / hub band size
+    (`row_number()` / `count()` over `(priority, hub_id)` in `band_rank`
+    order). One windowed query per request, never per row. Deliberately not
     hub-scoped: a scoped size would contradict the full-band rank (W36-1)."""
+
+    partition = (Project.priority, Project.hub_id)
+    with db.no_autoflush:
+        rows = (
+            await db.execute(
+                select(
+                    Project.id,
+                    Project.priority,
+                    func.row_number().over(partition_by=partition, order_by=Project.band_rank),
+                    func.count().over(partition_by=partition),
+                ).where(Project.band_rank.is_not(None))
+            )
+        ).all()
+    sizes: dict[ProjectPriority, int] = {}
+    hub: dict[uuid.UUID, tuple[int, int]] = {}
+    for pid, priority, hub_rank, hub_size in rows:
+        if priority is None:
+            continue
+        sizes[priority] = sizes.get(priority, 0) + 1
+        hub[pid] = (int(hub_rank), int(hub_size))
+    return BandSizes(sizes, hub)
+
+
+def with_band_size[R: ProjectRead](read: R, sizes: BandSizes) -> R:
+    """`read` with its read-only `band_size` filled from `band_sizes` (ADR
+    0064 R1): the size of the project's band, or null when `band_rank` is
+    null (not a band member); and its `hub_rank` / `hub_band_size` (ADR
+    0068), null exactly when `band_rank` is null."""
+
+    member = read.band_rank is not None and read.priority is not None
+    size = sizes.get(read.priority, 0) if member and read.priority is not None else None
+    hub_rank, hub_size = sizes.hub_position(read.id) if member else (None, None)
+    return read.model_copy(
+        update={"band_size": size, "hub_rank": hub_rank, "hub_band_size": hub_size}
+    )
+
+
+async def band_order_with_hubs(
+    db: AsyncSession, band: str
+) -> tuple[list[str], dict[str, uuid.UUID]]:
+    """The band's ranked ids in rank order (as `band_order`) and each one's
+    hub id, read in one query (ADR 0068 hub-rank translation)."""
 
     with db.no_autoflush:
         rows = (
             await db.execute(
-                select(Project.priority, func.count())
-                .where(Project.band_rank.is_not(None))
-                .group_by(Project.priority)
+                select(Project.id, Project.band_rank, Project.hub_id).where(
+                    Project.priority == ProjectPriority(band),
+                    Project.band_rank.is_not(None),
+                )
             )
         ).all()
-    return {priority: int(count) for priority, count in rows if priority is not None}
-
-
-def with_band_size[R: ProjectRead](read: R, sizes: Mapping[ProjectPriority, int]) -> R:
-    """`read` with its read-only `band_size` filled from `band_sizes` (ADR
-    0064 R1): the size of the project's band, or null when `band_rank` is
-    null (not a band member)."""
-
-    size = (
-        sizes.get(read.priority, 0)
-        if read.band_rank is not None and read.priority is not None
-        else None
-    )
-    return read.model_copy(update={"band_size": size})
+    order = br.order_by_rank((str(pid), int(rank)) for pid, rank, _ in rows if rank is not None)
+    return order, {str(pid): hub_id for pid, _, hub_id in rows}
 
 
 async def band_order(db: AsyncSession, band: str) -> list[str]:

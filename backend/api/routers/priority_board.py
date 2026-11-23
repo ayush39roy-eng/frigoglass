@@ -73,6 +73,7 @@ from schemas.priority_board import (
     PriorityBoardResponse,
 )
 from services.active_run import get_active_run
+from services.band_rank import band_sizes
 from services.capacity_priority import remaining_run_load_by_project
 from services.capacity_supply import round2
 from services.categories import load_catalog
@@ -155,6 +156,8 @@ async def get_priority_board(
         db, {p.hub_id for p in projects}, active_run=active_run, current_week=clock.week
     )
 
+    # P60 (ADR 0068): hub rank over the full band, one windowed query.
+    positions = await band_sizes(db)
     by_column: dict[ProjectPriority, list[PriorityBoardCard]] = {p: [] for p in COLUMN_ORDER}
     design_by_column: dict[ProjectPriority, float] = {p: 0.0 for p in COLUMN_ORDER}
     lab_by_column: dict[ProjectPriority, float] = {p: 0.0 for p in COLUMN_ORDER}
@@ -183,6 +186,8 @@ async def get_priority_board(
                 hard_gated=card.hard_gated,
                 is_vip=project.is_vip,
                 band_rank=project.band_rank,
+                hub_rank=positions.hub_rank(project.id),
+                hub_band_size=positions.hub_band_size(project.id),
                 frozen=project.frozen,
                 projected_end_week=card.projected_end_week,
                 within_year=card.within_year,

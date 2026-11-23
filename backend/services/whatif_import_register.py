@@ -18,7 +18,7 @@ is:
   project: the plan project stays in the run exactly as it is (progress,
   effort, exclusions, pins).
 - `changed`: a scheduling input differs (name, hub, category, status,
-  priority, rank, leader, current step, design time, lab time). It replaces
+  priority, global rank, leader, current step, design time, lab time). It replaces
   its plan project like any matched import row. Values not changed come from
   the plan project; its step weeks are the plan project's own effective
   weeks while the workflow and category are unchanged (else the app's lead
@@ -30,7 +30,8 @@ is:
 
 Code, type and the actual dates are listed as changes but are not
 scheduling inputs (`simulated = false`). `#`, End week, Steps and Project ID
-are read-only. Nothing here logs a value; no financial column exists in the
+are read-only, and so is Hub rank (ADR 0068, derived from Global rank). Nothing
+here logs a value; no financial column exists in the
 file.
 """
 
@@ -121,7 +122,8 @@ SIMULATED_KEYS: frozenset[str] = frozenset(
         "lab-time",
         "current-step",
         "priority",
-        "rank",
+        # P60 (ADR 0068): the global rank is the input; "Hub rank" is read-only.
+        "global-rank",
     }
 )
 #: Every compared column, in screen order (charter columns included: listed,
@@ -368,7 +370,7 @@ def _canon(key: str, value: Any) -> Any:
     if key == "current-step":
         step, ok = parse_step(value)
         return step if ok else ("?", _norm(value))
-    if key == "rank":
+    if key in ("rank", "global-rank"):
         rank, ok = parse_rank(value)
         return rank if ok else ("?", _norm(value))
     if key == "hub":
@@ -753,8 +755,8 @@ def _map(sheet: _RegisterSheet, ctx: ParseContext, rctx: RegisterContext) -> Par
                 )
             priority, psrc = (stored, "matched") if stored is not None else ("P3", "default")
         rank: int | None = None
-        if takes("rank"):
-            rank, ok = parse_rank(v.get("rank"))
+        if takes("global-rank"):
+            rank, ok = parse_rank(v.get("global-rank"))
             if not ok or (rank is not None and rank > 9999):
                 issue(
                     "priority",
@@ -976,7 +978,7 @@ def _map(sheet: _RegisterSheet, ctx: ParseContext, rctx: RegisterContext) -> Par
 #: Done / In Progress states and %, remaining effort, exclusions, own lead
 #: times, pins, frozen, VIP.
 _IN_PLACE_FIELDS: frozenset[str] = frozenset(
-    {"hub", "category", "status", "priority", "rank", "leader", "design-time", "lab-time"}
+    {"hub", "category", "status", "priority", "global-rank", "leader", "design-time", "lab-time"}
 )
 
 
@@ -1047,7 +1049,7 @@ def plan_overrides(
             upd["status"] = r.status
         if "priority" in edited:
             upd["priority"] = r.priority
-        if edited & {"priority", "rank"}:
+        if edited & {"priority", "global-rank"}:
             # ADR 0050: a new band is unranked unless a rank is given.
             upd["band_rank"] = r.rank if r.rank is not None and r.rank >= 1 else None
         if "leader" in edited:

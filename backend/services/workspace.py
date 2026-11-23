@@ -992,7 +992,8 @@ async def build_workspace(
             **{
                 name: getattr(project, name)
                 for name in WorkspaceProject.model_fields
-                if name not in ("hub", "leader_engineer_name", "band_size")
+                if name
+                not in ("hub", "leader_engineer_name", "band_size", "hub_rank", "hub_band_size")
                 and name not in _FINANCIAL_FIELDS
             },
             **_financials(project, principal),

@@ -119,6 +119,7 @@ from schemas.project import (
 from services.active_run import get_active_run
 from services.audit_helpers import project_audit_state
 from services.band_rank import (
+    BandSizes,
     band_sizes,
     lock_band_ranks,
     plan_batch_band_ranks,
@@ -341,7 +342,7 @@ async def _authorize_registration_write(
 
 
 def project_read_for(
-    project: Project, principal: Principal, sizes: Mapping[ProjectPriority, int]
+    project: Project, principal: Principal, sizes: BandSizes
 ) -> ProjectRead:
     """`ProjectRead` of a written project. P47-R01 (security M-2): the four
     financial fields are decrypted only for a caller with Project
@@ -354,7 +355,8 @@ def project_read_for(
     data: dict[str, Any] = {
         name: getattr(project, name)
         for name in ProjectRead.model_fields
-        if name not in FINANCIAL_FIELD_NAMES and name != "band_size"
+        if name not in FINANCIAL_FIELD_NAMES
+        and name not in ("band_size", "hub_rank", "hub_band_size")
     }
     return with_band_size(
         ProjectRead.model_validate({**data, **dict.fromkeys(FINANCIAL_FIELD_NAMES)}), sizes
@@ -1834,6 +1836,7 @@ async def preview_project_band_rank(
     return await preview_band_rank_move(
         db, project, current_user,
         before=body.before_project_id, after=body.after_project_id, to_rank=body.to_rank,
+        hub_rank=body.hub_rank,
     )
 
 
@@ -1869,7 +1872,7 @@ async def move_project_band_rank(
     result = await confirm_band_rank_move(
         db, project, current_user,
         before=body.before_project_id, after=body.after_project_id,
-        preview_token=body.preview_token, to_rank=body.to_rank,
+        preview_token=body.preview_token, to_rank=body.to_rank, hub_rank=body.hub_rank,
     )
     response.headers.update(
         AutoRecalcOutcome(

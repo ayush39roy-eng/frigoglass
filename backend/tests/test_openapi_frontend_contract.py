@@ -687,6 +687,8 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # cover the backend fields exactly and never mix.
     (_PRIORITY_MOVE_TS, "BandRankAnchorPlacement", "BandRankPreviewRequest", "subset"),
     (_PRIORITY_MOVE_TS, "BandRankToRankPlacement", "BandRankPreviewRequest", "subset"),
+    # P60 (ADR 0068): the third placement shape, `{hub_rank}`.
+    (_PRIORITY_MOVE_TS, "BandRankHubRankPlacement", "BandRankPreviewRequest", "subset"),
     # --- P18-T03: What-if planner (backend/schemas/whatif.py, ADR 0031) ---
     (_WHATIF_TS, "AddProjectIn", "AddProjectIn", "exact"),
     (_WHATIF_TS, "AddEngineerIn", "AddEngineerIn", "exact"),
@@ -1157,8 +1159,11 @@ def test_band_rank_request_union_p36_to_rank() -> None:
     to_rank = _resolve_ts_fields_with_imports(_PRIORITY_MOVE_TS, "BandRankToRankPlacement")
     assert set(anchors) == {"before_project_id", "after_project_id"}
     assert set(to_rank) == {"to_rank"}
+    # P60 (ADR 0068): or `hub_rank`.
+    hub_rank = _resolve_ts_fields_with_imports(_PRIORITY_MOVE_TS, "BandRankHubRankPlacement")
+    assert set(hub_rank) == {"hub_rank"}
     preview_props, preview_required = _backend_fields("BandRankPreviewRequest")
-    assert preview_props == set(anchors) | set(to_rank)
+    assert preview_props == set(anchors) | set(to_rank) | set(hub_rank)
     assert preview_required == set()
     move_props, move_required = _backend_fields("BandRankMoveRequest")
     assert move_props == preview_props | {"preview_token"}

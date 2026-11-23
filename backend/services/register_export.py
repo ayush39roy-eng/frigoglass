@@ -48,6 +48,9 @@ class RegisterColumn:
     optional: bool = True
     #: True: shown by default (the charter columns are off by default).
     default: bool = True
+    #: P60 (ADR 0068): in the download exactly when this other column is
+    #: ("Global rank" follows "Hub rank", the page's one `rank` column).
+    follows: str | None = None
 
 
 #: Screen order. `ordinal`, `project`, `code` and `project-id` are always in.
@@ -71,7 +74,10 @@ REGISTER_COLUMNS: tuple[RegisterColumn, ...] = (
     RegisterColumn("current-step", "Current step"),
     RegisterColumn("steps", "Steps"),
     RegisterColumn("priority", "Priority"),
-    RegisterColumn("rank", "Rank"),
+    # P60 (ADR 0068): the page's `rank` column shows the hub rank; the
+    # download writes it as "Hub rank" with "Global rank" next to it.
+    RegisterColumn("rank", "Hub rank"),
+    RegisterColumn("global-rank", "Global rank", follows="rank"),
     RegisterColumn("project-id", "Project ID", optional=False),
 )
 COLUMN_BY_KEY: Mapping[str, RegisterColumn] = {c.key: c for c in REGISTER_COLUMNS}
@@ -87,6 +93,9 @@ HEADER_ALIASES: Mapping[str, str] = {
     "steps (click to exclude)": "steps",
     "leader (design resource)": "leader",
     "code": "code",
+    # P60: a download made before ADR 0068 has one "Rank" column, which held
+    # the full-band (global) rank.
+    "rank": "global-rank",
 }
 #: Text of the Steps cell when the project excludes no step.
 ALL_STEPS_TEXT = "All included"
@@ -94,7 +103,11 @@ EXCLUDED_PREFIX = "Excluded: "
 #: The largest Design / Lab time figure (`schemas.project.EffortWeeks`).
 EFFORT_FIGURE_MAX = 9999.99
 #: Columns read-only in the import (derived by the app, never an input).
-READ_ONLY_KEYS: frozenset[str] = frozenset({"ordinal", "end-week", "steps", "project-id"})
+#: P60 (ADR 0068): the hub rank is derived from the global order, so the import
+#: reads it as read-only; "Global rank" stays the rank input.
+READ_ONLY_KEYS: frozenset[str] = frozenset(
+    {"ordinal", "end-week", "steps", "project-id", "rank"}
+)
 
 
 class UnknownColumns(ValueError):
@@ -117,6 +130,7 @@ def resolve_columns(columns: Iterable[str] | None) -> list[RegisterColumn]:
         if unknown:
             raise UnknownColumns(unknown)
         wanted = set(given)
+    wanted |= {c.key for c in REGISTER_COLUMNS if c.follows is not None and c.follows in wanted}
     return [c for c in REGISTER_COLUMNS if not c.optional or c.key in wanted]
 
 
@@ -170,7 +184,8 @@ def register_cells(
         "current-step": step,
         "steps": (EXCLUDED_PREFIX + ", ".join(excluded)) if excluded else ALL_STEPS_TEXT,
         "priority": (PRIORITY_NOT_APPLICABLE_LABEL if not applicable else _value(row.priority)),
-        "rank": row.band_rank if applicable else None,
+        "rank": row.hub_rank if applicable else None,
+        "global-rank": row.band_rank if applicable else None,
         "project-id": str(row.project_id),
     }
 

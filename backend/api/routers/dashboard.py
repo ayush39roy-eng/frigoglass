@@ -1155,6 +1155,8 @@ async def analytics_projects(
                     if p.band_rank is not None and p.priority is not None
                     else None
                 ),
+                hub_rank=sizes.hub_rank(p.id),
+                hub_band_size=sizes.hub_band_size(p.id),
             )
         )
     return ProjectFilterResult(total_count=len(rows), rows=rows)

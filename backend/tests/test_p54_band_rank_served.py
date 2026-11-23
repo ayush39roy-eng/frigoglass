@@ -244,7 +244,8 @@ async def test_band_size_is_one_grouped_count_per_request(db_session):
     assert resp.status_code == 200, resp.text
     assert len(resp.json()) == 8
     assert len(statements) == 1, statements
-    assert "group by" in statements[0].lower()
+    # P60 (ADR 0068): the one query is windowed (band sizes and hub ranks).
+    assert "partition by" in statements[0].lower()
 
 
 async def test_write_responses_serve_band_rank_and_size(db_session):
@@ -392,4 +393,5 @@ async def test_register_rows_band_size_is_one_grouped_count(db_session):
     assert resp.status_code == 200, resp.text
     assert len(resp.json()["rows"]) == 8
     assert len(statements) == 1, statements
-    assert "group by" in statements[0].lower()
+    # P60 (ADR 0068): the one query is windowed (band sizes and hub ranks).
+    assert "partition by" in statements[0].lower()

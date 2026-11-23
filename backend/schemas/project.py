@@ -280,6 +280,15 @@ class ProjectRead(BaseModel):
     #: `band_rank`, all hubs); null exactly when `band_rank` is null. Filled
     #: by `services.band_rank.with_band_size` (one grouped count per request).
     band_size: int | None = None
+    # --- P60 (ADR 0068): hub rank, derived, never stored ------------------
+    #: Read-only. The 1-based position among the projects of the SAME hub in
+    #: the same band, in `band_rank` order; null exactly when `band_rank` is
+    #: null. Over the full band, never hub-scoped (a Hub Planner sees the same
+    #: value). Set through `POST /projects/{id}/band-rank` with `hub_rank`.
+    hub_rank: int | None = None
+    #: Read-only. The number of that hub's ranked projects in the band (the
+    #: `n` of `hub_rank`); null exactly when `band_rank` is null.
+    hub_band_size: int | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -387,6 +396,14 @@ class BandRankPreviewRequest(BaseModel):
     after_project_id: uuid.UUID | None = None
     #: Strict: a JSON integer only (no bool, no "3").
     to_rank: int | None = Field(default=None, strict=True)
+    #: P60 (ADR 0068): the target position among the project's OWN hub's
+    #: projects of the band (1-based). The project is placed just before the
+    #: hub peer now at that hub rank; past the hub's end, just after its last
+    #: peer; a project alone in its hub of the band keeps its place. Other
+    #: hubs' relative order is untouched. Exactly one of `to_rank` /
+    #: `hub_rank` (422 `RANK_AND_HUB_RANK`); not with an anchor (422
+    #: `ANCHOR_AND_RANK`); below 1 is 422 `BAD_RANK`. Strict JSON integer.
+    hub_rank: int | None = Field(default=None, strict=True)
 
 
 class BandRankMoveRequest(BandRankPreviewRequest):
@@ -515,6 +532,11 @@ class PriorityMoveResponse(BaseModel):
     summary: PriorityPreviewSummary | None = None
     changes: list[PriorityPreviewChange] = Field(default_factory=list)
     hidden_count: int = 0
+    #: P60 (ADR 0068), band-rank moves only (null on a priority move): the
+    #: project's global `band_rank` and its `hub_rank` after the move (its
+    #: current ones when `unchanged`).
+    band_rank: int | None = None
+    hub_rank: int | None = None
 
 
 # --- P35: Projects register batch save (`POST /projects/register-edits`) -----------

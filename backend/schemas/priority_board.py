@@ -47,6 +47,12 @@ class PriorityBoardCard(BaseModel):
     #: (dense 1..n), never renumbered by a board filter. Null only for a
     #: project that is not a band member.
     band_rank: int | None
+    #: P60 (ADR 0068): position among the SAME hub's projects of the band (by
+    #: `band_rank`, 1..`hub_band_size`) and that count; over the full band,
+    #: never renumbered by a board filter or the caller's hub scope. Null
+    #: exactly when `band_rank` is null.
+    hub_rank: int | None = None
+    hub_band_size: int | None = None
     #: P36 (R36-2): frozen projects schedule first whatever their position
     #: (dates locked), badged like VIP.
     frozen: bool

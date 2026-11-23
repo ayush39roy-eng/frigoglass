@@ -372,6 +372,11 @@ class ProjectFilterRow(BaseModel):
     #: Ranked projects in that band (the full band's `n`, all hubs); null
     #: exactly when `band_rank` is null. One grouped count per request.
     band_size: int | None
+    #: P60 (ADR 0068): position among the same hub's projects of the band (by
+    #: `band_rank`) and that count; null exactly when `band_rank` is null.
+    #: Not hub-scoped (the same values as `ProjectRead`).
+    hub_rank: int | None = None
+    hub_band_size: int | None = None
 
 
 class ProjectFilterResult(BaseModel):

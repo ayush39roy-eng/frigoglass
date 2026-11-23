@@ -50,7 +50,8 @@ DEFAULT_HEADERS = [
     "Current step",
     "Steps",
     "Priority",
-    "Rank",
+    "Hub rank",  # P60 (ADR 0068): the page's rank column is the hub rank ...
+    "Global rank",  # ... and the download adds the full-band rank next to it.
     "Project ID",
 ]
 HEADER_ROW = 5  # the styled writer's table header row (title block above)
@@ -498,3 +499,50 @@ async def test_leader_not_counted_in_capacity_is_kept(db_session):
         i for i in body["issues"] if i["row_key"] in gr_keys and i["code"] == "ENGINEER_MISSING"
     ]
     assert sim.status_code == 200, sim.text
+
+
+# --- P60 (ADR 0068): "Hub rank" read-only, "Global rank" the rank input ----------------------
+
+
+async def test_p60_hub_rank_is_read_only_and_global_rank_is_the_input(db_session):
+    await make_world(db_session)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        wb, ws, headers = _sheet(await _export(c))
+        rows = _rows_by_name(ws, headers)
+        # Alpha is alone in P2 (and in its hub there): both ranks are 1.
+        assert (rows["Alpha Cooler"]["Hub rank"], rows["Alpha Cooler"]["Global rank"]) == (1, 1)
+        _set(ws, headers, "Alpha Cooler", "Hub rank", 5)
+        hub_only = await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)
+        _set(ws, headers, "Alpha Cooler", "Global rank", 2)
+        global_edit = await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)
+    assert hub_only.status_code == 200 and global_edit.status_code == 200
+    alpha = {r["name"]: r for r in hub_only.json()["rows"]}["Alpha Cooler"]
+    assert alpha["change_kind"] == "unchanged" and alpha["changes"] == []
+    alpha = {r["name"]: r for r in global_edit.json()["rows"]}["Alpha Cooler"]
+    assert alpha["change_kind"] == "changed"
+    got = [(x["field"], x["label"], x["before"], x["after"], x["simulated"])
+           for x in alpha["changes"]]  # fmt: skip
+    assert got == [("global-rank", "Global rank", "1", "2", True)]
+
+
+async def test_p60_a_pre_adr_0068_file_with_one_rank_column_still_reads(db_session):
+    """A download made before ADR 0068 has one "Rank" column (the global rank)."""
+
+    await make_world(db_session)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        wb, ws, headers = _sheet(await _export(c))
+        ws.cell(HEADER_ROW, headers.index("Hub rank") + 1).value = "Notes"
+        ws.cell(HEADER_ROW, headers.index("Global rank") + 1).value = "Rank"
+        resp = await parse(c, _save(wb), name="projects-list.xlsx", ctype=XLSX)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["file_format"] == "projects_list"
+    assert {r["change_kind"] for r in resp.json()["rows"]} == {"unchanged"}
+
+
+def test_p60_rank_column_brings_global_rank():
+    assert [c.header for c in resolve_columns(["rank"])][-3:] == [
+        "Hub rank", "Global rank", "Project ID",
+    ]  # fmt: skip
+    assert "Global rank" not in [c.header for c in resolve_columns(["hub"])]
