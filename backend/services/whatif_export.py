@@ -42,6 +42,7 @@ from services.whatif import (
     WHATIF_TIME_CAP_SECONDS,
     do_simulate,
     run_capped,
+    served_outcome,
     to_engine_scenario,
 )
 from services.whatif_baseline import WhatIfContext
@@ -130,7 +131,9 @@ def planner_book(
     kept = [o for o in out.project_outcomes if scope.hub_ok(projects[o.project_id].hub)]
     for o in kept:
         p = projects[o.project_id]
-        key = classify_outcome(o)
+        # BUG-4 (2026-11-23): the screen's / Dashboard's bucket, so a
+        # Commercialized project delivered this year is "within year" here too.
+        key = served_outcome(classify_outcome(o), blocked=o.blocked, within_year=o.within_year)
         text = _outcome_text(o, key)
         project_fields: dict[str, Any] = {
             "project_id": p.project_id if p.project_id not in new_ids else "",
