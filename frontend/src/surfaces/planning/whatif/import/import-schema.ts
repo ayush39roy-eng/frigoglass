@@ -107,6 +107,7 @@ export const importRowSchema: z.ZodType<ImportRow> = z.object({
 
 /** P50 (ADR 0061 R49-7, I40): a picker week with its server label. */
 const planWeekChoice = z.object({ week: int, label: z.string() });
+const planUntilPreset = z.object({ year: int, week: int, label: z.string() });
 
 const stepMetaSchema = z.object({
   workflow,
@@ -171,6 +172,9 @@ export const importParseResponseSchema: z.ZodType<ImportParseResponse> = z.objec
   // P50 (D1): optional so a server without them still validates (no pickers then).
   plan_from_min_week: int.optional(),
   plan_week_choices: z.array(planWeekChoice).optional(),
+  // P53 (R53-4): the "Plan year" presets. Without this key zod strips them and
+  // the picker offers only the default year.
+  plan_until_presets: z.array(planUntilPreset).optional(),
 });
 
 const windowFigure = z.object({
@@ -265,6 +269,11 @@ const planProjectSchema = z.object({
 });
 
 export const importSimulateResponseSchema: z.ZodType<ImportSimulateResponse> = z.object({
+  // P53 (R53-3/4/6): served by the simulation; zod would strip them otherwise.
+  // The delivery table is the server's own shape, passed through as served.
+  delivery_by_year: z.custom<NonNullable<ImportSimulateResponse['delivery_by_year']>>((v) => typeof v === 'object' && v !== null).nullable().optional(),
+  plan_until_presets: z.array(planUntilPreset).optional(),
+  last_finish_week: nint.optional(),
   base_year: int,
   current_week: int,
   plan_year_end_week: int,
