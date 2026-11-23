@@ -99,10 +99,14 @@ export function BoardBulkMoveBar({
   selected,
   projectName,
   onClear,
+  request = null,
 }: {
   selected: readonly string[];
   projectName: (projectId: string) => string | undefined;
   onClear: () => void;
+  /** P59 multi-drag: a drop of a selected card on another column asks to move
+   *  the whole selection there (a new object each drop opens the confirm). */
+  request?: { band: ProjectPriority } | null;
 }): React.JSX.Element | null {
   const save = useRegisterSave();
   const ids = React.useId();
@@ -110,6 +114,15 @@ export function BoardBulkMoveBar({
   const [confirming, setConfirming] = React.useState(false);
   const [errors, setErrors] = React.useState<readonly RegisterEditError[]>([]);
   const [message, setMessage] = React.useState<string | null>(null);
+  // A new drop request opens the same confirm as the bar's Move (state adjusted during render).
+  const [seenRequest, setSeenRequest] = React.useState(request);
+  if (request !== seenRequest) {
+    setSeenRequest(request);
+    if (request) {
+      setBand(request.band);
+      setConfirming(true);
+    }
+  }
 
   const count = selected.length;
   const projects = `${formatInteger(count)} ${count === 1 ? 'project' : 'projects'}`;

@@ -53,12 +53,27 @@ import {
 
 const NO_STAGED: ReadonlySet<string> = new Set();
 
+/** P59 multi-drag: the drag image is a "N projects" badge (removed after the browser snapshots it). */
+function showDragCount(event: React.DragEvent<HTMLElement>, count: number): void {
+  if (typeof event.dataTransfer.setDragImage !== 'function') return;
+  const badge = document.createElement('div');
+  badge.textContent = `${String(count)} projects`;
+  badge.setAttribute('data-testid', 'board-drag-count');
+  badge.style.cssText =
+    'position:fixed;top:-1000px;left:-1000px;padding:4px 10px;border-radius:9999px;background:#1d4ed8;color:#fff;font:600 12px system-ui,sans-serif;';
+  document.body.appendChild(badge);
+  event.dataTransfer.setDragImage(badge, 12, 12);
+  window.setTimeout(() => badge.remove(), 0);
+}
+
 interface PointerDrag {
   projectId: string;
   from: ProjectPriority;
   allowed: ProjectPriority[];
   /** P36: may be reordered inside `from` (served `band_rank`). */
   canRank: boolean;
+  /** P59: the dragged card is one of 2+ ticked cards: a drop on another column moves them all. */
+  multi?: boolean;
 }
 
 interface KeyboardLift extends PointerDrag {
@@ -214,6 +229,7 @@ export function PriorityBoardView({
   // P59: multi-select + one-batch move (Registration write only, like the single move).
   const selection = useBoardSelectionState();
   const bulkEnabled = canWrite && host !== null;
+  const [bulkRequest, setBulkRequest] = React.useState<{ band: ProjectPriority } | null>(null);
   const dragEnabled = canWrite && host !== null && !busy;
 
   const columns = React.useMemo(
@@ -377,13 +393,21 @@ export function PriorityBoardView({
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', item.card.project_id);
     setLift(null);
+    // P59 multi-drag: a ticked card with 2+ ticked drags the whole selection to
+    // another column (the server refuses per project what may not move).
+    const ticked = selection.selected;
+    const multi = ticked.size >= 2 && ticked.has(item.card.project_id);
+    if (multi) showDragCount(event, ticked.size);
     setPointerDrag({
       projectId: item.card.project_id,
       from: item.servedPriority,
-      allowed: allowedTargets(item.card, item.servedPriority),
+      allowed: multi
+        ? PROJECT_PRIORITIES.filter((p) => p !== item.servedPriority)
+        : allowedTargets(item.card, item.servedPriority),
       canRank: canRerank(item.card),
+      multi,
     });
-  }, []);
+  }, [selection.selected]);
 
   const onPointerDragEnd = React.useCallback(() => {
     setPointerDrag(null);
@@ -430,6 +454,10 @@ export function PriorityBoardView({
         if (!pointerDrag.canRank || !column || at === null) return;
         const placement = placementForSlot(column.cards, at, item.card.project_id);
         if (placement) rankDrop(item, column, placement);
+        return;
+      }
+      if (pointerDrag.multi && pointerDrag.allowed.includes(priority)) {
+        setBulkRequest({ band: priority });
         return;
       }
       if (pointerDrag.allowed.includes(priority)) drop(item, priority);
@@ -616,6 +644,7 @@ export function PriorityBoardView({
             return undefined;
           }}
           onClear={selection.clear}
+          request={bulkRequest}
         />
       ) : null}
 

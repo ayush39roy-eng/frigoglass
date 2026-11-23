@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
@@ -113,6 +113,47 @@ describe('P59 Priority board multi-select', () => {
     });
     await waitFor(() => expect(screen.queryByTestId('board-bulk-bar')).not.toBeInTheDocument());
     expect(screen.getByRole('checkbox', { name: 'Select Alpha Cooler' })).not.toBeChecked();
+  });
+
+  it('dragging one of 3 ticked cards onto P2 moves all 3 with ONE batch after the confirm', async () => {
+    client.apiSend.mockResolvedValue({
+      project_ids: ['a', 'b', 'c'],
+      projects_marked_stale: [],
+      recalc_status: 'not_needed',
+      schedule_run_id: null,
+      baseline_run_id: null,
+      task_id: null,
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    for (const name of ['Alpha Cooler', 'Beta Cooler', 'Gamma Cooler']) {
+      await user.click(screen.getByRole('checkbox', { name: `Select ${name}` }));
+    }
+    const setDragImage = vi.fn();
+    const dt = { setData: vi.fn(), getData: vi.fn(), setDragImage, effectAllowed: '', dropEffect: '' };
+    const alpha = screen.getByRole('link', { name: 'Alpha Cooler' }).closest<HTMLElement>('[data-testid="board-card"]');
+    const p2 = screen.getAllByTestId('board-column').find((c) => c.getAttribute('data-priority') === 'P2');
+    if (!alpha || !p2) throw new Error('missing card or column');
+    fireEvent.dragStart(alpha, { dataTransfer: dt });
+    expect(setDragImage).toHaveBeenCalledWith(expect.objectContaining({ textContent: '3 projects' }), 12, 12);
+    fireEvent.dragOver(p2, { dataTransfer: dt });
+    fireEvent.drop(p2, { dataTransfer: dt });
+
+    const dialog = await screen.findByTestId('board-bulk-confirm');
+    expect(dialog).toHaveTextContent('Move 3 projects to P2? The schedule recalculates once.');
+    await user.click(within(dialog).getByRole('button', { name: 'Move' }));
+    await waitFor(() => expect(client.apiSend).toHaveBeenCalledTimes(1));
+    const [method, path, body] = client.apiSend.mock.calls[0] as [string, string, { edits: unknown[] }];
+    expect([method, path]).toEqual(['POST', '/projects/register-edits']);
+    expect(body.edits).toHaveLength(3);
+    expect(body.edits).toEqual(
+      expect.arrayContaining([
+        { project_id: 'a', priority: 'P2' },
+        { project_id: 'b', priority: 'P2' },
+        { project_id: 'c', priority: 'P2' },
+      ]),
+    );
   });
 
   it('a read-only role gets no tick boxes and no bulk bar', async () => {
