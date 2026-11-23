@@ -13,7 +13,7 @@ import { useHubs } from '@/lib/api/reference';
 import { formatCurrency, formatDecimal, formatPlanWeek } from '@/lib/format';
 import { NOT_APPLICABLE_LABEL, rowPriorityNotApplicable } from '@/lib/priority-applicability';
 import { queryKeys } from '@/lib/query-keys';
-import { invalidateScoreReaders } from '@/lib/score-readers';
+import { invalidateProjectWriteReaders, invalidateScoreReaders } from '@/lib/score-readers';
 import { scoringTagsText } from '@/lib/scoring-tags';
 import { useEditConflict } from '@/lib/use-edit-conflict';
 import { useProjectConflictFormat } from '@/lib/use-project-conflict-format';
@@ -86,7 +86,9 @@ export function DetailsPanel({
     },
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projectWorkspace(p.id) });
-      void queryClient.invalidateQueries({ queryKey: ['projects'] });
+      // The register (Dashboard keys), Gantt, boards and Matrix show the saved
+      // status / leader too, not only `projects`.
+      invalidateProjectWriteReaders(queryClient, result?.project ?? {});
       // P27 (ADR 0038): the form always sends `scoring_tags`; a newly set tag
       // pre-fills its dimension with 5 server-side (the PATCH carries no score).
       invalidateScoreReaders(queryClient);

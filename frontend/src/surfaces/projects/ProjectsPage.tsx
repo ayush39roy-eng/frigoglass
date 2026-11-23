@@ -582,7 +582,17 @@ export default function ProjectsPage(): React.JSX.Element {
     });
   }, []);
   const onToggleAll = React.useCallback(
-    (on: boolean) => setSelected(on ? new Set(shownWritable.map((r) => r.project_id)) : new Set()),
+    // Adds / removes the rows shown only: rows ticked under another search or
+    // filter stay ticked (ticking across filters accumulates).
+    (on: boolean) =>
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const r of shownWritable) {
+          if (on) next.add(r.project_id);
+          else next.delete(r.project_id);
+        }
+        return next;
+      }),
     [shownWritable],
   );
 

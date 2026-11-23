@@ -289,9 +289,11 @@ export function BulkEditBar({
             data-testid="bulk-step"
           >
             <option value={NO_CHANGE}>Choose…</option>
+            {/* The register's step code is the template id (`PDD-A`), not its
+                short `code` (`MKTG_BRF`): the server refuses the latter. */}
             {(workflowOptions?.steps ?? []).map((t) => (
-              <option key={t.code} value={t.code} title={t.name}>
-                {t.code} · {t.name}
+              <option key={t.id} value={t.id} title={t.name}>
+                {t.id} · {t.name}
               </option>
             ))}
           </select>

@@ -526,6 +526,34 @@ describe('Projects register — P35-T08 extras', () => {
     expect(screen.getByTestId('bulk-selected-count')).toHaveTextContent('1 selected');
   });
 
+  it('select-all under a search keeps the rows ticked under another search (ticks accumulate)', async () => {
+    const user = userEvent.setup();
+    const all = [row('a', { project_name: 'Alpha' }), row('b', { project_name: 'Beta' }), row('c', { project_name: 'Gamma' })];
+    useDashboardProjects.mockImplementation((params: ProjectFilterParams) => {
+      const q = (params as { q?: string }).q ?? '';
+      return ok(q === '' ? all : all.filter((r) => r.project_name.toLowerCase().includes(q.toLowerCase())));
+    });
+    renderWithProviders(<ProjectsPage />);
+    await startEdit(user, 'Alpha');
+    await user.click(screen.getByRole('checkbox', { name: 'Select every editable row shown' }));
+    expect(screen.getByTestId('bulk-selected-count')).toHaveTextContent('3 selected');
+    await user.click(screen.getByRole('checkbox', { name: 'Select every editable row shown' }));
+    await user.type(screen.getByPlaceholderText('Project name or code'), 'gamma');
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'Alpha' })).not.toBeInTheDocument());
+    await user.click(screen.getByRole('checkbox', { name: 'Select Gamma' }));
+    await user.clear(screen.getByPlaceholderText('Project name or code'));
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Alpha' })).toBeInTheDocument());
+    await user.click(screen.getByRole('checkbox', { name: 'Select Alpha' }));
+    expect(screen.getByTestId('bulk-selected-count')).toHaveTextContent('2 selected');
+    // Under a search, select-all adds the rows shown and keeps Alpha.
+    await user.type(screen.getByPlaceholderText('Project name or code'), 'beta');
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'Alpha' })).not.toBeInTheDocument());
+    await user.click(screen.getByRole('checkbox', { name: 'Select every editable row shown' }));
+    await user.clear(screen.getByPlaceholderText('Project name or code'));
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Alpha' })).toBeInTheDocument());
+    expect(screen.getByTestId('bulk-selected-count')).toHaveTextContent('3 selected');
+  });
+
   it('hides a column and persists it for this user; a dragged width is stored too', async () => {
     const user = userEvent.setup();
     useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha' })]));

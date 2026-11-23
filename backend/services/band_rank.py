@@ -119,6 +119,24 @@ async def lock_band_ranks(db: AsyncSession) -> None:
     await db.execute(select(func.set_config("lock_timeout", previous, True)))
 
 
+async def wait_for_band_ranks(db: AsyncSession) -> None:
+    """Take the band-rank advisory lock with NO timeout, as the FIRST lock of
+    a schedule run's persistence transaction (`persist_schedule_output`).
+
+    Owner 2026-11-23 (register Save "could not be saved"): a register batch
+    holds its edited project rows `FOR UPDATE` and then renumbers band
+    neighbours (`band_rank` is in a unique constraint, so that UPDATE needs
+    the key-update row lock), while a run being persisted holds `FOR KEY
+    SHARE` on project rows through its outcome / step FKs and needs it on the
+    edited rows too: Postgres reported a deadlock and the Save got a 500.
+    Every band-rank writer takes this lock before any row lock, so a run that
+    takes it before its first write is serialised with them and never holds
+    a project row lock they wait on. Re-entrant (an in-process priority-move
+    confirm already holds it)."""
+
+    await db.execute(select(func.pg_advisory_xact_lock(BAND_RANK_LOCK_KEY)))
+
+
 def _value(enum_or_none: ProjectStatus | ProjectPriority | None) -> str | None:
     return enum_or_none.value if enum_or_none is not None else None
 

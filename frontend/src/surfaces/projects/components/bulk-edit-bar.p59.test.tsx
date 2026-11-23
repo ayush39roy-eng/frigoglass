@@ -64,4 +64,31 @@ describe('P59 bulk edit: priority, current step, category, type', () => {
     expect(screen.getByTestId('bulk-step')).toBeDisabled();
     expect(screen.getByTestId('bulk-workflow-note')).toHaveTextContent('Pick projects of one workflow');
   });
+
+  it('the current step is sent as the register step id (PDD-B), not the template short code', async () => {
+    const onApply = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(
+      <BulkEditBar
+        selectedCount={2}
+        draftCount={0}
+        leaderOptions={[]}
+        leaderNote={null}
+        workflowOptions={{
+          categories: [],
+          steps: [
+            { id: 'PDD-A', workflow_id: 'PDD', code: 'MKTG_BRF', name: 'Marketing Brief', kind: 'design', sequence_order: 1, predecessor_ids: [] },
+            { id: 'PDD-B', workflow_id: 'PDD', code: 'FEAS_STD', name: 'Feasibility Study', kind: 'design', sequence_order: 2, predecessor_ids: ['PDD-A'] },
+          ],
+        }}
+        workflowNote={null}
+        onApply={onApply}
+        onClearSelection={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('option', { name: 'PDD-B · Feasibility Study' })).toBeInTheDocument();
+    await user.selectOptions(screen.getByTestId('bulk-step'), 'PDD-B');
+    await user.click(screen.getByTestId('bulk-step-apply'));
+    expect(onApply).toHaveBeenCalledWith({ current_step_code: 'PDD-B' });
+  });
 });

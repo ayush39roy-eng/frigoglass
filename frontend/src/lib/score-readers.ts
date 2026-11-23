@@ -16,3 +16,24 @@ export function invalidateScoreReaders(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: ['vip-board'] });
   void queryClient.invalidateQueries({ queryKey: ['projects', 'workspace'] });
 }
+
+/** Project fields every project view shows (register, Dashboard, Gantt,
+ *  boards, Matrix): a PATCH that sends one of them re-reads them all. */
+const PROJECT_VIEW_FIELDS = ['status', 'priority', 'leader_engineer_id', 'hub_id', 'category', 'type'] as const;
+
+/**
+ * Owner 2026-11-23 ("I change the status but it is still not updated"): a
+ * `PATCH /projects/{id}` is shown at once everywhere. The register list and
+ * every Dashboard figure read `dashboard` keys (not `projects`), so they are
+ * always re-read; when the body sends a field the other views show (status,
+ * priority, leader, hub, category, type), the Gantt, the Priority / VIP
+ * boards and the Matrix are re-read too.
+ */
+export function invalidateProjectWriteReaders(queryClient: QueryClient, body: object): void {
+  void queryClient.invalidateQueries({ queryKey: ['projects'] });
+  void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+  if (!PROJECT_VIEW_FIELDS.some((field) => field in body)) return;
+  for (const key of [['gantt'], ['priority-board'], ['priority-matrix'], ['vip-board']]) {
+    void queryClient.invalidateQueries({ queryKey: key });
+  }
+}

@@ -92,6 +92,19 @@ describe('use-registration', () => {
     expect(keys).toContainEqual(['projects', 'detail', 'p1', 'hard-gate-status']);
   });
 
+  it('owner 2026-11-23: a PATCH of a shown field (leader) re-reads the register (dashboard keys), Gantt, boards and Matrix', async () => {
+    vi.mocked(api.updateProject).mockResolvedValue({ id: 'p1' } as never);
+    const { client, Wrapper } = makeWrapper();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useUpdateProject(), { wrapper: Wrapper });
+    await result.current.mutateAsync({ projectId: 'p1', body: { leader_engineer_id: 'eng-2' } });
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    const keys = spy.mock.calls.map((c) => c[0]?.queryKey);
+    for (const key of [['projects'], ['dashboard'], ['gantt'], ['priority-board'], ['priority-matrix'], ['vip-board']]) {
+      expect(keys).toContainEqual(key);
+    }
+  });
+
   it('P27: a PATCH with scoring_tags re-reads every score reader (Matrix, boards, Workspace), not run views', async () => {
     vi.mocked(api.updateProject).mockResolvedValue({ id: 'p1' } as never);
     const { client, Wrapper } = makeWrapper();

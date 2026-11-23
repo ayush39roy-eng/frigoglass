@@ -52,6 +52,14 @@ export const REGISTER_SAVE_COPY = {
   invalid: 'Nothing was saved. Fix the highlighted rows and save again.',
   forbiddenRows: 'Nothing was saved. You cannot edit the highlighted rows; undo their changes and save again.',
   rateLimited: 'Too many saves in a row — wait a few seconds and save again. Nothing was saved.',
+  /** A 5xx / gateway error or no answer: the server may or may not have
+   *  stored the batch (e.g. a worker restarted mid-request), so the list is
+   *  reloaded and the edits are kept rather than claiming nothing changed. */
+  serverError: (status: number) =>
+    `The server did not confirm the save (error ${String(status)}). The list was reloaded to show what is stored: check the rows, then save again if your change is missing.`,
+  unreachable:
+    'The server could not be reached, so the save was not confirmed. The list was reloaded to show what is stored: check the rows, then save again if your change is missing.',
+  fallback: 'The edits could not be saved. Nothing was changed.',
 } as const;
 
 export type RegisterSaveFlow =
@@ -101,8 +109,15 @@ function savedText(n: number): string {
   return `Saved ${String(n)} ${n === 1 ? 'project' : 'projects'}.`;
 }
 
+/** No readable refusal: a network failure (status 0) or a 5xx without a
+ *  served `detail` / `code` (an HTML gateway page, a crashed worker). The
+ *  batch may have been committed, so the caller reloads the stored values. */
+export function isUnconfirmedSave(err: unknown): err is ApiError {
+  return err instanceof ApiError && (err.status === 0 || err.status >= 500) && !err.detail && !err.code;
+}
+
 /** A refused save (not a conflict): per-row errors, 403, 429, network… */
-function refusedResult(err: unknown): RegisterSaveResult {
+export function refusedResult(err: unknown): RegisterSaveResult {
   const rowErrors = registerEditErrors(err);
   const isApi = err instanceof ApiError;
   const forbidden = isApi && err.status === 403 && rowErrors.length === 0;
@@ -116,8 +131,10 @@ function refusedResult(err: unknown): RegisterSaveResult {
         : `Too many saves in a row — wait ${String(Math.max(1, err.retryAfterSeconds))} s and save again. Nothing was saved.`;
   } else if (isApi && err.code === REGISTER_EDITS_INVALID) {
     message = REGISTER_SAVE_COPY.invalid;
+  } else if (isUnconfirmedSave(err)) {
+    message = err.status === 0 ? REGISTER_SAVE_COPY.unreachable : REGISTER_SAVE_COPY.serverError(err.status);
   } else {
-    message = apiErrorMessage(err, 'The edits could not be saved. Nothing was changed.');
+    message = apiErrorMessage(err, REGISTER_SAVE_COPY.fallback);
   }
   return { ok: false, rowErrors, message, forbidden, conflicts: [], conflictChoice: null };
 }
@@ -153,6 +170,8 @@ export function useRegisterSave() {
           if (conflicts === null) {
             // The edit bar shows the message; no floating panel for a refused save.
             setFlow({ kind: 'idle' });
+            // Not confirmed either way: show what the server stored now.
+            if (isUnconfirmedSave(err)) invalidateRegisterWrite(queryClient);
             return refusedResult(err);
           }
           // P47 (ADR 0059 C2): nothing was written. Ask whose value to keep.

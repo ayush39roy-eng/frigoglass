@@ -653,6 +653,14 @@ async def persist_schedule_output(
     reviewed/applied yet).
     """
 
+    # Owner 2026-11-23: serialise with every band-rank writer (register
+    # batch, priority move, re-rank) BEFORE this run takes any project row
+    # lock (the FK checks of its step / outcome rows), or a concurrent
+    # register Save deadlocks against it (`services.band_rank.wait_for_band_ranks`).
+    from services.band_rank import wait_for_band_ranks
+
+    await wait_for_band_ranks(db)
+
     if sync_live_workflow_steps and not activate:
         # See module docstring's "Sharp edge" note — never let a
         # not-activated run's numbers leak into the live Gantt view.

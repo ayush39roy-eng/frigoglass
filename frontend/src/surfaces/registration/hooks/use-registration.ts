@@ -11,7 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '@/lib/api/client';
 import type { EditBase } from '@/lib/api/edit-conflict';
 import { queryKeys } from '@/lib/query-keys';
-import { invalidateScoreReaders } from '@/lib/score-readers';
+import { invalidateProjectWriteReaders, invalidateScoreReaders } from '@/lib/score-readers';
 
 import { fetchEngineerOptions } from '../api/engineers-api';
 import {
@@ -106,7 +106,9 @@ export function useUpdateProject() {
     mutationFn: ({ projectId, body }: { projectId: string; body: ProjectUpdateRequest & { base?: EditBase } }) =>
       updateProject(projectId, body),
     onSuccess: (_data, variables) => {
-      void queryClient.invalidateQueries({ queryKey: ['projects'] });
+      // The register (Dashboard keys) and, for a shown field, the Gantt,
+      // boards and Matrix show the saved value at once.
+      invalidateProjectWriteReaders(queryClient, variables.body);
       void queryClient.invalidateQueries({
         queryKey: queryKeys.projectHardGateStatus(variables.projectId),
       });

@@ -398,8 +398,11 @@ export function WeekDateInput({
         <input
           id={id}
           type="date"
-          className={cn(EDIT_INPUT, 'w-[8.5rem] cursor-pointer')}
+          // An empty date input shows today's date as a grey placeholder in
+          // Safari, which reads as a value (owner 2026-11-23): hidden until focused.
+          className={cn(EDIT_INPUT, 'w-[8.5rem] cursor-pointer', week === null && 'text-transparent focus:text-text')}
           value={planWeekToDateInput(week, baseYear)}
+          title={week === null ? 'Not set' : undefined}
           min={bounds.min}
           max={bounds.max}
           aria-label={`${label} (date, stored as a plan week)`}

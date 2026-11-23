@@ -46586,3 +46586,59 @@ Fixes from "[2026-11-23] QA — urgent end-to-end What-if planner test". Not com
   - Five ProjectsPage test files' `@/lib/api/reference` mocks gain `useWorkflowStepTemplates`.
 - **Results:** tsc -b 0. eslint 0 errors on the touched files; the warnings are the existing `useVirtualizer` ones. vitest projects + priority-board + matrix + components/shared: 64 files, 640 tests passed. Contract test: 271 passed.
 - **For the backend / gate:** the batch `base` sends `priority` / `category` / `project_type` keys under the patch field names. `project_conflicts` must map `project_type` to the model's `type` column.
+
+## [2026-11-23] P59-F follow-up — Priority board multi-drag — frontend-builder: DONE (not committed)
+- **Owner:** "select multiple and DRAG to change priority".
+- **Drag start** (`PriorityBoardPage.tsx`): a ticked card dragged while 2 or more cards are ticked sets `PointerDrag.multi`.
+  - Allowed targets: every column except the dragged card's own. The server refuses, per project, whatever may not move: a hard-gated P1, or a Commercialized/Cancelled project.
+  - Drag image: `showDragCount`, an offscreen "N projects" badge passed to `dataTransfer.setDragImage` and removed on the next tick.
+- **Drop on another column:** sets `bulkRequest`. `BoardBulkMoveBar` gains a `request` prop, applied during render (no effect), which opens the same confirm ("Move N projects to P2? The schedule recalculates once.").
+  - It sends the same ONE `POST /projects/register-edits` batch through `useRegisterSave`, with the same refetch and per-project error handling.
+- **Unchanged:**
+  - A drop in the dragged card's own column is the existing single band-rank reorder of that card.
+  - Dragging an unticked card is today's single move.
+  - The list layout uses the same handlers, so it gets multi-drag too.
+  - The bulk bar stays.
+- **Test:** `PriorityBoardPage.p59-bulk.test.tsx`, new case: tick 3 cards, drag one onto P2. It asserts the drag image "3 projects", the confirm, and one batch with 3 `{project_id, priority: 'P2'}` edits.
+- **Results:** tsc -b 0. eslint on priority-board: 0 errors (2 existing warnings). vitest `src/surfaces/priority-board`: 8 files, 95 passed.
+
+## [2026-11-23] P59 bulk edit end-to-end QA on a real backend + owner live bugs (register Save 500, status not refreshed) — DONE (not committed)
+- **Setup.** Throwaway DB `rpd_bulkqa` (and a copy `rpd_bulkqa_snap` for the race test) in `rpd-pg-dev`: `alembic upgrade head`, `seed.seed_demo_data --dataset client_2026 --reset --schedule`, `seed.seed_dev_users --reset`, `scripts.provision_dev_accounts`. uvicorn :8031 / :8032 (dev mode, Redis db 11 / 12, inline greedy), `vite --mode e2e` :5191. Real UI driven by scripted Playwright as superadmin and admin; Hub Planner (bob.hub, PD-India) through the dev header. Afterwards both DBs were dropped, Redis 11/12 flushed and every server stopped. Hosted was not touched.
+- **Root cause of the owner's "The edits could not be saved. Nothing was changed." (BUG-A, backend).** A Postgres **deadlock** between a register batch and a schedule run being persisted. The batch holds its edited rows `FOR UPDATE` and then renumbers band neighbours (`band_rank` is in a unique constraint, so that UPDATE takes the key-update row lock). The run's `persist_schedule_output` holds `FOR KEY SHARE` on project rows through the FKs of its step / outcome inserts and needs it on the edited rows too. The batch got a 500 with a plain-text body, which the UI showed as the bare fallback. Reproduced locally in the UI (a Save a few seconds after another Save) and with a 5-thread race script: old code 5×500 out of 40 (Postgres logged "deadlock detected"), fixed code 0×500 in 80. It explains the owner's two reports: every status change triggers a run, so the next Save during that run's persistence failed, and a later Save succeeded. Status → In Queue with or without actual dates is valid and saves (also tested on all 127 started projects in one batch). Safari's grey "today" in an empty date input is a placeholder, not a sent value.
+  - Fix: `services/band_rank.wait_for_band_ranks` (the band-rank advisory lock, no timeout, re-entrant) is the first statement of `services/schedule_persistence.persist_schedule_output`. Every band-rank writer (register batch, priority move, re-rank, single PATCH) already takes that lock before any row lock, so a run now waits for them, or they wait for it (bounded by the existing 5 s timeout → 503 `BAND_RANK_BUSY`, which has readable copy).
+  - Test: `backend/tests/test_register_save_run_lock_order.py` (2). Persisting takes the lock. A run waits, before any write, while another connection holds the lock. Both fail without the fix.
+  - Not covered: other non-band writers of `project_workflow_steps` (workspace stage PATCH, check-ins) do not take this lock, and could still conflict with a run's live-step sync.
+- **BUG-B (frontend): the register never shows the bare fallback for an unconfirmed save.**
+  - `use-register-save.ts`: `isUnconfirmedSave` covers status 0, or a 5xx with no `detail` / `code`. The message is now `REGISTER_SAVE_COPY.serverError(status)` or `.unreachable`: "The server did not confirm the save (error 502). The list was reloaded to show what is stored…". The register / Dashboard / Gantt / board caches are re-read, because the batch may have committed.
+  - Coded refusals are unchanged: they show per-row reasons next to the row.
+  - Test: new `projects/hooks/use-register-save.test.tsx` (3).
+- **BUG-C (frontend): bulk Current step sent the template short code.** It sent `MKTG_BRF` / `DESIGN` instead of the register step id `PDD-A`. The server's code is the template id, so every real bulk step save was refused. The mock tests had `code: 'PDD-A'`, so they missed it.
+  - Fix: `bulk-edit-bar.tsx` options use `t.id` and show "PDD-E · Design Detailing".
+  - Test: in `bulk-edit-bar.p59.test.tsx`.
+- **BUG-D (frontend): select-all across searches.** The header select-all replaced the whole selection, so ticks made under another search were lost. `ProjectsPage.onToggleAll` now adds or removes only the rows shown.
+  - Test: in `ProjectsPage.register-edit.test.tsx` ("ticks accumulate").
+- **Status refresh ("I change the status but it is still not updated").**
+  - A register Save already invalidated `dashboard` (the register list), `projects`, `gantt`, `priority-matrix`, `priority-board` and `vip-board`, then the run-derived set on completion. Verified in the real UI: the row shows On Hold right after Save, also after a bulk status change.
+  - The gap was the PATCH paths. `useUpdateProject` (Registration) and the Workspace `details-panel` invalidated only `projects`, but the register list and Dashboard read `dashboard` keys (30 s staleTime).
+  - New `lib/score-readers.invalidateProjectWriteReaders(queryClient, body)` always re-reads `projects` + `dashboard`. When the body sends status / priority / leader / hub / category / type, it also re-reads gantt, priority-board, priority-matrix and vip-board. The P27 "scoring tags only → no run views" assertions still hold.
+  - Test: in `use-registration.test.tsx`.
+  - The live owner symptom is most likely BUG-A: the failed Save left the old value.
+- **UX:** an empty actual-date input is rendered with transparent text until it is focused (`register-edit-cells.tsx`), so Safari's grey "today" placeholder no longer looks like a value.
+- **E2E results (real backend):**
+  - PASS. Bulk Priority P2 on 3 rows incl. 1 Commercialized: 2 sent, "1 Commercialized/Cancelled row skipped" shown. Persisted after reload. Ranks 8/9 = end of P2 (bands stay dense, max = count). One `register_edit` run, completed. 2 `project.priority_move` audit rows. Dashboard / Gantt / Priority board APIs show P2 in the P2 column.
+  - PASS (after BUG-C). Bulk Current step PDD-E on 2 PDD projects: persisted, A/D Done, E In Progress, the rest Not Started or Skipped. Mixed workflows ("Heineken" search): step and category disabled, with the workflow note.
+  - PASS. Bulk Category B + Type NM persisted (On Hold rows: not_needed, step durations re-copied). A category mismatch (category A staged plus hub → OEM-HCK) gives a 422 per row: "Category 'A' is not valid for hub 'OEM-HCK' (workflow OEM)." next to the row.
+  - PASS. Leader + status + priority in one Save, superadmin and admin. Admin sees "Cancelled (Super Admin only)" disabled.
+  - PASS (edge cases):
+    - Nothing staged: Save is disabled.
+    - Conflict via API: the dialog says "Priority: You entered P3 / Now saved P1, Changed by Admin". Use theirs keeps the type edit, which then saves.
+    - Cancel → Discard clears the staged values.
+    - Ticking across searches (after BUG-D): 43 + 15 = 58 selected. A 54-project batch (type + priority, 21 Commercialized skipped) saved in about 7 s with one run.
+    - Hub Planner sees only PD-India (223) and saves there. An out-of-scope project gets 403 `REGISTER_EDITS_FORBIDDEN` / FORBIDDEN_PROJECT.
+  - No console errors other than the intended 409 / 422 resource logs and React Router future-flag warnings.
+- **Checks:** tsc -b 0. eslint 0 errors on touched files (1 existing react-refresh warning in bulk-edit-bar). vitest `src/surfaces/projects` 138 passed; with registration hooks + project-workspace, 24 files / 247 passed. pytest: new lock-order test + p11 / p12 follow-up / p35 t01 / t05 / p36 band rank / p59b / schedule_persistence = 119 passed. ruff clean; mypy clean on touched backend files.
+- **Files:**
+  - Backend: `backend/services/band_rank.py`, `backend/services/schedule_persistence.py`, `backend/tests/test_register_save_run_lock_order.py` (new).
+  - Frontend: `frontend/src/surfaces/projects/hooks/use-register-save.ts`, `frontend/src/surfaces/projects/hooks/use-register-save.test.tsx` (new), `frontend/src/surfaces/projects/components/bulk-edit-bar.tsx`, `frontend/src/surfaces/projects/components/bulk-edit-bar.p59.test.tsx`, `frontend/src/surfaces/projects/ProjectsPage.tsx`, `frontend/src/surfaces/projects/ProjectsPage.register-edit.test.tsx`, `frontend/src/surfaces/projects/components/register-edit-cells.tsx`, `frontend/src/lib/score-readers.ts`, `frontend/src/surfaces/registration/hooks/use-registration.ts`, `frontend/src/surfaces/registration/hooks/use-registration.test.tsx`, `frontend/src/surfaces/project-workspace/components/details-panel.tsx`.
+  - Priority-board files were not touched.
+- **Follow-up for the orchestrator:** the hosted 500 cause is inferred from the local reproduction, not read from Render logs (hosted was not touched). Confirm with a "deadlock detected" line in the hosted Postgres / app logs after deploy if possible.
