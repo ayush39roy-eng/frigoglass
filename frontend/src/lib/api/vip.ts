@@ -89,6 +89,8 @@ export interface VipProjectsResponse {
 }
 
 export interface VipPinRequest {
+  /** P61 (ADR 0069): added centrally by `lib/api/defer-recalc.ts` when Auto-recalculate is Off. */
+  defer_recalc?: boolean;
   is_vip: boolean;
   /** P47 (ADR 0059 C1): the value as read of each field sent; `{}` = no check. */
   base?: EditBase;

@@ -250,6 +250,8 @@ export interface StepPinItem {
 
 /** `PUT /gantt/step-pins` body (`StepPinsRequest`, 1..500 items). */
 export interface StepPinsRequest {
+  /** P61 (ADR 0069): added centrally by `lib/api/defer-recalc.ts` when Auto-recalculate is Off. */
+  defer_recalc?: boolean;
   items: StepPinItem[];
 }
 

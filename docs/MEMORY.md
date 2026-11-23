@@ -46704,3 +46704,77 @@ Fixes from "[2026-11-23] QA — urgent end-to-end What-if planner test". Not com
 - **Open:**
   - Under a hub filter, a drop next to a card of ANOTHER hub (a multi-hub or country selection) still sends anchors.
   - The keyboard pick-up announcement still speaks global positions.
+
+## [2026-11-23] P61-B — Manual recalculation mode backend: `defer_recalc`, plan freshness, Recalculate now (ADR 0069) — backend-builder: DONE (not committed)
+- **`defer_recalc: bool = False`** (strict JSON bool) is a body field on every write that auto-dispatches a run, plus the previews and the stage PATCH so the UI can send one shape:
+  - `POST /projects/register-edits` (`RegisterEditsRequest`, top level next to `edits`);
+  - `PATCH /projects/{id}` (`ProjectUpdateRequest`; excluded from the field updates, the financial-field check and the audit);
+  - `POST /projects/{id}/priority` (`PriorityMoveRequest`, plain move and the preview_token confirm);
+  - `POST /projects/{id}/band-rank` (on `BandRankPreviewRequest`, inherited by `BandRankMoveRequest`);
+  - `PUT /gantt/step-pins` (`StepPinsRequest`), `POST /check-ins` (`CheckInRequest`), `POST /workflow-templates/apply` (`TemplateApplyRequest`), `PUT /projects/{id}/vip` (`VipPinRequest`).
+  - Accepted and ignored (they never dispatch): `POST /projects/{id}/priority/preview` (`PriorityPreviewRequest`), `/band-rank/preview`, `PATCH /projects/{id}/stages/{step}` (`StageUpdateRequest`, excluded from the stage updates).
+  - No query-param form: every deferrable endpoint has a JSON body.
+  - Not covered: engineer deactivation's auto-recalc (admin-only and rare).
+- **Behaviour with `true`:** save, audit and `schedule_stale` exactly as today, no run, `recalc_status: "deferred"` (the existing value) and `X-Schedule-Recalc: deferred` where the endpoint sends headers.
+  - It is implemented once, in `services.priority_move.decide_auto_recalc_batch(..., defer=)` (and `decide_auto_recalc`, `apply_priority_change`). The confirms in `services/priority_preview.py` and the check-in router branch the same way.
+  - A deferred write takes no dispatch lock and registers NO ADR 0023 follow-up. Otherwise the follow-up would start a run anyway.
+  - The confirms still check the preview token (409 `PREVIEW_STALE`).
+  - Interpretation: a change on a non-schedulable project stays `not_needed` (no run would happen anyway); `deferred` means "a run was needed and was skipped".
+  - Default `false` is byte-identical to the old behaviour.
+- **`GET /schedule-runs/freshness`** → `PlanFreshnessResponse { stale_project_count, last_run_at, last_run_version, run_in_flight, oldest_stale_since }`.
+  - Any signed-in user (`get_current_principal`). Global, not hub-scoped (counts only).
+  - Cost: one `COUNT` (`services.schedule_stale.count_stale_schedulable`: stale AND status not in `NON_SCHEDULABLE_STATUSES`), the active run, and `plan_week.any_run_in_flight` (no lock).
+  - `last_run_at` = the active run's `completed_at`, else `created_at`.
+  - `oldest_stale_since` is always null: there is no stale-since column, and none was added.
+- **`POST /schedule-runs/recalculate`** → 202 `RecalculateNowResponse { recalc_status: "queued"|"deferred"|"dispatch_failed", schedule_run_id, baseline_run_id, task_id, in_flight_run_id, stale_project_count }`.
+  - Admin / Super Admin (`_admin_only`).
+  - It dispatches ONE greedy run through `dispatch_auto_recalc_batch(db, [], ...)`: `activate=True`, `trigger_reason="manual_recalc"`, never solved in-process. The UI follows `schedule_run_id` on `/schedule-runs/{id}/progress`.
+  - With a run in flight: `deferred`, the ADR 0023 follow-up registered, and `in_flight_run_id` set.
+  - Activation clears `schedule_stale` (`persist_schedule_output` → `clear_stale_for_run`), as for any run.
+  - Audit `schedule_run.recalculate_requested`, committed with the QUEUED run.
+  - The old synchronous `POST /schedule-runs/greedy-recalc` is unchanged (the plan-week notice still uses it). It was not reused because it solves inside FastAPI and does not coalesce.
+- **Tests:**
+  - New `tests/test_p61_defer_recalc.py` (23). Covers:
+    - priority POST deferred/default; no follow-up while in flight; not_needed kept;
+    - PATCH deferred/default; flag-only PATCH;
+    - register-edits deferred/default;
+    - band-rank and priority confirms deferred; step pins; check-ins; VIP; stage PATCH accepts it; strict bool 422;
+    - freshness counts (stale schedulable only; no run; in flight);
+    - recalculate: queued, then simulated worker completion clears stale (freshness 0); coalesce while in flight; 403 for Hub Planner / PM / Engineer.
+  - `test_openapi_frontend_contract.py`: the band-rank preview field set gains `defer_recalc`.
+  - Fixed a pre-existing P60 break in `test_p11_priority_move.py::test_post_unchanged_writes_nothing`: it was missing `band_rank` / `hub_rank` in the expected JSON.
+- **Results:**
+  - p61, p35 t01/t05, p11, p36, p54, p59b, p60, p14 preview, p12 check-ins/follow-up, p40 pins, ADR 0040 VIP, p33 t10 template apply, workspace_api, p32 inline: 377 passed (the 1 p11 failure was the pre-existing one, now fixed).
+  - Contract: 273 passed, against the frontend's parallel types.
+  - ruff clean on touched files. mypy: no new errors (the same 72 pre-existing errors in the checked files).
+- **Files:** `backend/services/priority_move.py`, `backend/services/priority_preview.py`, `backend/services/step_pins.py`, `backend/services/schedule_stale.py`, `backend/api/routers/projects.py`, `backend/api/routers/schedule_runs.py`, `backend/api/routers/checkins.py`, `backend/api/routers/gantt.py`, `backend/api/routers/vip.py`, `backend/api/routers/workflow_templates.py`, `backend/api/routers/workspace.py`, `backend/schemas/project.py`, `backend/schemas/schedule_run.py`, `backend/schemas/checkin.py`, `backend/schemas/step_pin.py`, `backend/schemas/vip.py`, `backend/schemas/workflow_templates.py`, `backend/schemas/workspace.py`, `backend/tests/test_p61_defer_recalc.py` (new), `backend/tests/test_openapi_frontend_contract.py`, `backend/tests/test_p11_priority_move.py`.
+- **Open:**
+  - The frontend `DEFERRABLE` list (`lib/api/defer-recalc.ts`) does not include `PUT /gantt/step-pins`, `POST /check-ins`, `POST /workflow-templates/apply` or `PUT /projects/{id}/vip`. The backend accepts the flag on all four.
+  - DOMAIN_RULES "Priority moves" pseudo-code does not yet mention the `defer_recalc` branch (orchestrator).
+
+## [2026-11-23] P61-F — Manual recalculation mode: Auto-recalculate switch, freshness banner, header Recalculate (ADR 0069) — frontend-builder: DONE (not committed)
+- **Switch:** "Auto-recalculate" in the app header (`components/layout/auto-recalc-switch.tsx`). Default On. Tooltip: "Off: your edits save instantly; recalculate the plan once when you're done."
+  - Store: `stores/recalc-mode.ts` (zustand persist `rpd-recalc-mode`, try/catch-safe storage). It is keyed per signed-in email; `RecalcModeSync` in the shell sets the active email.
+- **Central flag:** `lib/api/defer-recalc.ts` + `apiSendWithHeaders`. With the switch Off, an allowlisted write gets `defer_recalc: true` in its JSON body (body only, there is no query param). The allowlist:
+  - POST register-edits;
+  - PATCH /projects/{id};
+  - POST priority / band-rank (+ /preview);
+  - PATCH stages;
+  - PUT /projects/{id}/vip;
+  - PUT /gantt/step-pins;
+  - POST /check-ins;
+  - POST /workflow-templates/apply.
+  - No other write is touched (the backend uses `extra="forbid"`).
+  - Every successful non-preview allowlisted write notifies `subscribePlanWrites`, so the freshness banner refetches.
+  - TS request types gained `defer_recalc?: boolean`. Contract: 272 passed.
+- **Manual "deferred":** register save, priority / band-rank flow, Gantt step pins, check-in and template apply. With the switch Off they show "Saved — plan not recalculated yet" (`MOVE_COPY.manualDeferredTitle` / `manualDeferred`) with no follow-up watcher.
+- **Freshness banner:** `components/shared/plan-freshness-banner.tsx`, rendered in the shell above the Outlet on the plan paths (`lib/plan-surfaces.ts`: `/`, `/projects*`, `/capacity`, `/matrix`, `/timeline`).
+  - Text: "Plan not recalculated — N projects changed since <last_run_at>", or "Recalculating…" when `run_in_flight`.
+  - Polls `GET /schedule-runs/freshness` every 20 s. Key `['schedule-runs','freshness']`, so run invalidations refresh it.
+  - "Recalculate now" is for Admin / Super Admin only.
+- **Header Recalculate (owner add-on):** `components/shared/plan-recalc.tsx` provides `PlanRecalcProvider` (one shared state in the shell), `usePlanRecalc` and `PlanRecalculateButton`.
+  - The button is always visible on the plan paths and works with nothing stale. Other roles see it disabled with a tooltip.
+  - It calls `POST /schedule-runs/recalculate`. It follows `schedule_run_id`, or `in_flight_run_id` when deferred, with `useScheduleRunFollow`. Then it runs `invalidateRunDerivedQueries` and invalidates `['planning']`. `dispatch_failed` shows an error.
+- **Tests:** `lib/api/defer-recalc.p61.test.ts` (5) and `components/shared/plan-freshness-banner.p61.test.tsx` (5).
+- **Results:** tsc -b 0; eslint 0 errors (warnings only); see report for vitest.
+  - `app.test.tsx` "navigates to … Timeline" (Zoom slider) fails on the baseline too (checked with a stash), so it is not from P61.

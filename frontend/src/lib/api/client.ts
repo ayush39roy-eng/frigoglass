@@ -16,6 +16,7 @@
  *   so hooks can special-case 401/403 (RBAC) without string-matching messages.
  */
 
+import { notifyPlanWrite, withDeferRecalc } from './defer-recalc';
 import { getDevUserEmail } from './dev-user';
 
 const RAW_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -286,18 +287,21 @@ export async function apiSendWithHeaders<T>(
   body?: unknown,
   options: ApiRequestOptions = {},
 ): Promise<ApiResponseWithHeaders<T>> {
+  // P61 (ADR 0069): with Auto-recalculate Off, plan writes carry `defer_recalc: true`.
+  const deferred = withDeferRecalc(method, path, body, options.query);
+  const sendBody = deferred.body;
   const headers: Record<string, string> = { Accept: 'application/json', ...devUserHeader() };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (sendBody !== undefined) headers['Content-Type'] = 'application/json';
   if (options.bearerToken) headers.Authorization = `Bearer ${options.bearerToken}`;
 
   let response: Response;
   try {
-    response = await fetch(buildUrl(path, options.query), {
+    response = await fetch(buildUrl(path, deferred.query), {
       method,
       headers,
       credentials: 'include',
       signal: options.signal ?? null,
-      body: body === undefined ? null : JSON.stringify(body),
+      body: sendBody === undefined ? null : JSON.stringify(sendBody),
     });
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;
@@ -305,6 +309,7 @@ export async function apiSendWithHeaders<T>(
   }
 
   if (!response.ok) throw await parseError(response);
+  notifyPlanWrite(method, path);
 
   if (response.status === 204) return { data: undefined as T, headers: response.headers };
   return { data: (await response.json()) as T, headers: response.headers };

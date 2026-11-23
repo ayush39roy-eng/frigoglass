@@ -129,6 +129,8 @@ export const queryKeys = {
   scheduleRuns: () => ['schedule-runs'] as const,
   scheduleRun: (versionId: string) => ['schedule-runs', versionId] as const,
   activeScheduleRun: () => ['schedule-runs', 'active'] as const,
+  /** P61 (ADR 0069): the plan freshness banner (under ['schedule-runs'], so run invalidations refresh it). */
+  planFreshness: () => ['schedule-runs', 'freshness'] as const,
   // P11 contract §3: `GET /schedule-runs/{run}/changes?against={baseline}`. Both
   // runs are immutable (I14), so the result never changes once fetched.
   scheduleRunChanges: (runId: string, againstRunId: string) =>

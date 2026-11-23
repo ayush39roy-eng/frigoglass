@@ -228,6 +228,8 @@ export interface ApplySelection {
 
 /** `POST /workflow-templates/apply` body (contract E3). */
 export interface TemplateApplyRequest extends TemplateChangeSet {
+  /** P61 (ADR 0069): added centrally by `lib/api/defer-recalc.ts` when Auto-recalculate is Off. */
+  defer_recalc?: boolean;
   selection: ApplySelection;
   reason?: string | null;
 }

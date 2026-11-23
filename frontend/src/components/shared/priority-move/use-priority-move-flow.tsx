@@ -26,6 +26,7 @@ import { isPriorityNotApplicable } from '@/lib/priority-applicability';
 import { queryKeys } from '@/lib/query-keys';
 import { invalidateRunDerivedQueries, useScheduleRunFollow } from '@/lib/use-schedule-run-follow';
 import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
+import { isDeferringRecalc } from '@/stores/recalc-mode';
 import type { ProjectPriority } from '@/types/enums';
 
 import { badRankCopy, MOVE_COPY, notNeededCopy, RANK_COPY } from './move-copy';
@@ -170,6 +171,11 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
       }
       if (signal.recalc_status === 'deferred') {
         invalidatePriorityWrite(queryClient);
+        if (isDeferringRecalc()) {
+          // P61 (ADR 0069): Auto-recalculate is Off — no run to wait for.
+          setFlow({ kind: 'notice', target, tone: 'success', title: MOVE_COPY.manualDeferredTitle, body: MOVE_COPY.manualDeferred });
+          return;
+        }
         setFlow({ kind: 'notice', target, tone: 'success', title: saved, body: MOVE_COPY.deferred });
         // ADR 0023: the server runs one follow-up after the current run; refresh when it lands.
         followUp.start();

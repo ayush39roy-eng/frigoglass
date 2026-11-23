@@ -7,6 +7,7 @@ import { apiErrorMessage } from '@/lib/api/error-messages';
 import { fetchScheduleRunChanges } from '@/lib/api/priority-move';
 import { queryKeys } from '@/lib/query-keys';
 import { useEditSession } from '@/stores/edit-session';
+import { isDeferringRecalc } from '@/stores/recalc-mode';
 import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
 import { useEditConflict } from '@/lib/use-edit-conflict';
 import { useProjectConflictFormat } from '@/lib/use-project-conflict-format';
@@ -215,6 +216,11 @@ export function useRegisterSave() {
           setFlow({ kind: 'notice', tone: 'danger', title: 'Edits saved — timeline not recalculated', body: `${saved} ${REGISTER_SAVE_COPY.dispatchFailed}`, followUp: false });
           return ok;
         case 'deferred':
+          if (isDeferringRecalc()) {
+            // P61 (ADR 0069): Auto-recalculate is Off — the server ran nothing; no follow-up to wait for.
+            setFlow({ kind: 'notice', tone: 'success', title: MOVE_COPY.manualDeferredTitle, body: `${saved} ${MOVE_COPY.manualDeferred}`, followUp: false });
+            return ok;
+          }
           startWatcher();
           setFlow({ kind: 'notice', tone: 'success', title: 'Edits saved', body: `${saved} ${REGISTER_SAVE_COPY.deferred}`, followUp: true });
           return ok;

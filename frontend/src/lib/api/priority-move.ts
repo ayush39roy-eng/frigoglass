@@ -33,6 +33,8 @@ export const PREVIEW_TIMEOUT = 'PREVIEW_TIMEOUT';
 
 // P11 contract §1; P14 contract §1 adds the optional `preview_token`.
 export interface PriorityMoveRequest {
+  /** P61 (ADR 0069): added centrally by `lib/api/defer-recalc.ts` when Auto-recalculate is Off. */
+  defer_recalc?: boolean;
   priority: ProjectPriority;
   /** From `POST …/priority/preview`. With it the move is applied in-process
    *  (`recalc_status: "applied"`); without it, ADR 0015 behaviour. */
@@ -72,6 +74,8 @@ export interface PriorityMoveResponse {
 export type PriorityPreviewResult = 'preview' | 'unchanged' | 'not_needed';
 
 export interface PriorityPreviewRequest {
+  /** P61 (ADR 0069): added centrally by `lib/api/defer-recalc.ts` when Auto-recalculate is Off. */
+  defer_recalc?: boolean;
   priority: ProjectPriority;
 }
 

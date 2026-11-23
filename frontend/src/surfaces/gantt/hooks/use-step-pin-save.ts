@@ -8,6 +8,7 @@ import { useEditConflict } from '@/lib/use-edit-conflict';
 import { fetchScheduleRunChanges } from '@/lib/api/priority-move';
 import { queryKeys } from '@/lib/query-keys';
 import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
+import { isDeferringRecalc } from '@/stores/recalc-mode';
 import { invalidateRunDerivedQueries, useScheduleRunFollow } from '@/lib/use-schedule-run-follow';
 import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
 
@@ -177,6 +178,11 @@ export function useStepPinSave() {
           });
           return ok;
         case 'deferred':
+          if (isDeferringRecalc()) {
+            // P61 (ADR 0069): Auto-recalculate is Off — no run to wait for.
+            setFlow({ kind: 'notice', status: 'deferred', tone: 'success', title: MOVE_COPY.manualDeferredTitle, body: `${saved} ${MOVE_COPY.manualDeferred}`, followUp: false });
+            return ok;
+          }
           startWatcher();
           setFlow({ kind: 'notice', status: 'deferred', tone: 'success', title: 'Step weeks saved', body: `${saved} ${STEP_PIN_SAVE_COPY.deferred}`, followUp: true });
           return ok;

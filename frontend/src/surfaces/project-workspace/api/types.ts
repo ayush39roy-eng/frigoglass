@@ -174,6 +174,8 @@ export interface WorkspaceResponse {
 }
 
 export interface StagePatchRequest {
+  /** P61 (ADR 0069): added centrally by `lib/api/defer-recalc.ts` when Auto-recalculate is Off. */
+  defer_recalc?: boolean;
   status?: WorkflowStepStatus;
   percent_complete?: number;
   actual_start_week?: number | null;

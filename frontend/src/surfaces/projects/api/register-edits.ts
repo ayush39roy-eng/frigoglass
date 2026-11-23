@@ -112,6 +112,8 @@ export function fetchRegisterSteps(
 
 /** 1..100 patches, applied all-or-nothing. */
 export interface RegisterEditsRequest {
+  /** P61 (ADR 0069): added centrally by `lib/api/defer-recalc.ts` when Auto-recalculate is Off. */
+  defer_recalc?: boolean;
   edits: RegisterEditPatch[];
 }
 

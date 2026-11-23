@@ -2,6 +2,8 @@ import * as React from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
+import { isDeferringRecalc } from '@/stores/recalc-mode';
+import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
 import { invalidateRunDerivedQueries, useScheduleRunFollow } from '@/lib/use-schedule-run-follow';
 
 import { applyTemplate, previewApply } from '../api/workflow-settings-api';
@@ -165,6 +167,11 @@ export function useTemplateApply(): {
           setFlow({ kind: 'notice', result, names, tone: 'danger', body: TEMPLATE_COPY.dispatchFailed, followUp: false });
           return;
         case 'deferred':
+          if (isDeferringRecalc()) {
+            // P61 (ADR 0069): Auto-recalculate is Off — no run to wait for.
+            setFlow({ kind: 'notice', result, names, tone: 'success', body: MOVE_COPY.manualDeferred, followUp: false });
+            return;
+          }
           startFollowUp();
           setFlow({ kind: 'notice', result, names, tone: 'success', body: TEMPLATE_COPY.deferred, followUp: true });
           return;

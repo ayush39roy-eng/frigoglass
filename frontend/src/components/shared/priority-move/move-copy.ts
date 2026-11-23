@@ -9,6 +9,9 @@ export const MOVE_COPY = {
   // browser watches for it (`lib/use-follow-up-run.ts`) and refreshes.
   deferred: 'Saved — the timeline updates automatically after the current recalculation',
   followUpWatching: 'Waiting for the follow-up recalculation…',
+  // P61 (ADR 0069): Auto-recalculate is Off, so the save dispatched no run.
+  manualDeferredTitle: 'Saved — plan not recalculated yet',
+  manualDeferred: 'Auto-recalculate is off. Press Recalculate now on the banner once you are done editing.',
   hardGate: 'This project has a hard gate (regulatory / certification / safety), so it must stay P1.',
   queuedWithoutRun: 'Saved. The recalculation was queued but no run was reported back — press Recalculate on the project.',
   staleAfterFailure: 'The priority is saved and the timeline is marked stale. Press Recalculate on the project to try again.',

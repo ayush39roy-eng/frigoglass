@@ -6,6 +6,9 @@ import { SessionGate } from '@/components/session/session-gate';
 import { PlanClockSync } from '@/components/session/plan-clock-sync';
 import { SessionLifecycle } from '@/components/session/session-lifecycle';
 import { EditConflictHost } from '@/components/shared/edit-conflict-host';
+import { PlanFreshnessBanner } from '@/components/shared/plan-freshness-banner';
+import { PlanRecalcProvider } from '@/components/shared/plan-recalc';
+import { isPlanSurfacePath } from '@/lib/plan-surfaces';
 import { useCategories } from '@/lib/api/categories';
 import { GlowOverlay } from '@/components/ui/background-components';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -13,6 +16,7 @@ import { usePreferencesStore } from '@/stores/preferences';
 
 import { AppHeader } from './app-header';
 import { AppSidebar } from './app-sidebar';
+import { RecalcModeSync } from './auto-recalc-switch';
 import { DensityRegion, type Density } from './density-zone';
 
 /**
@@ -68,11 +72,15 @@ export function AppShell(): React.JSX.Element {
       {/* Nothing below renders until GET /me resolves (ADR 0010): the sidebar,
           the route guards and every write control read the permission table. */}
       <SessionGate>
+        {/* P61 (ADR 0069): one shared "Recalculate now" state for the header button and the banner. */}
+        <PlanRecalcProvider>
         <CategoryPrefetch />
         {/* P37: refetch /me at the served week end, on focus, and while the plan is behind. */}
         <PlanClockSync />
         {/* P47 (ADR 0059): the app-wide edit-conflict dialog (shared write hooks). */}
         <EditConflictHost />
+        {/* P61 (ADR 0069): the Auto-recalculate switch follows the signed-in user. */}
+        <RecalcModeSync />
         {/* P49 (ADR 0060): 30-min idle logout with a warning; follows a sign-out in another tab. */}
         <SessionLifecycle />
         {/*
@@ -127,12 +135,14 @@ export function AppShell(): React.JSX.Element {
                     Gantt and Matrix need every pixel, and a max-width there
                     would throw away columns. */}
                 <div className="mx-auto max-w-content p-gutter">
+                  {isPlanSurfacePath(pathname) ? <PlanFreshnessBanner className="mb-4" /> : null}
                   <Outlet />
                 </div>
               </DensityRegion>
             </div>
           </div>
         </div>
+        </PlanRecalcProvider>
       </SessionGate>
     </TooltipProvider>
   );

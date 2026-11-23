@@ -158,7 +158,7 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
   const save = async () => {
     setServerError(null);
     setSaving(true);
-    const full: Required<Omit<StagePatchRequest, 'base'>> = {
+    const full: Required<Omit<StagePatchRequest, 'base' | 'defer_recalc'>> = {
       status: draft.status,
       percent_complete: draft.percent_complete,
       actual_start_week: draft.actual_start_week,

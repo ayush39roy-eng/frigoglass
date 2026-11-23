@@ -15,6 +15,8 @@ import { useEditConflict } from '@/lib/use-edit-conflict';
 import { fetchScheduleRunChanges } from '@/lib/api/priority-move';
 import { queryKeys } from '@/lib/query-keys';
 import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
+import { isDeferringRecalc } from '@/stores/recalc-mode';
+import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
 import { invalidateRunDerivedQueries, useScheduleRunFollow } from '@/lib/use-schedule-run-follow';
 
 /**
@@ -147,6 +149,11 @@ export function useCheckInSubmit() {
       }
       if (res.recalc_status === 'dispatch_failed') {
         setFlow({ kind: 'notice', tone: 'danger', title: 'Check-in saved', body: `${saved} ${CHECK_IN_COPY.dispatchFailed}`, followUp: false });
+        return { ok: true, entryErrors: [], message: null };
+      }
+      if (res.recalc_status === 'deferred' && isDeferringRecalc()) {
+        // P61 (ADR 0069): Auto-recalculate is Off — no run to wait for.
+        setFlow({ kind: 'notice', tone: 'success', title: MOVE_COPY.manualDeferredTitle, body: `${saved} ${MOVE_COPY.manualDeferred}`, followUp: false });
         return { ok: true, entryErrors: [], message: null };
       }
       if (res.recalc_status === 'deferred') {
