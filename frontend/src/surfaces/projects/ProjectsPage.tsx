@@ -74,7 +74,7 @@ import { RegisterDiscardDialog, RegisterEditBar, RegisterLeaveGuard } from './co
 import { RegisterSavePanel } from './components/register-save-panel';
 import { useRegisterSave } from './hooks/use-register-save';
 import { useColumnPrefs } from './hooks/use-column-prefs';
-import { HIDEABLE_COLUMNS } from './lib/columns';
+import { HIDEABLE_COLUMNS, visibleExportColumns } from './lib/columns';
 import {
   buildRegisterEditsBody,
   changedProjectIds,
@@ -771,6 +771,9 @@ export default function ProjectsPage(): React.JSX.Element {
         hint: 'The rows shown here, with every filter and the sort.',
         path: '/exports/dashboard',
         filters: {
+          // P58-B: the Projects page's own list (its columns and headers), not the Dashboard analytics table.
+          view: 'register',
+          columns: visibleExportColumns(columnPrefs.prefs.hidden, showCharter),
           hub_id: params.hub_id,
           region: params.region,
           category: params.category,
@@ -804,7 +807,7 @@ export default function ProjectsPage(): React.JSX.Element {
       });
     }
     return sources;
-  }, [params, registration.read]);
+  }, [params, registration.read, columnPrefs.prefs.hidden, showCharter]);
 
   // ---- Render ------------------------------------------------------------
 

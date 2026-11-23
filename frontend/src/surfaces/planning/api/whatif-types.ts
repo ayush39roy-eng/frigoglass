@@ -208,6 +208,12 @@ export interface ProjectResultOut {
   /** P42 (API_CONTRACT_P42 §10): the engine's flags (R42-3 / R42-4). */
   counts_toward_year: boolean;
   not_scheduled_priority: boolean;
+  /** P58 (API_CONTRACT_P58 §2, I58): why the project was not placed, as the live run serves it; null when placed. */
+  left_out_reason: string | null;
+  /** P58: the reason in words, e.g. "No lab chamber accepts step PDD-J"; null when placed. Shown verbatim. */
+  left_out_reason_label: string | null;
+  /** P58: the lab step no chamber accepts (with `no_chamber`), else null. */
+  no_chamber_step_id: string | null;
 }
 
 export interface UtilizationRowOut {

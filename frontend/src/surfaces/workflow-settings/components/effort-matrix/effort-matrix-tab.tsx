@@ -19,6 +19,8 @@ import { AddCategoryDialog } from '../add-category-dialog';
 import { BEquivalentPanel } from '../b-equivalent-panel';
 import { ControlledCategoryTimeline } from '../category-timeline';
 import { saveErrorMessage } from '../save-error';
+import { LabChamberCancelledError, labStepsWithoutChamber } from '../../lib/lab-chamber';
+import { LabChamberDialog, type LabChamberRequest } from './lab-chamber-dialog';
 import { MatrixGrid } from './matrix-grid';
 
 /**
@@ -83,6 +85,28 @@ export function EffortMatrixTab({
   const [error, setError] = React.useState<string | null>(null);
   const [adding, setAdding] = React.useState<WorkflowId | null>(null);
   const [openCategory, setOpenCategory] = React.useState<string | null>(null);
+  // P58: the open "No lab chamber accepts …" question, if any.
+  const [labAsk, setLabAsk] = React.useState<LabChamberRequest | null>(null);
+  const askLabChamber = React.useCallback(
+    (w: WorkflowSetting, steps: string[]) =>
+      new Promise<string | null>((resolve) => {
+        const options = [...w.steps]
+          .sort((a, b) => a.sequence_order - b.sequence_order)
+          .filter((s) => s.kind === 'lab' && !steps.includes(s.step_id))
+          .map((s) => s.step_id);
+        const preferred = `${w.id}-H`;
+        setLabAsk({
+          steps,
+          options,
+          defaultLike: options.includes(preferred) ? preferred : (options[0] ?? null),
+          resolve: (like) => {
+            setLabAsk(null);
+            resolve(like);
+          },
+        });
+      }),
+    [],
+  );
 
   const ordered = React.useMemo(() => {
     const rank = (id: WorkflowId) => (id === 'PDD' ? 0 : 1);
@@ -105,14 +129,30 @@ export function EffortMatrixTab({
         const steps = [...w.steps]
           .sort((a, b) => a.sequence_order - b.sequence_order)
           .map((s) => ({ step_id: s.step_id, kind: drafted[s.step_id] ?? s.kind, predecessor_ids: [...s.predecessor_ids] }));
-        await onSaveSteps(w.id, { steps });
+        // P58 (API_CONTRACT_P58 §1): a step made Lab that no chamber lists is 409
+        // LAB_STEP_HAS_NO_CHAMBER; ask whose chambers run it, then retry once with them.
+        let body: StepsUpdateRequest = { steps };
+        for (;;) {
+          try {
+            await onSaveSteps(w.id, body);
+            break;
+          } catch (err) {
+            const missing = labStepsWithoutChamber(err);
+            if (missing === null || body.add_to_chambers_like !== undefined) throw err;
+            const like = await askLabChamber(w, missing);
+            if (like === null) throw new LabChamberCancelledError();
+            body = { ...body, add_to_chambers_like: like };
+          }
+        }
         for (const s of steps) {
           if (s.step_id in drafted) savedResources.push(`${s.step_id} → ${RESOURCE_LABEL[s.kind]}`);
         }
         state.clearKinds(w.id);
       }
     } catch (err) {
-      setError(err instanceof EditConflictDismissedError ? err.message : saveErrorMessage(err));
+      setError(
+        err instanceof EditConflictDismissedError || err instanceof LabChamberCancelledError ? err.message : saveErrorMessage(err),
+      );
       return;
     } finally {
       setSavingKinds(false);
@@ -233,6 +273,7 @@ export function EffortMatrixTab({
           setKindRequest(null);
         }}
       />
+      <LabChamberDialog request={labAsk} />
       {canWriteTemplates && adding ? (
         <AddCategoryDialog
           open={adding !== null}

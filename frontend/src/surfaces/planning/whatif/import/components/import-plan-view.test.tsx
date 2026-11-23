@@ -66,6 +66,10 @@ describe('Import plan (Excel)', () => {
     // P41: the format card reads `GET /whatif/import/format` (404 here) and falls back to the built-in names.
     await waitFor(() => expect(screen.getByTestId('import-format-help')).toHaveTextContent('Recommended Design Engineer'));
     expect(await seriousAxeViolations(container)).toEqual([]);
+    // P58-B: the Projects page download is accepted as-is.
+    expect(screen.getByTestId('import-projects-list-hint')).toHaveTextContent(
+      'You can also upload a Projects list download after editing it.',
+    );
 
     // --- upload
     await uploadAndParse(user);

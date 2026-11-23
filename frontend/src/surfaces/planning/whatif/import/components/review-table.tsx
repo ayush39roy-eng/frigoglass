@@ -28,7 +28,7 @@ import {
   workflowOfHub,
 } from '../import-rows';
 import { useImportPlan } from '../import-store';
-import type { ImportParseIssue, ImportParseResponse, ImportRow } from '../import-types';
+import type { ImportChangeKind, ImportParseIssue, ImportParseResponse, ImportRow } from '../import-types';
 import { bandHint, PRIORITY_SOURCE_LABEL } from '../plan-window';
 import { EngineerPicker } from './engineer-picker';
 
@@ -126,6 +126,38 @@ function ProjectCell({ row: { original: r } }: Cell): React.JSX.Element {
           <Link2 aria-hidden="true" />
           <span className="truncate">{`replaces: ${r.matched_project_name}`}</span>
         </Badge>
+      ) : null}
+      <ChangeKindDetails row={r} />
+    </div>
+  );
+}
+
+const CHANGE_KIND_META: Record<ImportChangeKind, { label: string; tone: 'success' | 'warning' | 'neutral' }> = {
+  new: { label: 'New', tone: 'success' },
+  changed: { label: 'Changed', tone: 'warning' },
+  unchanged: { label: 'No change', tone: 'neutral' },
+};
+
+/** P58-B: a Projects list re-upload — the served change kind and the changed cells (before → after). */
+function ChangeKindDetails({ row: r }: { row: ImportRow }): React.JSX.Element | null {
+  if (!r.change_kind) return null;
+  const meta = CHANGE_KIND_META[r.change_kind];
+  const changes = r.changes ?? [];
+  return (
+    <div className="flex flex-col gap-0.5" data-testid="import-change-kind">
+      <Badge tone={meta.tone} className="w-fit">
+        {meta.label}
+      </Badge>
+      {changes.length > 0 ? (
+        <ul className="space-y-0.5 text-2xs text-text" aria-label={`Changes for ${r.name}`} data-testid="import-changes">
+          {changes.map((ch) => (
+            <li key={ch.field} className="break-words">
+              <span className="font-medium">{ch.label}:</span> {ch.before ?? '—'} <span aria-hidden="true">→</span>
+              <span className="sr-only"> to </span> {ch.after ?? '—'}
+              {ch.simulated ? null : <span className="text-text-muted"> (not simulated)</span>}
+            </li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );
@@ -384,6 +416,9 @@ export function ReviewTable({
               return (
                 <tr
                   key={row.id}
+                  // P58-B: a row listing Projects-list changes is taller; measured so the virtual window stays right.
+                  ref={virtual ? virtualizer.measureElement : undefined}
+                  data-index={v.index}
                   style={{ height: ROW_H }}
                   className={cn(
                     'border-b border-border align-middle',

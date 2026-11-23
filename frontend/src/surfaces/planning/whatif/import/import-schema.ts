@@ -79,7 +79,7 @@ export const importRowSchema: z.ZodType<ImportRow> = z.object({
   leader: leaderSchema,
   matched_project_id: nstr,
   matched_project_name: nstr,
-  match_by: z.enum(['name', 'code']).nullable(),
+  match_by: z.enum(['name', 'code', 'id']).nullable(),
   num_projects: nint,
   must_do: z.boolean().nullable(),
   spillover_from_previous: z.boolean().nullable(),
@@ -90,6 +90,19 @@ export const importRowSchema: z.ZodType<ImportRow> = z.object({
   include: z.boolean(),
   // P50 (R49-2): kept so the row goes back to /simulate as served (the server accepts it).
   file_band: z.enum(['P1', 'P2', 'P3', 'P4']).nullable().optional(),
+  // P58-B: a Projects list re-upload — what changed against the served project (kept to go back to /simulate).
+  change_kind: z.enum(['new', 'changed', 'unchanged']).nullable().optional(),
+  changes: z
+    .array(
+      z.object({
+        field: z.string(),
+        label: z.string(),
+        before: nstr,
+        after: nstr,
+        simulated: z.boolean(),
+      }),
+    )
+    .optional(),
 });
 
 /** P50 (ADR 0061 R49-7, I40): a picker week with its server label. */
@@ -149,7 +162,12 @@ export const importParseResponseSchema: z.ZodType<ImportParseResponse> = z.objec
     projects_after_expansion: int.optional(),
     derived_status: int,
     not_a_project: int,
+    // P58-B (a Projects list file).
+    changed: int.optional(),
+    unchanged: int.optional(),
   }),
+  // P58-B: which file was detected.
+  file_format: z.enum(['plan', 'projects_list']).optional(),
   // P50 (D1): optional so a server without them still validates (no pickers then).
   plan_from_min_week: int.optional(),
   plan_week_choices: z.array(planWeekChoice).optional(),

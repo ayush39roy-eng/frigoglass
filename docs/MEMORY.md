@@ -46374,3 +46374,44 @@ The owner asked to push fast, so this was pushed before the P56-T04 gate; the ga
   - What-if import review shows `file_format` / `change_kind` / `changes`; for unchanged rows show "No change — plan project kept".
   - Add the new optional fields to `ImportRow` / `ImportCounts` / `ImportParseResponse` TS types.
 - Files: `backend/services/register_export.py` (new), `backend/services/whatif_import_register.py` (new), `backend/services/export_builder.py`, `backend/api/routers/exports.py`, `backend/services/plan_import_xlsx.py`, `backend/services/whatif_import.py`, `backend/schemas/whatif_import.py`, `backend/tests/test_p58_projects_list_round_trip.py` (new), `backend/tests/test_p32_whatif_import_api.py`. IMPLEMENTATION_PLAN is not marked (no P58-B task row).
+
+## [2026-11-23] P58-D — frontend wiring for P58-A/B (What-if reasons, lab-step chambers, Projects list export / re-import) — frontend-builder: DONE (not committed)
+- **What-if results** (API_CONTRACT_P58 §2–§3):
+  - `ProjectResultOut` gains `left_out_reason`, `left_out_reason_label` and `no_chamber_step_id` (all `string | null`) in `planning/api/whatif-types.ts`; the fixture is updated.
+  - `simulate-view.tsx`: the New-project Outcome cell shows the served `left_out_reason_label` verbatim (`sim-left-out-reason`).
+  - The outcomes note no longer says the Dashboard's within-year "can be higher … commercialized". It now says the buckets are the Dashboard's, and with no change the before counts equal the Dashboard's.
+- **Effort matrix "Apply to App" → 409 `LAB_STEP_HAS_NO_CHAMBER`** (§1):
+  - `StepsUpdateRequest` gains optional `add_to_chambers` / `add_to_chambers_like`.
+  - `workflow-templates-section.tsx` `onSaveSteps` now forwards the whole body (`{...body, steps}`); it used to send only `steps`.
+  - New `lib/lab-chamber.ts` (`labStepsWithoutChamber(err)` reads `ApiError.body.steps`; `LabChamberCancelledError`) and `components/effort-matrix/lab-chamber-dialog.tsx`. The dialog reads "No lab chamber accepts PDD-J and PDD-L", with a native select "Same chambers as" listing the served lab steps not in the 409 list. The default is `{workflow}-H`, else the first. Its buttons are "Use the same chambers and save" and Cancel.
+  - `effort-matrix-tab.tsx` retries the same body once with `add_to_chambers_like`. Cancel shows "Not saved: … still a draft" and keeps the kind draft.
+  - Chambers' `allowed_stages` are not served to the frontend, so the options are the served lab steps. The server answers 422 `UNKNOWN_LIKE_STEP` if a pick has no chamber; that is shown through `saveErrorMessage`.
+  - The Steps & precedence tab has no dialog: its 409 shows as an ordinary save error.
+- **Projects list download:**
+  - `ProjectsPage.tsx`'s "Projects list" source now sends `view: 'register'` and `columns` = `visibleExportColumns(hidden, showCharter)` (new in `projects/lib/columns.ts`): the HIDEABLE ids not hidden, in table order, plus the 3 `charter-*` ids when the Workbook-fields toggle is on.
+  - If every optional column is hidden, `columns` is empty, so nothing is sent and the server uses the default set. This is a known edge.
+- **What-if import of a Projects list:**
+  - `import-types.ts` + the zod `import-schema.ts` gain the new fields. Zod strips unknown keys, so the schema needed them too, or `file_format` / `changes` would vanish:
+    - `ImportRow.change_kind` / `changes` (`ImportRowChange {field,label,before,after,simulated}`);
+    - `match_by` 'id';
+    - `ImportParseCounts.changed` / `unchanged`;
+    - `ImportParseResponse.file_format`.
+  - The upload hint reads "You can also upload a Projects list download after editing it."
+  - Review table: the Project cell shows a New / Changed / No change badge and a "Label: before → after" list, with muted "(not simulated)". Rows are now measured (`measureElement`) because a changes list makes them taller.
+  - The review step shows "Projects list file: N changed, M with no change" when `file_format === 'projects_list'`.
+- **Tests:**
+  - result-views: the reason label, and the note no longer mentions commercialized.
+  - p52: the 409 → dialog → retry with `add_to_chambers_like` PDD-H; and Cancel saves nothing and keeps the draft.
+  - ProjectsPage export: `view` / `columns`, including the charter ids.
+  - review-step: badges, changes, counts and axe; the plan format shows none of them.
+  - import-plan-view: the upload hint.
+- **Results:**
+  - `test_openapi_frontend_contract.py` 271 passed. An unused `LabStepHasNoChamberBody` interface was removed because the types-file coverage check rejects unlisted interfaces.
+  - `tsc -b` clean; eslint clean on touched files.
+  - vitest across workflow-settings, planning, projects, priority-board and matrix: 91 files, 956 tests passed.
+
+## 2026-11-23 — P58 hosted fix: PDD-J / PDD-L added to chambers (owner approved)
+
+- Cause of What-if / live unplaced: Super Admin set PDD-J and PDD-L to `lab` on 2026-11-22 08:13; no chamber listed them → 73 LEFT_OUT `no_chamber` (run v217).
+- Owner said "ok do it": PATCH allowed_stages on the 8 chambers that list PDD-H (GR-CH1/2, IN-CH2/3, RO-CH1–4) += PDD-J, PDD-L; IN-CH1/IN-CH4 (PDD-F only) unchanged. Manual greedy recalc → run v218: left_out 1 (no_leader), by end 2026 97, 2027 112, 2028 37, 2029 10, 2030 4, 2031 1. What-if +5 P1 R&D-India A: all placed (2027 W33 … 2028 W50).
+- Owner asked why P1 count not > P2: band order holds on median finish (P1 2027 W8, P2 2027 W17, P3 2027 W44); yearly counts differ by band size / hub / stage. 8 P1 finish 2029, 1 in 2030 — offered to list (likely overloaded leaders).

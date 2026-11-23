@@ -101,6 +101,10 @@ export interface WorkflowSettings {
 export interface StepsUpdateRequest {
   /** P47 (ADR 0059 C1): each step may carry `base` = `{kind, predecessor_ids}` as read. */
   steps: { step_id: string; kind: WorkflowStepKind; predecessor_ids: string[]; base?: EditBase }[];
+  /** P58 (API_CONTRACT_P58 §1): these chambers accept every lab step no chamber lists. Never with `add_to_chambers_like`. */
+  add_to_chambers?: string[];
+  /** P58: the same, onto every chamber that already lists this step (e.g. "PDD-H"). Never with `add_to_chambers`. */
+  add_to_chambers_like?: string;
 }
 
 /** `PUT /workflow-settings/hub-calendars/{hub_id}` — the five editable fields. */

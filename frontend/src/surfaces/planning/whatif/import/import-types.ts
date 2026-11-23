@@ -92,7 +92,8 @@ export interface ImportRow {
   leader: ImportLeader;
   matched_project_id: string | null;
   matched_project_name: string | null;
-  match_by: 'name' | 'code' | null;
+  /** P58-B: "id" when a Projects list row matched by its Project ID column. */
+  match_by: 'name' | 'code' | 'id' | null;
   num_projects: number | null;
   must_do: boolean | null;
   spillover_from_previous: boolean | null;
@@ -103,6 +104,24 @@ export interface ImportRow {
   include: boolean;
   /** P50 (R49-2, API_CONTRACT_P32 D1): served; optional so a pre-P50 stored row validates. */
   file_band?: FileBand | null | undefined;
+  /** P58-B (a Projects list file only; null for the capacity-planning format): "new" = no project matched;
+   *  "changed" = replaces its plan project; "unchanged" = no scheduling input differs (merge keeps the plan project). */
+  change_kind?: ImportChangeKind | null | undefined;
+  /** P58-B: the cells that differ from the project as served. */
+  changes?: ImportRowChange[] | undefined;
+}
+
+export type ImportChangeKind = 'new' | 'changed' | 'unchanged';
+
+/** P58-B: one cell of a re-uploaded Projects list that differs from the served project. */
+export interface ImportRowChange {
+  /** The Projects table column id. */
+  field: string;
+  label: string;
+  before: string | null;
+  after: string | null;
+  /** False for a column that is not a scheduling input (code, type, dates): shown, not simulated. */
+  simulated: boolean;
 }
 
 export interface ImportParseIssue {
@@ -131,9 +150,14 @@ export interface ImportParseCounts {
   derived_status: number;
   /** Rows excluded as budget lines (`NOT_A_PROJECT`, include=false), P32-R06. */
   not_a_project: number;
+  /** P58-B (a Projects list file): matched rows with / without a scheduling change; 0 for the plan format. */
+  changed?: number | undefined;
+  unchanged?: number | undefined;
 }
 
 export interface ImportParseResponse {
+  /** P58-B: "plan" = the capacity-planning workbook; "projects_list" = a Projects page download (auto-detected). */
+  file_format?: 'plan' | 'projects_list' | undefined;
   file_name: string;
   projects_sheet: string;
   steps_sheet: string | null;

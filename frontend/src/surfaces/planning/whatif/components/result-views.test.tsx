@@ -148,6 +148,31 @@ describe('SimulateView', () => {
     expect(screen.getByTestId('sim-within-year')).toHaveTextContent('Change 0');
     expect(screen.getByTestId('sim-within-year')).not.toHaveTextContent('90');
     expect(screen.getByTestId('sim-outcomes-note')).toHaveTextContent('outcome class');
+    // P58: the outcome classes are the Dashboard's buckets; the old "can be higher … commercialized" note is gone.
+    expect(screen.getByTestId('sim-outcomes-note')).not.toHaveTextContent(/commercialized/i);
+  });
+
+  it('P58: a new project that was not placed shows the served reason verbatim', () => {
+    const d = simulateFixture();
+    const [p] = d.projects;
+    renderWithProviders(
+      <SimulateView
+        data={{
+          ...d,
+          projects: [
+            {
+              ...p!,
+              outcome: 'left_out',
+              finish_week: null,
+              left_out_reason: 'no_chamber',
+              left_out_reason_label: 'No lab chamber accepts step PDD-J',
+              no_chamber_step_id: 'PDD-J',
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByTestId('sim-left-out-reason')).toHaveTextContent('No lab chamber accepts step PDD-J');
   });
 
   it('virtualizes a change list over 100 rows', () => {

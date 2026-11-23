@@ -169,6 +169,13 @@ export function ReviewStep({
         />
         <FigureTile label="New designers" value={tileFig('new_designers', c.new_designers)} />
       </section>
+      {parsed.file_format === 'projects_list' ? (
+        // P58-B: a re-uploaded Projects list download — served counts of matched rows with / without a change.
+        <p className="text-xs text-text-muted" data-testid="import-projects-list-counts">
+          Projects list file: <strong className="text-text">{int(c.changed ?? 0)}</strong> changed,{' '}
+          <strong className="text-text">{int(c.unchanged ?? 0)}</strong> with no change (they stay as in the plan).
+        </p>
+      ) : null}
 
       {c.not_a_project > 0 ? (
         <Callout

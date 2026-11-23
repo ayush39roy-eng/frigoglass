@@ -367,6 +367,22 @@ describe('Projects page — Export menu', () => {
         query: expect.objectContaining({ category: ['A', 'B'], type: ['NM', 'Unmapped'], format: 'csv' }),
       }),
     );
+    // P58-B: the Projects page's own list, with the visible optional columns in table order.
+    expect(http.download).toHaveBeenLastCalledWith(
+      '/exports/dashboard',
+      expect.objectContaining({
+        query: expect.objectContaining({
+          view: 'register',
+          columns: ['hub', 'category', 'type', 'status', 'leader', 'actual-start', 'actual-end', 'design-time', 'lab-time', 'end-week', 'current-step', 'steps', 'priority', 'rank'],
+        }),
+      }),
+    );
+    // With the workbook (charter) columns shown, their ids follow.
+    await user.click(screen.getByTestId('charter-columns-toggle'));
+    await user.click(screen.getByRole('button', { name: 'Export' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Projects list as Excel' }));
+    const query = (http.download.mock.lastCall?.[1] as { query: { columns: string[] } }).query;
+    expect(query.columns.slice(-3)).toEqual(['charter-plant', 'charter-requesting_department', 'charter-product_type']);
 
     await user.click(screen.getByRole('button', { name: 'Export' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Registration register as Excel' }));

@@ -246,6 +246,60 @@ describe('P52-T01 — Effort & Timeline Planning matrix', () => {
     expect(screen.getByTestId('apply-to-app')).toHaveTextContent('Apply to App (2)');
   });
 
+  it('P58: 409 LAB_STEP_HAS_NO_CHAMBER asks for chambers like another lab step (default PDD-H) and retries with add_to_chambers_like', async () => {
+    const ok = http.sendWithHeaders.getMockImplementation()!;
+    http.sendWithHeaders.mockImplementation((m: string, p: string, body: unknown) => {
+      if ((body as { add_to_chambers_like?: string }).add_to_chambers_like === undefined) {
+        return Promise.reject(
+          new ApiError(409, 'conflict', 'No chamber accepts PDD-J, PDD-L', 'LAB_STEP_HAS_NO_CHAMBER', undefined, {
+            code: 'LAB_STEP_HAS_NO_CHAMBER',
+            detail: 'No chamber accepts PDD-J, PDD-L',
+            steps: ['PDD-J', 'PDD-L'],
+          }),
+        );
+      }
+      return ok(m, p, body);
+    });
+    const { user } = await openMatrix();
+    await user.click(screen.getByRole('combobox', { name: 'Resource — PDD-L Pilot' }));
+    await user.click(await screen.findByRole('option', { name: 'Lab' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Change resource' }));
+    await user.click(screen.getByTestId('apply-to-app'));
+    const dialog = await screen.findByTestId('lab-chamber-dialog');
+    expect(within(dialog).getByRole('heading')).toHaveTextContent('No lab chamber accepts PDD-J and PDD-L');
+    const like = within(dialog).getByRole('combobox', { name: 'Same chambers as' });
+    expect(like).toHaveValue('PDD-H');
+    expect(within(like).getAllByRole('option').map((o) => o.textContent)).toEqual(['PDD-F', 'PDD-H']);
+    await user.click(within(dialog).getByRole('button', { name: 'Use the same chambers and save' }));
+    await waitFor(() => expect(puts('/workflow-settings/steps/PDD')).toHaveLength(2));
+    const retry = puts('/workflow-settings/steps/PDD')[1] as { add_to_chambers_like?: string; add_to_chambers?: unknown; steps: unknown[] };
+    expect(retry.add_to_chambers_like).toBe('PDD-H');
+    expect(retry.add_to_chambers).toBeUndefined();
+    expect(retry.steps).toHaveLength(14);
+    expect(await screen.findByTestId('stale-banner')).toHaveTextContent('12 projects');
+  });
+
+  it('P58: Cancel on the lab-chamber question saves nothing and keeps the resource draft', async () => {
+    http.sendWithHeaders.mockRejectedValue(
+      new ApiError(409, 'conflict', 'No chamber accepts PDD-L', 'LAB_STEP_HAS_NO_CHAMBER', undefined, {
+        code: 'LAB_STEP_HAS_NO_CHAMBER',
+        detail: 'No chamber accepts PDD-L',
+        steps: ['PDD-L'],
+      }),
+    );
+    const { user } = await openMatrix();
+    await user.click(screen.getByRole('combobox', { name: 'Resource — PDD-L Pilot' }));
+    await user.click(await screen.findByRole('option', { name: 'Lab' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Change resource' }));
+    await user.click(screen.getByTestId('apply-to-app'));
+    const dialog = await screen.findByTestId('lab-chamber-dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByTestId('matrix-error')).toHaveTextContent(/Not saved/);
+    expect(puts('/workflow-settings/steps/PDD')).toHaveLength(1);
+    expect(screen.getByTestId('apply-to-app')).toHaveTextContent('Apply to App (1)');
+    expect(screen.getByRole('combobox', { name: 'Resource — PDD-L Pilot' })).toHaveTextContent('Lab');
+  });
+
   it('when Apply to App saved resources first, the apply dialog says they are saved and Cancel does not undo them', async () => {
     const { user } = await openMatrix();
     await user.click(screen.getByRole('combobox', { name: 'Resource — PDD-J Pre-Production (Pr. Pr)' }));

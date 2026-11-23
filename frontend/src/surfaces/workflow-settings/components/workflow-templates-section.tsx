@@ -115,7 +115,8 @@ export function WorkflowTemplatesSection(): React.JSX.Element {
       const run = async (): Promise<WorkflowSettingsSaveResult> => {
         for (;;) {
           try {
-            return await saveSteps.mutateAsync({ workflowId, body: { steps } });
+            // P58: the optional chamber targets (`add_to_chambers[_like]`) travel with the retry.
+            return await saveSteps.mutateAsync({ workflowId, body: { ...body, steps } });
           } catch (err) {
             const conflicts = editConflicts(err);
             if (conflicts === null) throw err;

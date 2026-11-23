@@ -120,6 +120,40 @@ describe('Review step', () => {
     expect(screen.queryByTestId('import-copies')).toBeNull();
   });
 
+  it('P58-B: a Projects list re-upload shows New / Changed / No change badges, the changes and the served counts', async () => {
+    const rows: ImportRow[] = [
+      { ...ROWS[0]!, match_by: 'id', change_kind: 'changed', changes: [
+        { field: 'priority', label: 'Priority', before: 'P3', after: 'P1', simulated: true },
+        { field: 'type', label: 'Type', before: 'NM', after: 'CM', simulated: false },
+      ] },
+      { ...ROWS[1]!, match_by: 'id', change_kind: 'unchanged', changes: [] },
+      { ...ROWS[2]!, change_kind: 'new', changes: [] },
+    ];
+    const parsed: ImportParseResponse = {
+      ...withRows(rows),
+      file_format: 'projects_list',
+      counts: { ...PARSE_RESPONSE.counts, changed: 1, unchanged: 1 },
+    };
+    useImportPlan.getState().setParsed(parsed);
+    const { container } = renderWithProviders(
+      <ReviewStep parsed={parsed} simulation={idle} onCompute={() => {}} onRetry={() => {}} />,
+    );
+    const kinds = screen.getAllByTestId('import-change-kind').map((k) => k.firstChild?.textContent);
+    expect(kinds).toEqual(['Changed', 'No change', 'New']);
+    const changes = screen.getByRole('list', { name: `Changes for ${ROWS[0]!.name}` });
+    const items = within(changes).getAllByRole('listitem').map((li) => li.textContent?.replace(/\s+/g, ' ').trim());
+    expect(items).toEqual(['Priority: P3 → to P1', 'Type: NM → to CM (not simulated)']);
+    expect(screen.getByTestId('import-projects-list-counts')).toHaveTextContent('1 changed, 1 with no change');
+    expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+
+  it('P58-B: a capacity-planning file shows no change badges and no Projects list counts', () => {
+    useImportPlan.getState().setParsed(PARSE_RESPONSE);
+    renderWithProviders(<ReviewStep parsed={PARSE_RESPONSE} simulation={idle} onCompute={() => {}} onRetry={() => {}} />);
+    expect(screen.queryByTestId('import-change-kind')).toBeNull();
+    expect(screen.queryByTestId('import-projects-list-counts')).toBeNull();
+  });
+
   it('P32-R03: "Projects to schedule" shows the served count, else the display-only sum', async () => {
     const rows = [{ ...ROWS[0]!, num_projects: 5 }, { ...ROWS[1]!, num_projects: null }, ROWS[2]!];
     const served = {

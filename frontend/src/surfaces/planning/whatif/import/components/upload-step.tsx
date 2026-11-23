@@ -98,6 +98,10 @@ export function UploadStep(): React.JSX.Element {
           <p id={hintId} className="text-2xs text-text-muted">
             Excel workbook (.xlsx), up to 5 MB. The file is read once and not stored.
           </p>
+          {/* P58-B: the Projects page download is recognised automatically on upload. */}
+          <p className="text-2xs text-text-muted" data-testid="import-projects-list-hint">
+            You can also upload a Projects list download after editing it.
+          </p>
         </div>
 
         {file ? (

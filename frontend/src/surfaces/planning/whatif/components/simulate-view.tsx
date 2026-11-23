@@ -94,7 +94,20 @@ const NEW_COLUMNS = [
   { header: 'New project', cell: (r: ProjectResultOut) => <span className="font-medium">{r.name}</span> },
   { header: 'Hub', cell: (r: ProjectResultOut) => r.hub },
   { header: 'Category', cell: (r: ProjectResultOut) => r.category ?? '—' },
-  { header: 'Outcome', cell: (r: ProjectResultOut) => <OutcomeBadge outcome={r.outcome} /> },
+  {
+    header: 'Outcome',
+    cell: (r: ProjectResultOut) => (
+      <span className="inline-flex flex-col items-start gap-0.5">
+        <OutcomeBadge outcome={r.outcome} />
+        {/* P58 (API_CONTRACT_P58 §2): the served reason a project was not placed, verbatim. */}
+        {r.left_out_reason_label ? (
+          <span className="text-2xs text-text-muted" data-testid="sim-left-out-reason">
+            {r.left_out_reason_label}
+          </span>
+        ) : null}
+      </span>
+    ),
+  },
   {
     header: 'Finish week',
     cell: (r: ProjectResultOut) => (
@@ -230,8 +243,8 @@ export function SimulateView({ data, compact = false }: { data: SimulateResponse
       <section className="space-y-s2" aria-label="Outcome counts" data-testid="sim-outcomes">
         <SectionHeading>Outcomes before and after</SectionHeading>
         <p className="text-2xs text-text-muted" data-testid="sim-outcomes-note">
-          Counted by outcome class. The &quot;within the year&quot; figure above is the Dashboard&apos;s count and can be
-          higher, because it also counts commercialized projects.
+          Counted by outcome class, the same buckets as the Dashboard: with no change, the before counts equal the
+          Dashboard&apos;s.
         </p>
         <Table scrollLabel="Outcome counts" aria-label="Outcome counts before and after">
           <TableHeader>
