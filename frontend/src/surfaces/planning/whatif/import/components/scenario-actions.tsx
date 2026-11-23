@@ -153,7 +153,8 @@ export function ExportScenarioButton({ disabled }: { disabled: boolean }): React
       void download.run('export', () => downloadSavedScenario(view.id, view.name));
       return;
     }
-    const name = view?.name ?? 'Current result';
+    // Unnamed result: no name, so the server's "whatif-import-result.xlsx" applies.
+    const name = view?.name ?? null;
     const request = currentRequest(st);
     void download.run('export', () => downloadCurrentResult(name, request));
   };

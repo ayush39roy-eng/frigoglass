@@ -446,10 +446,16 @@ async def _resolve_lab_chamber_coverage(
     becoming = [sid for sid in uncovered if templates[sid].kind != WorkflowStepKind.LAB]
     if not adding:
         if becoming:
+            # "PDD-J and PDD-L" (never a Python list repr).
+            named = (
+                ", ".join(becoming[:-1]) + " and " + becoming[-1]
+                if len(becoming) > 1
+                else becoming[0]
+            )
             raise CodedHTTPException(
                 status.HTTP_409_CONFLICT,
                 LAB_STEP_HAS_NO_CHAMBER,
-                f"No chamber accepts lab step(s) {becoming}. Every project reaching such a "
+                f"No chamber accepts lab step(s) {named}. Every project reaching such a "
                 "step could not be scheduled. Say which chambers may run them "
                 "(add_to_chambers or add_to_chambers_like), or add them on the Chambers tab "
                 "first.",

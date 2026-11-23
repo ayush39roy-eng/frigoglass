@@ -208,7 +208,7 @@ describe('SolveView', () => {
     expect(screen.getByText(/might exist/)).toBeInTheDocument();
   });
 
-  it('words exact only as Proven minimum; otherwise Smallest found with the server sentence', () => {
+  it('words exact only as Proven minimum; otherwise Smallest found, never the raw server semantics', () => {
     const { unmount } = renderWithProviders(<SolveView data={solveFixture({ exact: true })} />);
     expect(screen.getByTestId('solve-exact')).toHaveTextContent('Proven minimum');
     expect(screen.queryByTestId('solve-not-proven')).not.toBeInTheDocument();
@@ -219,10 +219,11 @@ describe('SolveView', () => {
     expect(screen.getByTestId('solve-exact')).toHaveTextContent('Smallest found (assumes more capacity never hurts)');
     expect(screen.getByTestId('solve-exact')).not.toHaveTextContent('Proven');
     expect(screen.getByTestId('solve-not-proven')).toHaveTextContent('a smaller one may exist');
-    expect(screen.getByTestId('solve-semantics')).toHaveTextContent('SERVER: smallest found');
+    expect(screen.queryByTestId('solve-semantics')).not.toBeInTheDocument();
+    expect(screen.queryByText(/SERVER: smallest found/)).not.toBeInTheDocument();
   });
 
-  it('shows unattainable projects prominently, with the server sentence, and met_attainable as a calm outcome', async () => {
+  it('shows unattainable projects prominently, with a plain sentence, and met_attainable as a calm outcome', async () => {
     const data = solveFixture({
       met: false,
       met_attainable: true,
@@ -235,7 +236,8 @@ describe('SolveView', () => {
     const { container } = renderWithProviders(<SolveView data={data} />);
     const box = screen.getByTestId('solve-unattainable');
     expect(box).toHaveTextContent('Cannot finish within the year whatever you add (critical path too long)');
-    expect(within(box).getByTestId('solve-semantics')).toHaveTextContent('SERVER SENTENCE about unattainable projects.');
+    expect(within(box).getByTestId('solve-semantics')).toHaveTextContent('their own sequence of steps is longer');
+    expect(box).not.toHaveTextContent('SERVER SENTENCE');
     expect(within(box).getByText('What-if project 1')).toBeInTheDocument();
     expect(within(box).getByText("W8 '27")).toHaveAttribute('title', 'Week 8 of 2027');
 

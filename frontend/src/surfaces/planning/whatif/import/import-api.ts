@@ -149,11 +149,11 @@ export function downloadSavedScenario(id: string, name: string): Promise<Downloa
 }
 
 /** `POST /whatif/import/export.xlsx`: an unsaved result; the server recomputes from `request`. */
-export function downloadCurrentResult(name: string, request: ImportSimulateRequest): Promise<DownloadedFile> {
+export function downloadCurrentResult(name: string | null, request: ImportSimulateRequest): Promise<DownloadedFile> {
   return apiDownload('/whatif/import/export.xlsx', {
     method: 'POST',
     body: { name, request },
-    fallbackFilename: `${safeFileName(name)}.xlsx`,
+    fallbackFilename: name ? `${safeFileName(name)}.xlsx` : 'whatif-import-result.xlsx',
   });
 }
 

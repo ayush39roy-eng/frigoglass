@@ -77,6 +77,8 @@ async def test_step_made_lab_without_a_chamber_is_409_and_nothing_written(db_ses
     assert body["code"] == "LAB_STEP_HAS_NO_CHAMBER"
     assert body["steps"] == ["PDD-J"]
     assert "PDD-J" in body["detail"]
+    # 2026-11-23: plain words, never a Python list repr ("['PDD-J']").
+    assert "[" not in body["detail"] and "lab step(s) PDD-J." in body["detail"]
     assert await _kind(db_session, "PDD-J") == WorkflowStepKind.DESIGN
 
 

@@ -351,8 +351,9 @@ def test_whatif_design_figures_are_per_capacity_hub() -> None:
     rows = {r.hub: r for r in req.design}
     assert rows["R&D-Greece"].added_projects == 1
     assert rows["R&D-Greece"].extra_design_weeks == 5
-    # Baseline load on Greece's row includes the existing OEM project (10 + 5).
-    assert rows["R&D-Greece"].baseline_load_weeks == 15.0
+    # Baseline load on Greece's row includes the existing OEM project: 10 + 4
+    # (BUG-2: plan-year window; its OEM-J at W56 is 2027 work).
+    assert rows["R&D-Greece"].baseline_load_weeks == 14.0
     assert "OEM-HCK" not in rows or rows["OEM-HCK"].added_projects == 0
     assert req.extra_design_weeks_total == 5
     assert any("1 x 5 wk (B-OEM, OEM-HCK)" in w for w in req.workings)
@@ -416,8 +417,10 @@ def test_whatif_supply_sums_counted_engineers_only() -> None:
     gr = {r.hub: r for r in req.design}["R&D-Greece"]
     assert (gr.fte_before, gr.fte_after_scenario) == (2.0, 2.0)
     assert gr.capacity_before == 100.0  # 50 wk x 2 counted FTE
-    assert gr.baseline_load_weeks == 37.0  # 10 + 22 + 5: Theoni's project is still load
-    assert gr.booked_pct_before == 37.0
+    # 10 + 16 + 5: Theoni's project is still load. BUG-2: plan-year window, so
+    # p-gr-2's PDD-I..M (W65+, 6 wk of 22) are 2027 work and not counted.
+    assert gr.baseline_load_weeks == 31.0
+    assert gr.booked_pct_before == 31.0
     # The same engineer counted adds 50 wk of supply.
     gr_all = {r.hub: r for r in analytic_requirements(_counted_baseline(True), Scenario()).design}
     assert (gr_all["R&D-Greece"].fte_before, gr_all["R&D-Greece"].capacity_before) == (3.0, 150.0)

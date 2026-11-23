@@ -288,7 +288,8 @@ describe('P41 Executive scenario bar', () => {
     await waitFor(() => expect(saveBlob).toHaveBeenCalledWith(expect.anything(), 'current.xlsx'));
     const exp = bodiesOf('/whatif/import/export.xlsx')[0] as Record<string, unknown>;
     expect(Object.keys(exp).sort()).toEqual(['name', 'request']);
-    expect(exp.name).toBe('Current result');
+    // Unnamed: no name sent, so the server names the file "whatif-import-result.xlsx".
+    expect(exp.name).toBeNull();
 
     // The selector lists this import's saved scenarios (filtered by the file's sha).
     const select = within(bar).getByTestId('scenario-select');

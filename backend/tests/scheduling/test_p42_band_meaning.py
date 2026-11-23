@@ -533,18 +533,24 @@ def test_i25_remaining_demand_drops_non_frozen_p4_and_q_only() -> None:
 # (portfolio p017 / p024; seed 26-00205 ...), (c) a queued P3 now counted
 # (R53-2: p003 / p009 / p023, import rows "In Queue" P3), and for plan import
 # R53-4 (`horizon_weeks` = H not u + 26; the QUEUED issue no longer raised).
+# BUG-2 (2026-11-23) re-pin of the analytic_* / simulate_* keys only: What-if
+# utilization load is windowed to the plan year / remaining weeks (a step crossing
+# the window edge books pro rata). An old/new differential on these inputs showed
+# only utilization_* load / booked % / status and the analytic load-derived fields
+# (baseline/new load, booked %, status, min extra units, workings) changed; every
+# project outcome is identical. plan_import_* (and seed_*) are unchanged.
 _PRE_P42_NEUTRAL = {
-    "analytic_add_remaining": "75937da190f468418224473635808125b0a1ffaccb20d9e91ff5945f9cc4b880",
-    "analytic_add_year": "f9163d6349c18fb9cf0a012774e2d36eb4d4e04bb78158409caa685d3cdbb66f",
-    "analytic_remove_remaining": "4f24761a6e50728a520602e2178a211fd13c7d81f8bf17422a4db7d593baf011",
-    "analytic_remove_year": "69e13f8a40247245e03d69aed360c89495b47b42ace0b29f5893eabfc23c17c2",
+    "analytic_add_remaining": "cf69b41938940d6556f3066963ba12fdd545cb65a3b4de4aa1dd6a49d55b986b",
+    "analytic_add_year": "1077331c4895aaf3ae85147b22fca1ec979f0d78ab878f2f3a4c915f13f2735b",
+    "analytic_remove_remaining": "955b0b9717a4dc3ec3c0ce6e392b9cd6baa8ed050f09dd565df93f1463721c6c",
+    "analytic_remove_year": "4ff19c03b55dbe73a7be684908562f34408dfb905ad843de36802f2ec151f232",
     "plan_import_104": "87e93dcdc6aef77e719166980faa46692aa8e9ee36b33a72fb7e835c239122d8",
     "plan_import_52": "f34d808aabf7e2ff080a4c6178afefe1f18b8c3a972aaca25fe00821e6d92a1a",
     "seed_cp_sat": "5bc74bc3ea4a2c06eb9fcf2a2ec2569333b66f8ee75b825ad99810cb61856de3",
     "seed_greedy": "94d7f3b35ac534be735686b49dbcb77c93a724f01a86d370994df41d8b4d9a2b",
     "seed_mc": "c47d73ee8769ef777aa62156b9f391f9265630d34f920f41e3344f521cb838d7",
-    "simulate_add": "c838f4ea5a4ba9a10d504bcd449241c876166950a141014ef9eabd88d542bffc",
-    "simulate_remove": "c1225d29afdc0a22e6376b2a82919b45372e4fb924250ff4477a50d911ee28cb",
+    "simulate_add": "2cf6b71cb71481c987b901d6b4774d3d0f63ba899dc6f993f005b0baa11a787f",
+    "simulate_remove": "69f1e4d553ba72533387af89411905b93d2ab6c6364ff72cf09e08f585c1f59f",
 }
 
 _P42_DEFAULTS = {

@@ -2075,3 +2075,8 @@ clock / closed year, ADR 0056 queued P3, ADR 0061 bounds, ADR 0024/0062 display)
 - Every by-priority count, chart, column, filter, export and What-if result uses the effective
   priority. Such projects never appear under P1/P2/P3/P4/Q; they go to "Not applicable" (or "Other"
   where that row exists). Totals unchanged. Scheduler placement unchanged.
+
+- *(2026-11-23, audit BUG-2.)* What-if utilization / estimate "before" load stays run-booked but is
+  windowed to the basis: full-year = load inside the plan year's weeks; remaining = load in weeks
+  cw+1..year end. A step crossing the window edge is split pro rata per week. Multi-year (P53) work
+  after the year no longer inflates booked %.

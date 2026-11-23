@@ -421,11 +421,14 @@ def test_whatif_zero_scenario_equals_baseline_with_fractional_fte() -> None:
     assert res.outcome_counts_before == res.outcome_counts_after
     assert res.utilization_before == res.utilization_after
     assert run_greedy_sgs(build_scenario_input(base, Scenario())) == run_greedy_sgs(base.schedule)
-    # Estimate "before" load == the run's I6 sum (effort weeks), as Capacity.
+    # Estimate "before" load == the simulate utilization load (BUG-2: the run's
+    # I6 effort inside the plan year, so never more than the whole-run sum).
     est = analytic_requirements(base, Scenario())
     run_load = compute_design_load_by_hub(base.schedule, run_greedy_sgs(base.schedule))
+    util = {u.key: u for u in res.utilization_before if u.scope == "hub"}
     for row in est.design:
-        assert row.baseline_load_weeks == pytest.approx(float(run_load.get(row.hub, 0)))
+        assert row.baseline_load_weeks == util[row.hub].load_weeks
+        assert row.baseline_load_weeks <= float(run_load.get(row.hub, 0))
         assert row.extra_design_weeks == 0
 
 

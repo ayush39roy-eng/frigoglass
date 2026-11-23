@@ -36,7 +36,8 @@ const UNATTAINABLE_COLUMNS = [
  * `capped`, `exact` and `runs_used` exactly as served. A project that can never
  * finish this year (critical path too long, OQ #47) is a property of the lead
  * time, not a failed recommendation, so it is shown as such: separately, with
- * the server's `semantics` sentence, and `met_attainable` read as a clear result.
+ * a plain sentence, and `met_attainable` read as a clear result. The served
+ * `semantics` is developer text and is not shown (2026-11-23).
  */
 export function SolveView({ data }: { data: SolveResponse }): React.JSX.Element {
   const hasUnattainable = data.unattainable_projects.length > 0 || data.unattainable_project_ids.length > 0;
@@ -158,7 +159,8 @@ export function SolveView({ data }: { data: SolveResponse }): React.JSX.Element 
             Cannot finish within the year whatever you add (critical path too long) ({int(data.unattainable_project_ids.length)})
           </h4>
           <p className="text-xs text-text-muted" data-testid="solve-semantics">
-            {data.semantics}
+            These projects stay late even with more designers or chambers: their own sequence of steps is longer than
+            the weeks left in the year.
           </p>
           {data.unattainable_projects.length > 0 ? (
             <ProjectRowsTable
@@ -173,11 +175,7 @@ export function SolveView({ data }: { data: SolveResponse }): React.JSX.Element 
             </p>
           )}
         </section>
-      ) : (
-        <p className="text-2xs text-text-muted" data-testid="solve-semantics">
-          {data.semantics}
-        </p>
-      )}
+      ) : null}
 
       {/* P53 (R53-3): the served delivery-by-year table of the solved scenario
           (shown inside the achieved result when that carries it). */}

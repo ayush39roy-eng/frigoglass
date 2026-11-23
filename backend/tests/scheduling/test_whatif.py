@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from collections import defaultdict
+from fractions import Fraction
 
 import pytest
 
 import domain_constants as dc
 from scheduling import ProjectInput, run_greedy_sgs, validate_invariants
+from scheduling.weeks import plan_year_end_week, plan_year_start_week
 from scheduling.whatif import (
     HARD_MAX_RUNS,
     MAX_ADDED_CHAMBERS_TOTAL,
@@ -45,6 +48,7 @@ from scheduling.whatif import (
     solve_minimum_additions,
     to_jsonable,
     touched_scope,
+    window_share,
 )
 from tests.scheduling._whatif_fixtures import (
     CURRENT_WEEK,
@@ -581,12 +585,38 @@ def test_utilization_load_reconciles_with_i6_i7():
     out = run_greedy_sgs(inp)
     design = compute_design_load_by_hub(inp, out)
     lab_by_hub = compute_lab_load_by_hub(inp, out)
+    # BUG-2: utilization load is the I6/I7 load inside the window (plan year /
+    # remaining weeks), never more than the whole-run sum; a step crossing the
+    # window edge books pro rata per week of its span.
+    proj = {p.project_id: p for p in inp.projects}
+    cw = inp.current_week
+    wins = {
+        "year": (plan_year_start_week(cw), plan_year_end_week(cw)),
+        "rem": (cw + 1, plan_year_end_week(cw)),
+    }
+    want: dict[tuple[str, str, str], Fraction] = defaultdict(Fraction)
+    for o in out.project_outcomes:
+        p = proj[o.project_id]
+        for st in o.steps:
+            if st.skipped or st.kind not in ("design", "lab"):
+                continue
+            for w, (lo, hi) in wins.items():
+                share = window_share(st.start_week, st.end_week, st.duration_weeks, lo, hi)
+                if st.kind == "design":
+                    want[("hub", p.capacity_hub, w)] += share
+                else:
+                    want[("lab_region", dc.HUB_LAB_REGION[p.hub], w)] += share * Fraction(
+                        dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
+                    )
     for u in res.utilization_after:
+        assert u.load_weeks == round(float(want[(u.scope, u.key, "year")]), 2)
+        assert u.load_remaining_weeks == round(float(want[(u.scope, u.key, "rem")]), 2)
+        assert u.load_remaining_weeks <= u.load_weeks
         if u.scope == "hub":
-            assert u.load_weeks == float(design.get(u.key, 0))
+            assert u.load_weeks <= float(design.get(u.key, 0)) + 1e-9
         else:
-            expected = sum(v for h, v in lab_by_hub.items() if dc.HUB_LAB_REGION[h] == u.key)
-            assert u.load_weeks == expected
+            total = sum(v for h, v in lab_by_hub.items() if dc.HUB_LAB_REGION[h] == u.key)
+            assert u.load_weeks <= total + 1e-9
 
 
 def test_downtime_change_does_not_move_the_schedule():
@@ -908,13 +938,18 @@ def test_zero_scenario_estimate_before_equals_simulate_utilization(make, basis):
     assert req.design and req.lab
     for d in req.design:
         u = _util(sim.utilization_before, "hub", d.hub)
-        assert d.baseline_load_weeks == u.load_weeks
+        # BUG-2: the load of the same window as the basis.
+        assert d.baseline_load_weeks == (
+            u.load_weeks if basis == "year" else u.load_remaining_weeks
+        )
         want = u.booked_pct_year if basis == "year" else u.booked_pct_remaining
         assert d.booked_pct_before == want
         assert d.booked_pct_after == want  # nothing added
     for lab in req.lab:
         u = _util(sim.utilization_before, "lab_region", lab.lab_region)
-        assert lab.baseline_load_weeks == u.load_weeks
+        assert lab.baseline_load_weeks == (
+            u.load_weeks if basis == "year" else u.load_remaining_weeks
+        )
         want = u.booked_pct_year if basis == "year" else u.booked_pct_remaining
         assert lab.booked_pct_before == want
 
@@ -930,9 +965,11 @@ def test_before_load_excludes_what_the_run_does_not_book():
 
 
 def test_hand_example_run_load_plus_ten_pdd_a():
-    """One PDD/A project in the run (18 design, 10 lab): +10 PDD/A gives
-    18 + 180 = 198 vs 50 -> 396 %, need FTE > 3.96 -> 3 extra designers; lab
-    10 + 100 = 110 vs 73.6 -> 149.46 %, one chamber (147.2) clears it."""
+    """One PDD/A project in the run (18 design, 10 lab) at CW 31. BUG-2: only
+    its plan-year part is load (design 1+4+1+6 = 12 of W31-W46, lab PDD-F 4;
+    PDD-H W53+ and later design are 2027). +10 PDD/A gives 12 + 180 = 192 vs
+    50 -> 384 %, need FTE > 3.84 -> 3 extra designers; lab 4 + 100 = 104 vs
+    73.6 -> 141.3 %, one chamber (147.2) clears it."""
 
     p = ProjectInput("x1", "X", "R&D-Greece", "In Development", "A", "P2", False, "e0")
     base = tiny_baseline(projects=(p,))
@@ -940,11 +977,11 @@ def test_hand_example_run_load_plus_ten_pdd_a():
         base, Scenario(add_projects=(AddProject("R&D-Greece", "A", count=10),))
     )
     d, lab = _design(req), _lab(req)
-    assert (d.baseline_load_weeks, d.new_load_weeks) == (18.0, 198.0)
-    assert (d.booked_pct_before, d.booked_pct_after) == (36.0, 396.0)
+    assert (d.baseline_load_weeks, d.new_load_weeks) == (12.0, 192.0)
+    assert (d.booked_pct_before, d.booked_pct_after) == (24.0, 384.0)
     assert d.min_extra_designers == 3
-    assert (lab.baseline_load_weeks, lab.new_load_weeks) == (10.0, 110.0)
-    assert (lab.booked_pct_before, lab.booked_pct_after) == (13.59, 149.46)
+    assert (lab.baseline_load_weeks, lab.new_load_weeks) == (4.0, 104.0)
+    assert (lab.booked_pct_before, lab.booked_pct_after) == (5.43, 141.3)
     assert lab.min_extra_chambers == 1
 
 

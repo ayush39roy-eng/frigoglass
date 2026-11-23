@@ -71,7 +71,6 @@ from scheduling.greedy import (
     is_not_scheduled_priority,
     run_greedy_sgs,
 )
-from scheduling.invariants import compute_design_load_by_capacity_hub
 from scheduling.types import (
     ChamberInput,
     EngineerInput,
@@ -1270,9 +1269,14 @@ def analytic_requirements(
     touched_hubs, touched_regions = touched_scope(baseline, scenario)
 
     base_run = _base_run if _base_run is not None else _run_baseline(baseline, budget)
-    base_hub_load = {u.key: u.load_weeks for u in base_run.utilization if u.scope == "hub"}
+
+    # BUG-2: the baseline load of the same window as the capacity `basis`.
+    def _base_load(u: UtilizationRow) -> float:
+        return u.load_weeks if basis == "year" else u.load_remaining_weeks
+
+    base_hub_load = {u.key: _base_load(u) for u in base_run.utilization if u.scope == "hub"}
     base_region_load = {
-        u.key: u.load_weeks for u in base_run.utilization if u.scope == "lab_region"
+        u.key: _base_load(u) for u in base_run.utilization if u.scope == "lab_region"
     }
     new_only = dataclasses.replace(
         applied.schedule_input,
@@ -1322,7 +1326,9 @@ def analytic_requirements(
         f"is below {_fmt(target_below_pct)} % (served rule: load and capacity rounded to 2 dp)."
     )
     workings.append(
-        "Load before the scenario is the active run's booked design/lab weeks (as on Capacity); "
+        "Load before the scenario is the active run's booked design/lab weeks inside the "
+        + ("plan year" if basis == "year" else "remaining weeks of the plan year")
+        + " (a step crossing the year end counts pro rata); "
         "the scenario adds the lead-time demand of the new projects only."
     )
     if touched_hubs or touched_regions:
@@ -1585,6 +1591,9 @@ class UtilizationRow:
     status_remaining: str
     #: hubs: total FTE; lab regions: number of chambers
     units: float
+    #: BUG-2: the load inside the remaining window (cw+1 .. plan-year end),
+    #: the numerator of `booked_pct_remaining`; `load_weeks` is the plan-year one.
+    load_remaining_weeks: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -1658,6 +1667,20 @@ def _removed_ids(before: ScheduleInput, after: ScheduleInput) -> frozenset[str]:
     return frozenset(e.engineer_id for e in before.engineers if e.engineer_id not in kept)
 
 
+def window_share(start: int, end: int, effort: int, lo: int, hi: int) -> Fraction:
+    """The part of a step's `effort` weeks booked in weeks `lo..hi` (inclusive):
+    the effort spread evenly over the step's calendar span `start..end`, so a
+    step crossing a window edge is split pro rata per week (BUG-2)."""
+
+    span = end - start + 1
+    if effort <= 0 or span <= 0 or hi < lo:
+        return Fraction(0)
+    overlap = min(end, hi) - max(start, lo) + 1
+    if overlap <= 0:
+        return Fraction(0)
+    return Fraction(effort * overlap, span)
+
+
 def _utilization(
     si: ScheduleInput,
     output: ScheduleOutput,
@@ -1675,31 +1698,50 @@ def _utilization(
         active_weeks,
         removed_ids,
     )
-    # ADR 0042 §3: the hub rows are capacity-hub rows (OEM load on Greece).
-    hub_load = compute_design_load_by_capacity_hub(si, output)
-    # lab load by region from outcomes (I7)
+    # BUG-2 (2026-11-23): the load is windowed like the capacity it is divided
+    # by. P53 schedules P1-P3 to completion over an open horizon, so summing
+    # every step would put 2027+ work into this year's booked %. "Year" is the
+    # plan year of cw; "remaining" is cw+1 .. plan-year end, the same weeks as
+    # the remaining capacity (52 - week_of_year(cw)). A step crossing a window
+    # edge books pro rata per calendar week of its span.
+    cw = si.current_week
+    year_win = (plan_year_start_week(cw), plan_year_end_week(cw))
+    rem_win = (cw + 1, plan_year_end_week(cw))
+    # ADR 0042 §3: the hub rows are capacity-hub rows (OEM load on Greece);
+    # lab load by region from outcomes (I7).
     proj = {p.project_id: p for p in si.projects}
-    region_load: dict[str, float] = defaultdict(float)
+    hub_year: dict[str, Fraction] = defaultdict(Fraction)
+    hub_rem: dict[str, Fraction] = defaultdict(Fraction)
+    region_year: dict[str, Fraction] = defaultdict(Fraction)
+    region_rem: dict[str, Fraction] = defaultdict(Fraction)
+    lab_per = Fraction(dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK)
     for o in output.project_outcomes:
         p = proj.get(o.project_id)
         if p is None or p.hub not in hub_names.HUB_LAB_REGION:
             continue
         for st in o.steps:
-            if st.kind == "lab" and not st.skipped:
-                region_load[hub_names.HUB_LAB_REGION[p.hub]] += (
-                    st.duration_weeks * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
-                )
+            if st.skipped or st.kind not in ("design", "lab"):
+                continue
+            y = window_share(st.start_week, st.end_week, st.duration_weeks, *year_win)
+            r = window_share(st.start_week, st.end_week, st.duration_weeks, *rem_win)
+            if st.kind == "design":
+                hub_year[p.capacity_hub] += y
+                hub_rem[p.capacity_hub] += r
+            else:
+                region = hub_names.HUB_LAB_REGION[p.hub]
+                region_year[region] += y * lab_per
+                region_rem[region] += r * lab_per
     rows: list[UtilizationRow] = []
     for hub in _ALL_HUBS:
-        load = float(hub_load.get(hub, 0))
+        load, load_r = float(hub_year[hub]), float(hub_rem[hub])
         cy, cr = _design_capacity(sup, hub, "year"), _design_capacity(sup, hub, "remaining")
         py, sy = _booking(load, cy)
-        pr, sr = _booking(load, cr)
+        pr, sr = _booking(load_r, cr)
         rows.append(
             UtilizationRow(
                 "hub",
                 hub,
-                load,
+                _round2(load),
                 _round2(cy),
                 py,
                 sy,
@@ -1707,18 +1749,19 @@ def _utilization(
                 pr,
                 sr,
                 _round2(sup.fte_by_hub.get(hub, 0.0)),
+                _round2(load_r),
             )
         )
     for region in _ALL_REGIONS:
-        load = float(region_load.get(region, 0.0))
+        load, load_r = float(region_year[region]), float(region_rem[region])
         cy, cr = _lab_capacity(sup, region, "year"), _lab_capacity(sup, region, "remaining")
         py, sy = _booking(load, cy)
-        pr, sr = _booking(load, cr)
+        pr, sr = _booking(load_r, cr)
         rows.append(
             UtilizationRow(
                 "lab_region",
                 region,
-                load,
+                _round2(load),
                 _round2(cy),
                 py,
                 sy,
@@ -1726,6 +1769,7 @@ def _utilization(
                 pr,
                 sr,
                 float(sup.chambers_by_region.get(region, 0)),
+                _round2(load_r),
             )
         )
     return tuple(rows)

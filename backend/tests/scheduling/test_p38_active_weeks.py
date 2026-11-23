@@ -289,15 +289,21 @@ def test_baseline_rejects_duplicate_entries() -> None:
 # (portfolio p017 / p024; seed 26-00205 ...), (c) a queued P3 now counted
 # (R53-2: p003 / p009 / p023, import rows "In Queue" P3), and for plan import
 # R53-4 (`horizon_weeks` = H not u + 26; the QUEUED issue no longer raised).
+# BUG-2 (2026-11-23) re-pin of the analytic_* / simulate_* keys only: What-if
+# utilization load is windowed to the plan year / remaining weeks (a step crossing
+# the window edge books pro rata). An old/new differential on these inputs showed
+# only utilization_* load / booked % / status and the analytic load-derived fields
+# (baseline/new load, booked %, status, min extra units, workings) changed; every
+# project outcome is identical. plan_import_* (and seed_*) are unchanged.
 _PRE_P38_HASHES = {
-    "analytic_add_remaining": "4283936ae5f4448c6fbab40f6b5708c81f0bad0c340d188e1365c4ce41b0b723",
-    "analytic_add_year": "c8a0fd7f1274b7a66b5a107981e8269ed9fe1df50538081cfe03e7b968bd400b",
-    "analytic_remove_remaining": "d1934de38eb0ef2b8edc05267b9b053ebd5b9fe6e46ea090152f2a14c7f21fc2",
-    "analytic_remove_year": "6b24333427a483193550beef27da8cc9228681d8f0ae057f6c2dceec6901704c",
+    "analytic_add_remaining": "9dc9305dc18fe8105bd3c7d029ec270b43883f32078b7a53e75f54ebf298ee15",
+    "analytic_add_year": "830ca923cc1678413fd767a871ee76308c27a3170a3a9fcddd5c566b6d3721c0",
+    "analytic_remove_remaining": "8456b9f7963161a475834cea7140441816bb3c4d9f06b374e4502e35190b077c",
+    "analytic_remove_year": "b2bc34801eae7a2c95d45b5711e300d612efe0e9ca0b7fbea58a2c046e05c5bd",
     "plan_import_104": "15e0bcf58b7e3c77a543e0c6061c36d8e454526677d1282cf1314545d0f8a0a8",
     "plan_import_52": "0342c66859a355ded8eccb2d90602e5c69bc5ae0a7fb8cf29a997e5391356ea5",
-    "simulate_add": "33888296a3d0f9b55875247735373ac4ba18f4f015e38952f41b4990bc536588",
-    "simulate_remove": "91c187929d8f9a494befeca83f24f5cfbd00d545f21172204283b216c0fc91d8",
+    "simulate_add": "d1c4290cb9f3c0e5483dab0edca824b2f33bc895ae4407d7ef4d52e2680dad58",
+    "simulate_remove": "965d023b6c1d56fd77c9b22101b5e0e7478edf107fb7abc388a1298ac7100775",
 }
 
 
