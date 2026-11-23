@@ -30,10 +30,26 @@ export interface BandRankInputProps {
   /** Dense list row. */
   dense?: boolean;
   className?: string;
+  /** P60 (ADR 0068): where `rank` counts, e.g. "PD-India · P1" (a hub rank); default the band. */
+  scope?: string;
+  /** P60: the served rank tooltip ("#3 of 12 in PD-India · P1", plus the global line). */
+  tooltip?: string | null;
 }
 
 /** The position chip as an input in place: Enter / blur submits, Escape cancels. */
-export function BandRankInput({ name, band, rank, inert, pending = false, onSubmit, dense = false, className }: BandRankInputProps): React.JSX.Element {
+export function BandRankInput({
+  name,
+  band,
+  rank,
+  inert,
+  pending = false,
+  onSubmit,
+  dense = false,
+  className,
+  scope,
+  tooltip,
+}: BandRankInputProps): React.JSX.Element {
+  const where = scope ?? band;
   const [draft, setDraft] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   // The blur after Enter (focus moves into the preview panel) must not submit twice.
@@ -76,10 +92,14 @@ export function BandRankInput({ name, band, rank, inert, pending = false, onSubm
         maxLength={4}
         value={pending ? '…' : (draft ?? String(rank))}
         readOnly={inert || pending}
-        aria-label={`Position of ${name} in ${band}. Type a new position and press Enter`}
+        aria-label={`Position of ${name} in ${where}. Type a new position and press Enter`}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
-        title={`Position ${String(rank)} in ${band}: its scheduling order inside the band. Type a number and press Enter to move it.`}
+        title={
+          tooltip
+            ? `${tooltip}\nType a number and press Enter to move it.`
+            : `Position ${String(rank)} in ${where}: its scheduling order inside the band. Type a number and press Enter to move it.`
+        }
         className={cn(
           'rounded-sm bg-surface-sunken pl-3 pr-1 text-right font-mono text-2xs font-semibold tabular-nums text-text',
           'ring-1 ring-inset ring-border-strong/50 transition-colors hover:ring-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -133,6 +153,8 @@ export interface BandRankStepButtonsProps {
   onMove: (toRank: number) => void;
   /** `row` (card footer) or `stack` (list row). */
   orientation?: 'row' | 'stack';
+  /** P60 (ADR 0068): where the rank counts, e.g. "PD-India · P1"; default the band. */
+  scope?: string;
 }
 
 function StepButton({
@@ -187,13 +209,15 @@ export function BandRankStepButtons({
   knownLast,
   onMove,
   orientation = 'row',
+  scope,
 }: BandRankStepButtonsProps): React.JSX.Element {
+  const where = scope ?? band;
   const stack = orientation === 'stack';
   const size = stack ? 'h-[1.3rem] w-5' : 'size-6';
   return (
     <span className={cn('inline-flex shrink-0', stack ? 'flex-col' : 'items-center gap-0.5')} data-testid="board-rank-steps">
       <StepButton
-        label={`Move ${name} up one position in ${band}`}
+        label={`Move ${name} up one position in ${where}`}
         disabled={rank <= 1}
         inert={inert}
         onClick={() => onMove(rank - 1)}
@@ -203,7 +227,7 @@ export function BandRankStepButtons({
         <ChevronUp className="size-3.5" aria-hidden="true" />
       </StepButton>
       <StepButton
-        label={`Move ${name} down one position in ${band}`}
+        label={`Move ${name} down one position in ${where}`}
         disabled={knownLast}
         inert={inert}
         onClick={() => onMove(rank + 1)}

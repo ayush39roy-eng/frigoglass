@@ -435,13 +435,14 @@ function Body({ flow }: { flow: DialogFlow }): React.JSX.Element {
 /** P36 (ADR 0050): "position 2 in P1" — display copy from the caller's served `band_rank`s. */
 function rankWhere(flow: DialogFlow): string {
   const rank = flow.rank;
-  return rank ? rankPositionCopy(rank.position, flow.next) : flow.next;
+  return rank ? rankPositionCopy(rank.position, rank.scope ?? flow.next) : flow.next;
 }
 
 function title(flow: DialogFlow): string {
   if (flow.rank) {
     const rank = flow.rank;
-    const where = rank.position === null ? `within ${flow.next}` : `to position ${rank.position} in ${flow.next}`;
+    const scope = rank.scope ?? flow.next;
+    const where = rank.position === null ? `within ${scope}` : `to position ${rank.position} in ${scope}`;
     if (flow.kind === 'applied') return `Moved ${where}`;
     if (flow.kind === 'previewError') return 'Position not changed';
     return `Move ${flow.target.projectName} ${where}?`;

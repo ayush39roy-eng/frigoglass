@@ -52,6 +52,12 @@ export interface PriorityBoardCard {
   /** P36 (ADR 0050): the position inside the FULL band, 1..n, served (filters never change it);
    *  null only for a project the server does not rank. Drives scheduling (key 3a). */
   band_rank: number | null;
+  /** P60 (ADR 0068): read-only, derived. Position among the projects of the SAME
+   *  hub in the same band, in `band_rank` order (1..`hub_band_size`); null exactly
+   *  when `band_rank` is null. Shown first everywhere a rank is shown. */
+  hub_rank: number | null;
+  /** P60: the number of ranked projects of this hub in the band; null with no hub rank. */
+  hub_band_size: number | null;
   /** P36 (R36-2): frozen projects schedule first whatever their board position (dates locked). */
   frozen: boolean;
   /** P42 (API_CONTRACT_P42 §2): the stored flags; null when not in the active run. */

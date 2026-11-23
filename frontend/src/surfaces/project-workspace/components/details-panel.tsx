@@ -23,6 +23,8 @@ import { updateProject } from '@/surfaces/registration/api/registration-api';
 import type { ProjectCreateRequest } from '@/surfaces/registration/api/types';
 import { FormSubmitError } from '@/surfaces/registration/components/form-submit-error';
 import { ProjectForm } from '@/surfaces/registration/components/project-form';
+import { GlobalRankMarker } from '@/components/shared/global-rank-marker';
+import { hubRankScope, rankTooltip } from '@/lib/hub-rank';
 import { identityChanges } from '@/surfaces/projects/lib/identity-patch';
 
 import type { WorkspaceResponse } from '../api/types';
@@ -148,6 +150,25 @@ export function DetailsPanel({
               <Field label="Type" value={p.type ? PROJECT_TYPE_LABELS[p.type] : '—'} />
               <Field label="Project nature" value={scoringTagsText(p.scoring_tags)} />
               <Field label="Priority" value={rowPriorityNotApplicable(p) ? NOT_APPLICABLE_LABEL : (p.priority ?? '—')} />
+              {/* P60 (ADR 0068): the served hub rank; the global rank on hover and "G16" (no hub filter here). */}
+              <Field
+                label="Rank"
+                value={
+                  p.priority !== null && typeof p.hub_rank === 'number' && !rowPriorityNotApplicable(p) ? (
+                    <span
+                      className="inline-flex items-center gap-1 tabular-nums"
+                      data-numeric=""
+                      data-testid="details-hub-rank"
+                      title={rankTooltip({ priority: p.priority, hub: p.hub, hub_rank: p.hub_rank, hub_band_size: p.hub_band_size, band_rank: p.band_rank, band_size: p.band_size }, false) ?? undefined}
+                    >
+                      #{p.hub_rank} in {hubRankScope(p.hub, p.priority)}
+                      <GlobalRankMarker bandRank={p.band_rank} hidden={false} />
+                    </span>
+                  ) : (
+                    '—'
+                  )
+                }
+              />
               <Field label="Actual start week" value={p.actual_start_week === null ? '—' : formatPlanWeek(p.actual_start_week)} />
               <Field label="Delay (weeks)" value={String(p.delay_weeks)} />
               <Field label="Expected completion (week)" value={p.target_end_week === null ? 'Process-derived' : formatPlanWeek(p.target_end_week)} />

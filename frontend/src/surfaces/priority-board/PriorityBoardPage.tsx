@@ -33,13 +33,16 @@ import { BoardToolbar } from './components/board-toolbar';
 import { EMPTY_TOOLBAR, SEARCH_MAX, type BoardToolbarState } from './lib/toolbar-state';
 import { HubLoadStrip } from './components/hub-load-strip';
 import { BoardScenarioContext } from './lib/board-scenario';
+import { BoardHubFilterContext } from './lib/board-hub-filter';
+import { hubRankScope } from '@/lib/hub-rank';
 import { useBoardLayout } from './lib/board-layout';
 import { BoardLayoutToggle } from './components/board-layout-toggle';
 import {
   allowedTargets,
   applyOverrides,
   canRerank,
-  displayPlacementForRank,
+  displayPlacementForHubRank,
+  hubRankForPlacement,
   isNoopSlot,
   lastServedIdIfFullBand,
   placementForSlot,
@@ -208,6 +211,8 @@ export function PriorityBoardView({
   }, [debouncedSearch, toolbar.category, toolbar.type, toolbar.status_, toolbar.leader]);
   const isFiltered = Object.values(filters).some((v) => v !== undefined);
   const query = usePriorityBoard(hub, filters);
+  /** P60 (ADR 0068): a hub / country filter is on — ranks show the hub rank only, drops send `hub_rank`. */
+  const hubFiltered = hasHubSelection(hub);
   const canReadDashboard = usePermission('dashboard').read;
   const canReadCapacity = usePermission('capacity').read;
   const facets = useBoardLeaderFacets(hub, canReadDashboard);
@@ -320,17 +325,28 @@ export function PriorityBoardView({
     (item: DisplayCard, column: DisplayColumn, placement: BandRankAnchorPlacement) => {
       const { card, servedPriority: band } = item;
       if (!host) return;
+      const target = { projectId: card.project_id, projectName: card.name, priority: band, status: card.status };
+      setOverrides((cur) => ({ ...cur, [card.project_id]: { priority: band, placement } }));
+      // P60 (ADR 0068): with a hub filter the dropped position is a hub rank → `{ hub_rank }`.
+      const hubRank = hubFiltered ? hubRankForPlacement(column.cards, card.project_id, placement) : null;
+      if (hubRank !== null) {
+        const scope = hubRankScope(card.hub, band);
+        const where = rankPositionCopy(hubRank, scope);
+        setAnnouncement(`${card.name} dropped at ${where}. Confirm the move.`);
+        host.requestRankMove(target, { hub_rank: hubRank }, {
+          position: hubRank,
+          fromPosition: card.hub_rank,
+          scope,
+          onSettled: rankSettled(item, where),
+        });
+        return;
+      }
       const position = positionForPlacement(column.cards, card.project_id, placement);
       const where = rankPositionCopy(position, columnName(band));
-      setOverrides((cur) => ({ ...cur, [card.project_id]: { priority: band, placement } }));
       setAnnouncement(`${card.name} dropped at ${where}. Confirm the move.`);
-      host.requestRankMove(
-        { projectId: card.project_id, projectName: card.name, priority: band, status: card.status },
-        placement,
-        { position, fromPosition: card.band_rank, onSettled: rankSettled(item, where) },
-      );
+      host.requestRankMove(target, placement, { position, fromPosition: card.band_rank, onSettled: rankSettled(item, where) });
     },
-    [host, rankSettled],
+    [host, hubFiltered, rankSettled],
   );
 
   /**
@@ -341,11 +357,13 @@ export function PriorityBoardView({
   const rankTo = React.useCallback(
     (item: DisplayCard, toRank: number) => {
       const { card, servedPriority: band } = item;
-      const from = card.band_rank;
+      // P60 (ADR 0068): ↑ / ↓ / typed edit the HUB rank (the rank shown) → `{ hub_rank }`.
+      const from = card.hub_rank ?? null;
       if (!host || from === null || item.pending || !Number.isSafeInteger(toRank) || toRank < 1 || toRank === from) return;
       const column = columnOf(band);
-      const shown = column ? displayPlacementForRank(column.cards, card.project_id, toRank) : null;
-      const where = rankPositionCopy(toRank, columnName(band));
+      const shown = column ? displayPlacementForHubRank(column.cards, card.project_id, toRank) : null;
+      const scope = hubRankScope(card.hub, band);
+      const where = rankPositionCopy(toRank, scope);
       setLift(null);
       setOverrides((cur) => ({
         ...cur,
@@ -354,8 +372,8 @@ export function PriorityBoardView({
       setAnnouncement(`${card.name}: move to ${where}. Confirm the move.`);
       host.requestRankMove(
         { projectId: card.project_id, projectName: card.name, priority: band, status: card.status },
-        { to_rank: toRank },
-        { position: toRank, fromPosition: from, onSettled: rankSettled(item, where) },
+        { hub_rank: toRank },
+        { position: toRank, fromPosition: from, scope, onSettled: rankSettled(item, where) },
       );
     },
     [columnOf, host, rankSettled],
@@ -596,6 +614,7 @@ export function PriorityBoardView({
 
   return (
     <BoardScenarioContext.Provider value={scenarioActive ? scenarioStagedIds : NO_STAGED}>
+    <BoardHubFilterContext.Provider value={hubFiltered}>
       <p id={instructionsId} className="sr-only">
         Press Space or Enter to pick the card up. The up and down arrow keys change its position inside its column (its
         scheduling order within that priority); the left and right arrow keys choose another priority column, where it goes
@@ -717,6 +736,7 @@ export function PriorityBoardView({
         </div>
         </BoardSelectionContext.Provider>
       )}
+    </BoardHubFilterContext.Provider>
     </BoardScenarioContext.Provider>
   );
 }

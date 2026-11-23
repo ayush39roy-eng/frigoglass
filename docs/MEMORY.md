@@ -46642,3 +46642,65 @@ Fixes from "[2026-11-23] QA — urgent end-to-end What-if planner test". Not com
   - Frontend: `frontend/src/surfaces/projects/hooks/use-register-save.ts`, `frontend/src/surfaces/projects/hooks/use-register-save.test.tsx` (new), `frontend/src/surfaces/projects/components/bulk-edit-bar.tsx`, `frontend/src/surfaces/projects/components/bulk-edit-bar.p59.test.tsx`, `frontend/src/surfaces/projects/ProjectsPage.tsx`, `frontend/src/surfaces/projects/ProjectsPage.register-edit.test.tsx`, `frontend/src/surfaces/projects/components/register-edit-cells.tsx`, `frontend/src/lib/score-readers.ts`, `frontend/src/surfaces/registration/hooks/use-registration.ts`, `frontend/src/surfaces/registration/hooks/use-registration.test.tsx`, `frontend/src/surfaces/project-workspace/components/details-panel.tsx`.
   - Priority-board files were not touched.
 - **Follow-up for the orchestrator:** the hosted 500 cause is inferred from the local reproduction, not read from Render logs (hosted was not touched). Confirm with a "deadlock detected" line in the hosted Postgres / app logs after deploy if possible.
+
+## [2026-11-23] P60-B — Hub rank inside a priority band, backend (ADR 0068) — backend-builder: DONE (not committed)
+- **Served, derived, never stored.** `hub_rank: int | None` and `hub_band_size: int | None` sit next to `band_rank` / `band_size` on:
+  - `ProjectRead` / `ProjectListItem`: `GET /projects`, `GET /projects/{id}`, the write responses, the Workspace project, the Gantt project read;
+  - `ProjectFilterRow`: `GET /dashboard/projects`;
+  - `PriorityBoardCard`: `GET /priority-board`.
+  - The VIP board serves no band rank, so it gets nothing.
+  - The values are null exactly when `band_rank` is null.
+- **How it is computed.** `services/band_rank.band_sizes` now returns `BandSizes`. It is a read-only Mapping priority → full band size, plus `hub_rank(id)` / `hub_band_size(id)`.
+  - It runs one windowed query: `row_number()` / `count()` over `(priority, hub_id)` in `band_rank` order.
+  - It is not hub-scoped, so a Hub Planner gets the same values.
+  - `with_band_size` fills all three fields.
+  - The p54 "one grouped count" tests now assert `partition by` (still one statement per request).
+- **Editing by hub rank.** `POST /projects/{id}/band-rank` and `/band-rank/preview` accept `hub_rank: int` (strict) as an alternative to `to_rank` and the anchors. The translation is `priority_preview.anchors_for_hub_rank`:
+  - k ≤ the number of peers: just before the same-hub peer at k (self excluded).
+  - k past the end: just after the hub's last peer.
+  - **Interpretation (not in the ADR):** the project keeps its place when it is alone in its hub, or when k equals its current hub rank (past the end counts as last). Without this, re-entering the shown value would move the project across other hubs.
+  - After translation it runs the same place / preview / greedy recalc / audit path.
+  - Errors:
+    - `hub_rank` with `to_rank`: 422 `RANK_AND_HUB_RANK` (new code).
+    - With an anchor: 422 `ANCHOR_AND_RANK`.
+    - k < 1: 422 `BAD_RANK`.
+  - The token binds `hub_rank`, and the audit row adds `requested_hub_rank`.
+  - `PriorityMoveResponse` gains `band_rank` and `hub_rank`: the project's ranks after the move (current ones when `unchanged`). They are null on a priority move.
+- **Exports.** The Projects list (`services/register_export.py`) writes the `rank` column as "Hub rank". A new "Global rank" (key `global-rank`, `follows="rank"`) is auto-included whenever `rank` is.
+  - In the What-if Projects-list import, "Hub rank" is read-only (`READ_ONLY_KEYS`). "Global rank" replaces the old Rank as the simulated rank input, i.e. it is the input the old Rank was. The old header "Rank" is aliased to `global-rank`, so pre-ADR files still read.
+  - The Registration export takes its headers from the model fields, so it gains `hub_rank` / `hub_band_size` automatically.
+- **Tests:**
+  - New `tests/test_p60_hub_rank.py` (10). Covers:
+    - values across 2 hubs on every surface;
+    - a Hub Planner sees the same values;
+    - hub rank 1: other hub's order unchanged, global renumbered, audit;
+    - past the end; current / last keeps its place; alone in its hub;
+    - preview == apply; the token binds the hub rank; errors;
+    - a Hub Planner moving past a hidden project.
+  - `test_p58_projects_list_round_trip.py`: headers updated, plus 3 new tests (hub rank read-only / global rank input, old "Rank" file, `follows`).
+  - Contract test: `BandRankHubRankPlacement` added to CONTRACT_TABLE and to the union test.
+- **Results:**
+  - p60, p36, p54, p59b, p58 ×2, p43 exports, export_api, p13 board, p12 / p14 VIP, p25 fill surfaces, p14 preview, p57, lock-order: 256 passed.
+  - Contract: 271 passed, 1 failing until the frontend adds `band_rank` / `hub_rank` to TS `PriorityMoveResponse`.
+  - ruff clean on touched files. mypy: no errors in touched files (the 2 dashboard `_has_stage_progress` errors were already there).
+- **Files:** `backend/services/band_rank.py`, `backend/services/priority_preview.py`, `backend/services/register_export.py`, `backend/services/whatif_import_register.py`, `backend/services/workspace.py`, `backend/api/routers/projects.py`, `backend/api/routers/priority_board.py`, `backend/api/routers/dashboard.py`, `backend/schemas/project.py`, `backend/schemas/dashboard.py`, `backend/schemas/priority_board.py`, `backend/tests/test_p60_hub_rank.py` (new), `backend/tests/test_p54_band_rank_served.py`, `backend/tests/test_p58_projects_list_round_trip.py`, `backend/tests/test_openapi_frontend_contract.py`.
+
+## [2026-11-23] P60-F — Hub rank shown first, global on hover; rank edits send `hub_rank` (ADR 0068) — frontend-builder: DONE (not committed)
+- **Types:** `hub_rank` / `hub_band_size` on `ProjectRead` (so `WorkspaceProject`), `ProjectFilterRow` and `PriorityBoardCard`. `priority-move.ts` gains `BandRankHubRankPlacement { hub_rank }` in the `BandRankPlacement` / `BandRankPreviewRequest` union, `isHubRankPlacement`, `placementTargetRank`, and an exported `placementBody`. `PriorityMoveResponse` gains `band_rank` / `hub_rank`. Contract test: 272 passed against the landed backend.
+- **Display rule:** `lib/hub-rank.ts` builds the tooltip text: "#3 of 12 in PD-India · P1", plus "Global: #16 of 40 in P1, all hubs" only when no hub filter is on. `components/shared/global-rank-marker.tsx` is the muted "G16", hidden under a hub filter. Every number shown is a served field.
+  - "Hub filter" means the global header selection (`hasHubSelection`: hubs or countries).
+- **Priority board:**
+  - The card chip, list row and typed input show `hub_rank`. ↑ / ↓ / typed send `{ hub_rank }` with copy scope "R&D-Greece · P1". ↓ is disabled when `hub_rank >= hub_band_size`.
+  - Drag-reorder in a column: with a hub filter, a drop on a same-hub anchor sends `{ hub_rank }` (`hubRankForPlacement`). Otherwise the drop keeps the global anchors.
+  - `BoardHubFilterContext` carries the filter state to the cards.
+  - The move flow's `RankMoveRequestOptions.scope` drives the dialog and BAD_RANK copy.
+- **Projects register:** the Rank column shows `#hub_rank` + "G<band_rank>" with the tooltip. `EditableBandRank` sends `{ hub_rank }`. `ProjectsTable.hubFiltered` switches the rank sort to band, then hub rank (`compareHubRank`).
+- **Registration form and Workspace:** `BandRankField` reads "Rank in PD-India · P1: 3 of 12", with the global rank on hover + G marker, and edits send `hub_rank`. The Workspace read-only details gain a "Rank" field.
+- **Tests:**
+  - New `registration/components/band-rank-field.p60.test.tsx` (4): tooltip with and without a hub filter; G marker shown or hidden; editing sends `{ hub_rank }`.
+  - Updated P36 / P54 board, register and form tests to the hub copy and `hub_rank` bodies. The P36-R02 hub-filtered keyboard drop now asserts `{ hub_rank: 21 }`.
+  - Fixtures gained the two fields.
+- **Results:** tsc -b 0. eslint 0 errors on touched files. vitest priority-board / projects / registration / project-workspace / components/shared / matrix / dashboard: 131 files, 1133 passed.
+- **Open:**
+  - Under a hub filter, a drop next to a card of ANOTHER hub (a multi-hub or country selection) still sends anchors.
+  - The keyboard pick-up announcement still speaks global positions.

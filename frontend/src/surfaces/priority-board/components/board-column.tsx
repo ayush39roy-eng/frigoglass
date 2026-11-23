@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { isLastInHub } from '@/lib/hub-rank';
 
 import { PRIORITY_BAND_STYLES, PRIORITY_BAND_TITLE, priorityBandName } from '@/components/shared/priority-band-meta';
 import { formatDecimal, formatInteger } from '@/lib/format';
@@ -124,7 +125,8 @@ function CardSlot({
   const rank = {
     rankable: props.canRankCard?.(item) ?? false,
     rankInert: props.rankInert ?? false,
-    knownLast: props.lastInBandIds?.has(item.card.project_id) ?? false,
+    // P60 (ADR 0068): the rank shown is the hub rank, so ↓ stops at the hub's last (served size).
+    knownLast: isLastInHub(item.card) || (props.lastInBandIds?.has(item.card.project_id) ?? false),
     onRankTo: props.onRankTo,
   };
   if (props.layout === 'list') {

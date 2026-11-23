@@ -37,6 +37,9 @@ export interface PriorityMoveRequestOptions {
 export interface RankMoveRequestOptions extends PriorityMoveRequestOptions {
   position?: number | null;
   fromPosition?: number | null;
+  /** P60 (ADR 0068): where `position` counts when it is a hub rank, e.g.
+   *  "PD-India · P1" ("Move X to position 3 in PD-India · P1?"). Copy only. */
+  scope?: string | null;
 }
 
 export interface PriorityMoveApi {

@@ -249,6 +249,12 @@ export interface ProjectFilterRow {
   band_rank: number | null;
   /** P54: the number of ranked projects in that band; null with no rank. */
   band_size: number | null;
+  /** P60 (ADR 0068): read-only, derived. Position among the projects of the SAME
+   *  hub in the same band, in `band_rank` order (1..`hub_band_size`); null exactly
+   *  when `band_rank` is null. Shown first everywhere a rank is shown. */
+  hub_rank: number | null;
+  /** P60: the number of ranked projects of this hub in the band; null with no hub rank. */
+  hub_band_size: number | null;
   // P35-T01: the register's editable fields (Projects page Edit mode, P35-T02).
   actual_start_week: WeekNumber | null;
   actual_end_week: WeekNumber | null;

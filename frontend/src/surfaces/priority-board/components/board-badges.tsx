@@ -13,23 +13,30 @@ export function BandRankChip({
   rank,
   band,
   className,
+  scope,
+  tooltip,
 }: {
   rank: number;
   band: ProjectPriority;
   className?: string;
+  /** P60 (ADR 0068): where `rank` counts, e.g. "PD-India · P1" (a hub rank). */
+  scope?: string;
+  /** P60: the served rank tooltip (hub line, plus the global line without a hub filter). */
+  tooltip?: string | null;
 }): React.JSX.Element {
+  const where = scope ?? band;
   return (
     <span
       className={cn(
         'inline-flex shrink-0 items-center rounded-sm bg-surface-sunken px-1 py-0.5 font-mono text-2xs font-semibold leading-none tabular-nums text-text-muted',
         className,
       )}
-      title={`Position ${String(rank)} in ${band}: its scheduling order inside the band`}
+      title={tooltip ?? `Position ${String(rank)} in ${where}: its scheduling order inside the band`}
       data-numeric=""
       data-testid="board-rank-chip"
     >
       <span aria-hidden="true">#{rank}</span>
-      <span className="sr-only">{`Position ${String(rank)} in ${band}`}</span>
+      <span className="sr-only">{`Position ${String(rank)} in ${where}`}</span>
     </span>
   );
 }

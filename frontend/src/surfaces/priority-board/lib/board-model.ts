@@ -206,6 +206,43 @@ export function displayPlacementForRank(
 }
 
 /**
+ * P60 (ADR 0068): the HUB rank a drop means with a hub filter on — read off the
+ * served `hub_rank` of the card and its anchor, when the anchor is a hub peer
+ * (same `hub_id`). Sent as `{ hub_rank }`; null (anchor of another hub, or no
+ * served hub rank) keeps the anchor placement.
+ */
+export function hubRankForPlacement(cards: readonly DisplayCard[], draggedId: string, placement: BandRankAnchorPlacement): number | null {
+  const own = cards.find((c) => c.card.project_id === draggedId)?.card;
+  const anchorId = placement.before_project_id ?? placement.after_project_id;
+  const anchor = cards.find((c) => c.card.project_id === anchorId)?.card;
+  if (!own || !anchor || own.hub_id !== anchor.hub_id) return null;
+  const from = own.hub_rank ?? null;
+  const at = anchor.hub_rank ?? null;
+  if (from === null || at === null) return null;
+  if (placement.before_project_id !== null) return at > from ? at - 1 : at;
+  return at < from ? at + 1 : at;
+}
+
+/**
+ * P60 (ADR 0068): where to SHOW a card moved to hub rank `toRank` while the move
+ * is confirmed — next to the visible hub peer holding `toRank` now. Display only.
+ */
+export function displayPlacementForHubRank(
+  cards: readonly DisplayCard[],
+  draggedId: string,
+  toRank: number,
+): BandRankAnchorPlacement | null {
+  const own = cards.find((c) => c.card.project_id === draggedId)?.card;
+  const from = own?.hub_rank ?? null;
+  if (!own || from === null || toRank === from) return null;
+  const anchor = cards.find((c) => c.card.project_id !== draggedId && c.card.hub_id === own.hub_id && c.card.hub_rank === toRank);
+  if (!anchor) return null;
+  return toRank < from
+    ? { before_project_id: anchor.card.project_id, after_project_id: null }
+    : { before_project_id: null, after_project_id: anchor.card.project_id };
+}
+
+/**
  * Owner request 2026-11-17: the served card is the LAST of its full band. Known
  * only when the column shows the whole band — no filter, no hub / country
  * selection, a session scoped to every hub — and then it is the last card of the

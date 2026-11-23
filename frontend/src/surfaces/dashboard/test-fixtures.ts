@@ -41,6 +41,8 @@ export const P13_ROW_DEFAULTS: Pick<
   | 'not_scheduled_priority'
   | 'band_rank'
   | 'band_size'
+  | 'hub_rank'
+  | 'hub_band_size'
 > = {
   external_code: null,
   type: null,
@@ -74,6 +76,9 @@ export const P13_ROW_DEFAULTS: Pick<
   // P54 (ADR 0064 R1): not a band member.
   band_rank: null,
   band_size: null,
+  // P60 (ADR 0068)
+  hub_rank: null,
+  hub_band_size: null,
 };
 
 /* ------------------------------------------------------------------------- */

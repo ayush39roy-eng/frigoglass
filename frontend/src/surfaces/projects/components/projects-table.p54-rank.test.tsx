@@ -35,6 +35,8 @@ function row(id: string, name: string, priority: ProjectFilterRow['priority'], b
     tracking_status: 'idle',
     band_rank: bandRank,
     band_size: bandRank === null ? null : 12,
+    hub_rank: bandRank,
+    hub_band_size: bandRank === null ? null : 12,
   } as ProjectFilterRow;
 }
 
@@ -73,7 +75,7 @@ describe('P54 (ADR 0064 R2): register Rank column', () => {
   it('renders the band and rank, "—" when unranked, read-only without the right', () => {
     renderTable(host(), false);
     const cells = screen.getAllByTestId('rank-cell').map((c) => c.textContent);
-    expect(cells).toEqual(['#1', '#3', '#1']);
+    expect(cells).toEqual(['#1G1', '#3G3', '#1G1']);
     const charlie = screen.getAllByTestId('projects-row').find((r) => r.getAttribute('data-project-id') === 'c');
     expect(within(charlie as HTMLElement).queryByTestId('rank-cell')).toBeNull();
     expect(screen.queryByTestId('board-rank-input')).not.toBeInTheDocument();
@@ -98,13 +100,13 @@ describe('P54 (ADR 0064 R2): register Rank column', () => {
     const user = userEvent.setup();
     const api = host();
     renderTable(api);
-    const input = screen.getByRole('textbox', { name: /Position of Bravo in P1/ });
+    const input = screen.getByRole('textbox', { name: /Position of Bravo in R&D-Greece · P1/ });
     await user.clear(input);
     await user.type(input, '1{Enter}');
     expect(api.requestRankMove).toHaveBeenCalledTimes(1);
     expect(api.requestRankMove).toHaveBeenCalledWith(
       { projectId: 'b', projectName: 'Bravo', priority: 'P1', status: 'In Development' },
-      { to_rank: 1 },
+      { hub_rank: 1 },
       expect.objectContaining({ position: 1, fromPosition: 3 }),
     );
   });

@@ -96,6 +96,8 @@ function card(id: string, overrides: Partial<PriorityBoardCard> = {}): PriorityB
     health: 'on_track',
     tracking_status: 'live',
     band_rank: 1,
+    hub_rank: overrides.band_rank === undefined ? 1 : overrides.band_rank,
+    hub_band_size: null,
     frozen: false,
     ...overrides,
   };
@@ -664,8 +666,8 @@ describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
     // position is the served band_rank — for a session that may re-rank, an
     // editable field (owner request 2026-11-17) labelled with its spoken form.
     // P59: the set priority (P1) on the right, not the calculated band.
-    expect(alpha).toHaveTextContent(/^#Alpha CoolerP1$/);
-    expect(within(alpha).getByRole('textbox', { name: /^Position of Alpha Cooler in P1/ })).toHaveValue('2');
+    expect(alpha).toHaveTextContent(/^#G2Alpha CoolerP1$/);
+    expect(within(alpha).getByRole('textbox', { name: /^Position of Alpha Cooler in R&D-Greece · P1/ })).toHaveValue('2');
     expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveAttribute('title', 'Alpha Cooler');
     // Owner feedback: the full name over up to two lines (fixed 46 px row), never one truncated line.
     expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveClass('line-clamp-2');
@@ -824,7 +826,7 @@ describe('PriorityBoardPage — P36 reorder within a column', () => {
     // A session that may re-rank gets the served band_rank as an editable field (owner request 2026-11-17).
     expect(within(cardEl('Gated Cooler')).getByTestId('board-rank-input')).toHaveValue('1');
     expect(within(cardEl('Alpha Cooler')).getByTestId('board-rank-input')).toHaveValue('2');
-    expect(within(cardEl('Alpha Cooler')).getByRole('textbox', { name: /^Position of Alpha Cooler in P1\./ })).toBeInTheDocument();
+    expect(within(cardEl('Alpha Cooler')).getByRole('textbox', { name: /^Position of Alpha Cooler in R&D-Greece · P1\./ })).toBeInTheDocument();
     expect(within(cardEl('Beta Freezer')).getByTestId('board-frozen-badge')).toHaveTextContent('Frozen');
     expect(within(cardEl('Alpha Cooler')).queryByTestId('board-frozen-badge')).not.toBeInTheDocument();
   });
@@ -973,17 +975,17 @@ describe('PriorityBoardPage — P36 reorder within a column', () => {
     expect(announcer).toHaveTextContent('Over P1, its current column: position 21 in P1.');
     expect(announcer).not.toHaveTextContent(noCount);
     await user.keyboard(' ');
-    expect(move.previewProjectBandRank).toHaveBeenCalledWith('m', { before_project_id: 'k', after_project_id: null }, expect.anything());
-    expect(announcer).toHaveTextContent('Mia Cooler dropped at position 21 in P1. Confirm the move.');
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith('m', { hub_rank: 21 }, expect.anything());
+    expect(announcer).toHaveTextContent('Mia Cooler dropped at position 21 in R&D-Greece · P1. Confirm the move.');
 
     // Dialog: title, summary and the applied result.
-    const dialog = await screen.findByRole('dialog', { name: 'Move Mia Cooler to position 21 in P1?' });
-    expect(dialog).toHaveTextContent('Mia Cooler (now position 24) moves to position 21 in P1; its priority stays P1.');
+    const dialog = await screen.findByRole('dialog', { name: 'Move Mia Cooler to position 21 in R&D-Greece · P1?' });
+    expect(dialog).toHaveTextContent('Mia Cooler (now position 24) moves to position 21 in R&D-Greece · P1; its priority stays P1.');
     expect(dialog).not.toHaveTextContent(noCount);
     await clickYes(user, dialog);
-    const done = await screen.findByRole('dialog', { name: 'Moved to position 21 in P1' });
+    const done = await screen.findByRole('dialog', { name: 'Moved to position 21 in R&D-Greece · P1' });
     expect(done).not.toHaveTextContent(noCount);
-    expect(announcer).toHaveTextContent('Mia Cooler moved to position 21 in P1.');
+    expect(announcer).toHaveTextContent('Mia Cooler moved to position 21 in R&D-Greece · P1.');
     expect(announcer).not.toHaveTextContent(noCount);
   });
 
@@ -1136,9 +1138,9 @@ describe('PriorityBoardPage — P36 reorder within a column', () => {
     await screen.findByRole('link', { name: 'Ann Cooler' });
     expect(screen.queryAllByTestId('board-drag-handle')).toHaveLength(0);
     expect(within(column('P1')).getAllByTestId('board-rank-chip').map((c) => c.textContent)).toEqual([
-      '#1Position 1 in P1',
-      '#2Position 2 in P1',
-      '#3Position 3 in P1',
+      '#1Position 1 in R&D-Greece · P1',
+      '#2Position 2 in R&D-Greece · P1',
+      '#3Position 3 in R&D-Greece · P1',
     ]);
     rankDrop('Cid Cooler', 'Ann Cooler', 'above', { drop: false });
     expect(screen.queryByTestId('board-drop-indicator')).not.toBeInTheDocument();

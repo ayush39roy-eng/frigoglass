@@ -8,7 +8,8 @@ import {
   BOTH_ANCHORS,
   fetchScheduleRunChanges,
   HARD_GATE_FORCES_P1,
-  isToRankPlacement,
+  placementBody,
+  placementTargetRank,
   moveProjectBandRank,
   moveProjectPriority,
   NOT_RANKABLE,
@@ -75,6 +76,8 @@ export interface RankMoveSpec {
   placement: BandRankPlacement;
   position: number | null;
   fromPosition: number | null;
+  /** P60 (ADR 0068): where the position counts, e.g. "PD-India · P1" for a hub rank; null = the band. */
+  scope: string | null;
 }
 
 interface RunMoveFields {
@@ -124,8 +127,8 @@ function invalidatePriorityWrite(queryClient: QueryClient): void {
 function rankErrorCopy(err: unknown, target: PriorityMoveTarget, band: ProjectPriority, rank: RankMoveSpec | null): string | null {
   if (!(err instanceof ApiError) || !rank) return null;
   if (err.code === BAD_RANK) {
-    const to = isToRankPlacement(rank.placement) ? rank.placement.to_rank : rank.position;
-    return badRankCopy(target.projectName, band, to, rank.fromPosition);
+    const to = placementTargetRank(rank.placement) ?? rank.position;
+    return badRankCopy(target.projectName, rank.scope ?? band, to, rank.fromPosition);
   }
   if (err.code === NOT_RANKABLE) return RANK_COPY.notRankable;
   if (err.code === NOT_SAME_BAND || err.code === BOTH_ANCHORS) return RANK_COPY.notSameBand;
@@ -282,11 +285,10 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
       settle('cancelled'); // an earlier, unconfirmed request is superseded
       settleRef.current = options?.onSettled ?? null;
       const rank: RankMoveSpec = {
-        placement: isToRankPlacement(placement)
-          ? { to_rank: placement.to_rank }
-          : { before_project_id: placement.before_project_id, after_project_id: placement.after_project_id },
+        placement: placementBody(placement),
         position: options?.position ?? null,
         fromPosition: options?.fromPosition ?? null,
+        scope: options?.scope ?? null,
       };
       void runPreview(target, band, rank, false);
     },

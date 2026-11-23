@@ -58,6 +58,10 @@ export interface PriorityMoveResponse {
   summary?: PriorityPreviewSummary | null;
   changes?: PriorityPreviewChange[];
   hidden_count?: number;
+  /** P60 (ADR 0068), band-rank moves only (null on a priority move): the global
+   *  `band_rank` and the `hub_rank` after the move (current ones when `unchanged`). */
+  band_rank?: number | null;
+  hub_rank?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -198,22 +202,44 @@ export interface BandRankToRankPlacement {
   to_rank: number;
 }
 
-export type BandRankPlacement = BandRankAnchorPlacement | BandRankToRankPlacement;
+/**
+ * P60 (ADR 0068): the target position among the projects of the SAME hub in the
+ * band (1-based) — the hub rank every rank control now edits. Exactly one of
+ * `to_rank` / `hub_rank` (or the anchors) is sent. The server moves the project
+ * in the global order; other hubs' relative order is untouched.
+ */
+export interface BandRankHubRankPlacement {
+  hub_rank: number;
+}
+
+export type BandRankPlacement = BandRankAnchorPlacement | BandRankToRankPlacement | BandRankHubRankPlacement;
 
 export function isToRankPlacement(placement: BandRankPlacement): placement is BandRankToRankPlacement {
   return 'to_rank' in placement;
 }
 
-/** `POST /projects/{id}/band-rank/preview` body: anchors, or `to_rank` alone. */
-export type BandRankPreviewRequest = BandRankAnchorPlacement | BandRankToRankPlacement;
+export function isHubRankPlacement(placement: BandRankPlacement): placement is BandRankHubRankPlacement {
+  return 'hub_rank' in placement;
+}
+
+/** The typed target of a placement (`to_rank` or `hub_rank`); null for anchors. */
+export function placementTargetRank(placement: BandRankPlacement): number | null {
+  if (isToRankPlacement(placement)) return placement.to_rank;
+  if (isHubRankPlacement(placement)) return placement.hub_rank;
+  return null;
+}
+
+/** `POST /projects/{id}/band-rank/preview` body: anchors, `to_rank` alone, or `hub_rank` alone. */
+export type BandRankPreviewRequest = BandRankAnchorPlacement | BandRankToRankPlacement | BandRankHubRankPlacement;
 
 /** `POST /projects/{id}/band-rank`: the previewed placement plus its token. */
 export type BandRankMoveRequest = BandRankPreviewRequest & { preview_token: string };
 
 /** The wire body for a placement: only the keys of its own form, so a `to_rank`
- *  request never carries anchor keys (the server answers 422 to both). */
-function placementBody(placement: BandRankPlacement): BandRankPreviewRequest {
+ *  / `hub_rank` request never carries anchor keys (the server answers 422 to both). */
+export function placementBody(placement: BandRankPlacement): BandRankPreviewRequest {
   if (isToRankPlacement(placement)) return { to_rank: placement.to_rank };
+  if (isHubRankPlacement(placement)) return { hub_rank: placement.hub_rank };
   return { before_project_id: placement.before_project_id, after_project_id: placement.after_project_id };
 }
 

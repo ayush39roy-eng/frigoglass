@@ -44,6 +44,8 @@ function card(id: string, overrides: Partial<PriorityBoardCard> = {}): PriorityB
     health: 'on_track',
     tracking_status: 'live',
     band_rank: 1,
+    hub_rank: overrides.band_rank === undefined ? 1 : overrides.band_rank,
+    hub_band_size: null,
     frozen: false,
     ...overrides,
   };

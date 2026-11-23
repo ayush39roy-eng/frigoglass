@@ -33,7 +33,7 @@ function project(overrides: Partial<ProjectRead> = {}): ProjectRead {
     estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null,
     actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null,
     product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null, hub_rank: null, hub_band_size: null,
     ...overrides,
   };
 }

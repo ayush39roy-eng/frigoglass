@@ -40,7 +40,7 @@ function project(overrides: Partial<ProjectRead> = {}): ProjectRead {
     design_effort_weeks: 20, lab_effort_weeks: 70, safety_lab_weeks: 3.5, actual_design_weeks: 18.25,
     actual_testing_weeks: null, safety_certification_required: true, capacity_flag: true,
     plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [],
-    schedule_stale: false, workflow_id: 'PDD', created_at: '', updated_at: '', band_rank: null, band_size: null,
+    schedule_stale: false, workflow_id: 'PDD', created_at: '', updated_at: '', band_rank: null, band_size: null, hub_rank: null, hub_band_size: null,
     ...overrides,
   };
 }

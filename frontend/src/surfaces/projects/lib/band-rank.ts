@@ -14,6 +14,8 @@ export type RankSort = 'none' | 'asc' | 'desc';
 export interface BandRanked {
   priority: ProjectPriority | null;
   band_rank?: number | null | undefined;
+  /** P60 (ADR 0068): the served hub rank (position among the same hub's projects in the band). */
+  hub_rank?: number | null | undefined;
   /** P57 (ADR 0067): a Commercialized / Cancelled row has no band, so it is unranked. */
   status?: string | null | undefined;
   priority_applicable?: boolean | null | undefined;
@@ -40,12 +42,27 @@ export function compareBandRank(a: BandRanked, b: BandRanked): number {
   return band !== 0 ? band : a.band_rank - b.band_rank;
 }
 
-/** A sorted copy (stable); `none` returns the rows as given (the server's sort). */
-export function sortByBandRank<T extends BandRanked>(rows: readonly T[], sort: RankSort): readonly T[] {
+/**
+ * P60 (ADR 0068): with a hub filter on — band, then served hub rank (ties, i.e.
+ * two hubs' rank 3, by the served global rank so the order stays stable).
+ */
+export function compareHubRank(a: BandRanked, b: BandRanked): number {
+  const ra = isRanked(a);
+  const rb = isRanked(b);
+  if (!ra || !rb) return ra === rb ? 0 : ra ? -1 : 1;
+  const band = (BAND_ORDER.get(a.priority) ?? 99) - (BAND_ORDER.get(b.priority) ?? 99);
+  if (band !== 0) return band;
+  const hub = (a.hub_rank ?? Number.MAX_SAFE_INTEGER) - (b.hub_rank ?? Number.MAX_SAFE_INTEGER);
+  return hub !== 0 ? hub : a.band_rank - b.band_rank;
+}
+
+/** A sorted copy (stable); `none` returns the rows as given (the server's sort).
+ *  `byHub` (a hub filter is on): band, then hub rank; otherwise the global order. */
+export function sortByBandRank<T extends BandRanked>(rows: readonly T[], sort: RankSort, byHub = false): readonly T[] {
   if (sort === 'none') return rows;
   const ranked = rows.filter(isRanked);
   const rest = rows.filter((r) => !isRanked(r));
-  const ordered = [...ranked].sort(compareBandRank);
+  const ordered = [...ranked].sort(byHub ? compareHubRank : compareBandRank);
   if (sort === 'desc') ordered.reverse();
   return [...ordered, ...rest];
 }

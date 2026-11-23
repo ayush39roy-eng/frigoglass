@@ -165,6 +165,12 @@ export interface ProjectRead {
   /** P54: the number of ranked projects in that band (the full band's `n`);
    *  null exactly when `band_rank` is null. "Rank in P1: band_rank of band_size". */
   band_size: number | null;
+  /** P60 (ADR 0068): read-only, derived. Position among the projects of the SAME
+   *  hub in the same band, in `band_rank` order (1..`hub_band_size`); null exactly
+   *  when `band_rank` is null. Shown first everywhere a rank is shown. */
+  hub_rank: number | null;
+  /** P60: the number of ranked projects of this hub in the band; null with no hub rank. */
+  hub_band_size: number | null;
 }
 
 export type ProjectListItem = ProjectRead;

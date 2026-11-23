@@ -34,7 +34,7 @@ function project(overrides: Partial<ProjectRead> = {}): ProjectRead {
     estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null,
     actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null,
     product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: 3, band_size: 42,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: 3, band_size: 42, hub_rank: 3, hub_band_size: 42,
     ...overrides,
   };
 }
@@ -56,15 +56,15 @@ describe('P54 (ADR 0064 R3): rank inside the band on the registration form', () 
       <ProjectForm mode="edit" variant="inline" project={project()} hubs={hubs} onOpenChange={vi.fn()} onSubmit={vi.fn()} rankMoveHost={api} />,
     );
     const line = screen.getByTestId('reg-band-rank');
-    expect(line).toHaveTextContent('Rank in P1:');
+    expect(line).toHaveTextContent('Rank in R&D-Greece · P1:');
     expect(line).toHaveTextContent('of 42');
-    const input = screen.getByRole('textbox', { name: /Position of Old cooler in P1/ });
+    const input = screen.getByRole('textbox', { name: /Position of Old cooler in R&D-Greece · P1/ });
     expect(input).toHaveValue('3');
     await user.clear(input);
     await user.type(input, '1{Enter}');
     expect(api.requestRankMove).toHaveBeenCalledWith(
       { projectId: 'p9', projectName: 'Old cooler', priority: 'P1', status: 'In Development' },
-      { to_rank: 1 },
+      { hub_rank: 1 },
       expect.objectContaining({ position: 1, fromPosition: 3 }),
     );
   });
@@ -108,8 +108,8 @@ describe('P54 (ADR 0064 R3): rank inside the band on the registration form', () 
 
   it('an unranked project shows "—"', () => {
     renderWithProviders(
-      <ProjectForm mode="edit" variant="inline" project={project({ band_rank: null, band_size: null })} hubs={hubs} onOpenChange={vi.fn()} onSubmit={vi.fn()} rankMoveHost={host()} />,
+      <ProjectForm mode="edit" variant="inline" project={project({ band_rank: null, band_size: null, hub_rank: null, hub_band_size: null })} hubs={hubs} onOpenChange={vi.fn()} onSubmit={vi.fn()} rankMoveHost={host()} />,
     );
-    expect(screen.getByTestId('reg-band-rank')).toHaveTextContent(/Rank in P1:\s*—/);
+    expect(screen.getByTestId('reg-band-rank')).toHaveTextContent(/Rank in R&D-Greece · P1:\s*—/);
   });
 });

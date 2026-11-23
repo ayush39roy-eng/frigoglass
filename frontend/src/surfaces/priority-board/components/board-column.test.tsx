@@ -12,7 +12,7 @@ function card(i: number): PriorityBoardCard {
     project_id: `p${String(i)}`, name: `Project ${String(i)}`, hub_id: 'h', hub: 'R&D-Greece', category: 'A',
     status: 'In Queue', external_code: null, score: null, band: null, suggested_band: null, score_band: null,
     capacity_fill: false, capacity_fill_reason: null, hard_gated: false, is_vip: false, projected_end_week: null,
-    within_year: null, health: null, tracking_status: 'live', band_rank: i + 1, frozen: false,
+    within_year: null, health: null, tracking_status: 'live', band_rank: i + 1, hub_rank: i + 1, hub_band_size: null, frozen: false,
   };
 }
 

@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { GripVertical, Loader2, Snowflake } from 'lucide-react';
+import { GlobalRankMarker } from '@/components/shared/global-rank-marker';
+import { hubRankScope, rankTooltip } from '@/lib/hub-rank';
+import { BoardHubFilterContext } from '../lib/board-hub-filter';
 
 import { PRIORITY_BAND_TITLE } from '@/components/shared/priority-band-meta';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
@@ -55,7 +58,13 @@ export const BoardListRow = React.memo(function BoardListRow({
     capacityFill: card.capacity_fill,
     scoreBand: card.score_band,
   });
-  const rank = card.band_rank ?? null;
+  // P60 (ADR 0068): the served hub rank is the rank shown and edited; the global
+  // band_rank is on hover (and "G16") only without a hub filter.
+  const hubFiltered = React.useContext(BoardHubFilterContext);
+  const rank = card.hub_rank ?? null;
+  const facts = { priority: servedPriority, hub: card.hub, hub_rank: card.hub_rank, hub_band_size: card.hub_band_size, band_rank: card.band_rank };
+  const scope = hubRankScope(card.hub, servedPriority);
+  const tooltip = rankTooltip(facts, hubFiltered);
   const rankControls = rankable && rank !== null && onRankTo !== undefined;
   const rankTo = React.useCallback((toRank: number) => onRankTo?.(item, toRank), [item, onRankTo]);
   return (
@@ -86,6 +95,8 @@ export const BoardListRow = React.memo(function BoardListRow({
             inert={rankInert}
             pending={pending}
             onSubmit={rankTo}
+            scope={scope}
+            tooltip={tooltip}
             dense
             className="mt-0.5"
           />
@@ -97,6 +108,7 @@ export const BoardListRow = React.memo(function BoardListRow({
             knownLast={knownLast}
             onMove={rankTo}
             orientation="stack"
+            scope={scope}
           />
         </>
       ) : (
@@ -108,13 +120,14 @@ export const BoardListRow = React.memo(function BoardListRow({
             aria-hidden="true"
             data-numeric=""
             data-testid="board-list-rank"
-            title={rank !== null ? `Position ${String(rank)} in ${servedPriority}: its scheduling order inside the band` : undefined}
+            title={rank !== null ? (tooltip ?? `Position ${String(rank)} in ${scope}`) : undefined}
           >
             {pending ? '…' : (rank ?? position)}
           </span>
-          {rank !== null && !pending ? <span className="sr-only">{`Position ${String(rank)} in ${servedPriority}.`}</span> : null}
+          {rank !== null && !pending ? <span className="sr-only">{`Position ${String(rank)} in ${scope}.`}</span> : null}
         </>
       )}
+      {rank !== null && !pending ? <GlobalRankMarker bandRank={card.band_rank} hidden={hubFiltered} className="mt-1.5" /> : null}
       {draggable ? (
         <button
           type="button"

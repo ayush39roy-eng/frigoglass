@@ -21,7 +21,7 @@ function card(id: string, band_rank: number | null): PriorityBoardCard {
     project_id: id, name: id, hub_id: 'h', hub: 'R&D-Greece', category: 'A', status: 'In Queue', external_code: null,
     score: null, band: null, suggested_band: null, score_band: null, capacity_fill: false, capacity_fill_reason: null,
     hard_gated: false, is_vip: false, projected_end_week: null, within_year: null, health: null, tracking_status: 'live',
-    band_rank, frozen: false,
+    band_rank, hub_rank: band_rank, hub_band_size: null, frozen: false,
   };
 }
 

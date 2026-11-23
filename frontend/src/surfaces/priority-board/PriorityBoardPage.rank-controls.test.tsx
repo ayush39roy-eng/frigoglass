@@ -71,6 +71,8 @@ function card(id: string, overrides: Partial<PriorityBoardCard> = {}): PriorityB
     health: 'on_track',
     tracking_status: 'live',
     band_rank: 1,
+    hub_rank: overrides.band_rank === undefined ? 1 : overrides.band_rank,
+    hub_band_size: null,
     frozen: false,
     ...overrides,
   };
@@ -166,10 +168,10 @@ function p1Names(): string[] {
     .map((l) => l.textContent ?? '');
 }
 
-const up = (name: string, band = 'P1') => screen.getByRole('button', { name: `Move ${name} up one position in ${band}` });
-const down = (name: string, band = 'P1') => screen.getByRole('button', { name: `Move ${name} down one position in ${band}` });
+const up = (name: string, band = 'P1') => screen.getByRole('button', { name: `Move ${name} up one position in R&D-Greece · ${band}` });
+const down = (name: string, band = 'P1') => screen.getByRole('button', { name: `Move ${name} down one position in R&D-Greece · ${band}` });
 const positionOf = (name: string, band = 'P1') =>
-  screen.getByRole('textbox', { name: `Position of ${name} in ${band}. Type a new position and press Enter` });
+  screen.getByRole('textbox', { name: `Position of ${name} in R&D-Greece · ${band}. Type a new position and press Enter` });
 
 async function yes(user: ReturnType<typeof userEvent.setup>, panel: HTMLElement): Promise<void> {
   const button = within(panel).getByRole('button', { name: 'Yes, apply' });
@@ -187,38 +189,38 @@ beforeEach(() => {
 });
 
 describe('Priority board ↑ / ↓ (owner request 2026-11-17)', () => {
-  it('↑ previews { to_rank: rank − 1 } in the right-hand side panel beside the board; Yes confirms with the token', async () => {
+  it('↑ previews { hub_rank: rank − 1 } in the right-hand side panel beside the board; Yes confirms with the token', async () => {
     const user = userEvent.setup();
     renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Bob Cooler' });
     await user.click(up('Bob Cooler'));
 
-    expect(move.previewProjectBandRank).toHaveBeenCalledWith('b', { to_rank: 1 }, expect.anything());
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith('b', { hub_rank: 1 }, expect.anything());
     expect(move.previewProjectPriority).not.toHaveBeenCalled();
     // Shown optimistically before the card that holds rank 1 now, pending.
     expect(p1Names()).toEqual(['Bob Cooler', 'Ann Cooler', 'Cid Cooler']);
     expect(cardOf('Bob Cooler')).toHaveAttribute('data-pending', 'true');
 
-    const panel = await screen.findByRole('dialog', { name: 'Move Bob Cooler to position 1 in P1?' });
+    const panel = await screen.findByRole('dialog', { name: 'Move Bob Cooler to position 1 in R&D-Greece · P1?' });
     expect(panel).toHaveAttribute('data-variant', 'sheet');
     expect(panel).toHaveAttribute('data-side', 'right');
-    expect(panel).toHaveTextContent('Bob Cooler (now position 2) moves to position 1 in P1; its priority stays P1.');
+    expect(panel).toHaveTextContent('Bob Cooler (now position 2) moves to position 1 in R&D-Greece · P1; its priority stays P1.');
     // The board stays on the page beside the panel.
     expect(screen.getByTestId('priority-board')).toBeInTheDocument();
 
     await yes(user, panel);
-    expect(move.moveProjectBandRank).toHaveBeenCalledWith('b', { to_rank: 1 }, 'tok-r');
-    expect(await screen.findByRole('dialog', { name: 'Moved to position 1 in P1' })).toBeInTheDocument();
+    expect(move.moveProjectBandRank).toHaveBeenCalledWith('b', { hub_rank: 1 }, 'tok-r');
+    expect(await screen.findByRole('dialog', { name: 'Moved to position 1 in R&D-Greece · P1' })).toBeInTheDocument();
   });
 
-  it('↓ previews { to_rank: rank + 1 }', async () => {
+  it('↓ previews { hub_rank: rank + 1 }', async () => {
     const user = userEvent.setup();
     renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Ann Cooler' });
     await user.click(down('Ann Cooler'));
-    expect(move.previewProjectBandRank).toHaveBeenCalledWith('a', { to_rank: 2 }, expect.anything());
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith('a', { hub_rank: 2 }, expect.anything());
     expect(p1Names()).toEqual(['Bob Cooler', 'Ann Cooler', 'Cid Cooler']);
-    expect(await screen.findByRole('dialog', { name: 'Move Ann Cooler to position 2 in P1?' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Move Ann Cooler to position 2 in R&D-Greece · P1?' })).toBeInTheDocument();
   });
 
   it('↑ is disabled at rank 1; ↓ is disabled on the last card when the board shows the whole band', async () => {
@@ -239,7 +241,7 @@ describe('Priority board ↑ / ↓ (owner request 2026-11-17)', () => {
     await screen.findByRole('link', { name: 'Cid Cooler' });
     await user.click(up('Cid Cooler'));
     expect(p1Names()).toEqual(['Ann Cooler', 'Cid Cooler', 'Bob Cooler']);
-    const panel = await screen.findByRole('dialog', { name: 'Move Cid Cooler to position 2 in P1?' });
+    const panel = await screen.findByRole('dialog', { name: 'Move Cid Cooler to position 2 in R&D-Greece · P1?' });
     await waitFor(() => expect(within(panel).getByRole('button', { name: 'Yes, apply' })).toBeEnabled());
     await user.click(within(panel).getByRole('button', { name: 'No, cancel' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -261,10 +263,10 @@ describe('Priority board ↑ / ↓ (owner request 2026-11-17)', () => {
     await screen.findByRole('link', { name: 'Nub Cooler' });
     expect(down('Nub Cooler')).toBeEnabled();
     await user.click(down('Nub Cooler'));
-    expect(move.previewProjectBandRank).toHaveBeenCalledWith('n', { to_rank: 25 }, expect.anything());
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith('n', { hub_rank: 25 }, expect.anything());
     const panel = await screen.findByRole('dialog', { name: 'Position not changed' });
     expect(within(panel).getByTestId('preview-error')).toHaveTextContent(
-      "Nub Cooler is already last in P1, so it can't move down. Nothing was changed.",
+      "Nub Cooler is already last in R&D-Greece · P1, so it can't move down. Nothing was changed.",
     );
     expect(panel.textContent).not.toMatch(/ of \d/);
     // Rolled back: not pending, still at its served place.
@@ -302,8 +304,8 @@ describe('Priority board ↑ / ↓ (owner request 2026-11-17)', () => {
     expect(screen.getAllByTestId('board-list-row')).toHaveLength(4);
     expect(up('Ann Cooler')).toBeDisabled();
     await user.click(down('Bob Cooler'));
-    expect(move.previewProjectBandRank).toHaveBeenCalledWith('b', { to_rank: 3 }, expect.anything());
-    const panel = await screen.findByRole('dialog', { name: 'Move Bob Cooler to position 3 in P1?' });
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith('b', { hub_rank: 3 }, expect.anything());
+    const panel = await screen.findByRole('dialog', { name: 'Move Bob Cooler to position 3 in R&D-Greece · P1?' });
     expect(panel).toHaveAttribute('data-side', 'right');
   });
 
@@ -323,8 +325,8 @@ describe('Priority board ↑ / ↓ (owner request 2026-11-17)', () => {
     await screen.findByRole('link', { name: 'Bob Cooler' });
     await user.click(up('Bob Cooler'));
     // The panel is open and previewing: the board behind it is busy and inert.
-    await screen.findByRole('dialog', { name: 'Move Bob Cooler to position 1 in P1?' });
-    const cid = screen.getByRole('button', { name: 'Move Cid Cooler up one position in P1', hidden: true });
+    await screen.findByRole('dialog', { name: 'Move Bob Cooler to position 1 in R&D-Greece · P1?' });
+    const cid = screen.getByRole('button', { name: 'Move Cid Cooler up one position in R&D-Greece · P1', hidden: true });
     expect(cid).toHaveAttribute('aria-disabled', 'true');
     act(() => cid.click());
     expect(move.previewProjectBandRank).toHaveBeenCalledTimes(1);
@@ -342,12 +344,12 @@ describe('Priority board typed position (owner request 2026-11-17)', () => {
     await user.clear(field);
     await user.type(field, '3{Enter}');
     expect(move.previewProjectBandRank).toHaveBeenCalledTimes(1);
-    expect(move.previewProjectBandRank).toHaveBeenCalledWith('a', { to_rank: 3 }, expect.anything());
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith('a', { hub_rank: 3 }, expect.anything());
     // After Cid (rank 3 now), pending.
     expect(p1Names()).toEqual(['Bob Cooler', 'Cid Cooler', 'Ann Cooler']);
-    const panel = await screen.findByRole('dialog', { name: 'Move Ann Cooler to position 3 in P1?' });
+    const panel = await screen.findByRole('dialog', { name: 'Move Ann Cooler to position 3 in R&D-Greece · P1?' });
     await yes(user, panel);
-    expect(move.moveProjectBandRank).toHaveBeenCalledWith('a', { to_rank: 3 }, 'tok-r');
+    expect(move.moveProjectBandRank).toHaveBeenCalledWith('a', { hub_rank: 3 }, 'tok-r');
     // Focus moved into the panel and back: the blur never sent a second request.
     expect(move.previewProjectBandRank).toHaveBeenCalledTimes(1);
   });
@@ -360,8 +362,8 @@ describe('Priority board typed position (owner request 2026-11-17)', () => {
     await user.clear(field);
     await user.type(field, '1');
     await user.tab();
-    expect(move.previewProjectBandRank).toHaveBeenCalledWith('c', { to_rank: 1 }, expect.anything());
-    expect(await screen.findByRole('dialog', { name: 'Move Cid Cooler to position 1 in P1?' })).toBeInTheDocument();
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith('c', { hub_rank: 1 }, expect.anything());
+    expect(await screen.findByRole('dialog', { name: 'Move Cid Cooler to position 1 in R&D-Greece · P1?' })).toBeInTheDocument();
   });
 
   it('Escape cancels the edit and restores the served rank; the same rank sends nothing', async () => {
@@ -407,10 +409,10 @@ describe('Priority board typed position (owner request 2026-11-17)', () => {
     const field = positionOf('Ann Cooler');
     await user.clear(field);
     await user.type(field, '9{Enter}');
-    expect(move.previewProjectBandRank).toHaveBeenCalledWith('a', { to_rank: 9 }, expect.anything());
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith('a', { hub_rank: 9 }, expect.anything());
     const panel = await screen.findByRole('dialog', { name: 'Position not changed' });
     expect(within(panel).getByTestId('preview-error')).toHaveTextContent(
-      'There is no position 9 in P1: the band has fewer projects than that. Choose a smaller number. Nothing was changed.',
+      'There is no position 9 in R&D-Greece · P1: the band has fewer projects than that. Choose a smaller number. Nothing was changed.',
     );
     expect(panel.textContent).not.toMatch(/ of \d/);
     expect(p1Names()).toEqual(['Ann Cooler', 'Bob Cooler', 'Cid Cooler']);
@@ -428,7 +430,7 @@ describe('Priority board typed position (owner request 2026-11-17)', () => {
     expect(within(cardOf('Cid Cooler')).getByTestId('board-rank-input')).toBe(field);
     await user.clear(field);
     await user.type(field, '2{Enter}');
-    expect(move.previewProjectBandRank).toHaveBeenCalledWith('c', { to_rank: 2 }, expect.anything());
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith('c', { hub_rank: 2 }, expect.anything());
   });
 
   it('has no serious/critical axe violations with the controls (Cards and List) and with the panel open', async () => {
@@ -439,7 +441,7 @@ describe('Priority board typed position (owner request 2026-11-17)', () => {
     await user.click(screen.getByRole('button', { name: 'List' }));
     expect(await seriousAxeViolations(container)).toEqual([]);
     await user.click(down('Ann Cooler'));
-    const panel = await screen.findByRole('dialog', { name: 'Move Ann Cooler to position 2 in P1?' });
+    const panel = await screen.findByRole('dialog', { name: 'Move Ann Cooler to position 2 in R&D-Greece · P1?' });
     await waitFor(() => expect(within(panel).getByRole('button', { name: 'Yes, apply' })).toBeEnabled());
     expect(await seriousAxeViolations(panel)).toEqual([]);
   });

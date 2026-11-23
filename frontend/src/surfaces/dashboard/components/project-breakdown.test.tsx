@@ -72,6 +72,8 @@ function row(over: Partial<ProjectFilterRow> = {}): ProjectFilterRow {
     status_mismatch: false,
     band_rank: null,
     band_size: null,
+    hub_rank: null,
+    hub_band_size: null,
     actual_start_week: null,
     actual_end_week: null,
     priority_label: null,

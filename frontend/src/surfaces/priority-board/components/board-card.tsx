@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { GripVertical, Hourglass, Loader2 } from 'lucide-react';
+import { GlobalRankMarker } from '@/components/shared/global-rank-marker';
+import { hubRankScope, rankTooltip } from '@/lib/hub-rank';
+import { BoardHubFilterContext } from '../lib/board-hub-filter';
 
 import { HealthChip, ProjectedFinishChip } from '@/components/shared/project-outcome-chips';
 import { servedNonCountingOutcome } from '@/components/shared/schedule-outcome-meta';
@@ -65,7 +68,13 @@ export const BoardCard = React.memo(function BoardCard({
   onRankTo,
 }: BoardCardProps): React.JSX.Element {
   const { card, servedPriority, pending } = item;
-  const rank = card.band_rank ?? null;
+  // P60 (ADR 0068): the served hub rank is the rank shown and edited; the global
+  // band_rank is on hover (and "G16") only without a hub filter.
+  const hubFiltered = React.useContext(BoardHubFilterContext);
+  const rank = card.hub_rank ?? null;
+  const facts = { priority: servedPriority, hub: card.hub, hub_rank: card.hub_rank, hub_band_size: card.hub_band_size, band_rank: card.band_rank };
+  const scope = hubRankScope(card.hub, servedPriority);
+  const tooltip = rankTooltip(facts, hubFiltered);
   const rankControls = rankable && rank !== null && onRankTo !== undefined;
   const rankTo = React.useCallback((toRank: number) => onRankTo?.(item, toRank), [item, onRankTo]);
   const locked = card.hard_gated && servedPriority === 'P1';
@@ -129,11 +138,14 @@ export const BoardCard = React.memo(function BoardCard({
             inert={rankInert}
             pending={pending}
             onSubmit={rankTo}
+            scope={scope}
+            tooltip={tooltip}
             className="mt-0.5"
           />
         ) : rank !== null && !pending ? (
-          <BandRankChip rank={rank} band={servedPriority} className="mt-0.5" />
+          <BandRankChip rank={rank} band={servedPriority} scope={scope} tooltip={tooltip} className="mt-0.5" />
         ) : null}
+        {rank !== null && !pending ? <GlobalRankMarker bandRank={card.band_rank} hidden={hubFiltered} className="mt-1.5" /> : null}
         <h3 className="min-w-0 flex-1 text-xs font-semibold leading-snug text-text">
           <Link
             to={`/projects/${card.project_id}`}
@@ -194,6 +206,7 @@ export const BoardCard = React.memo(function BoardCard({
               inert={rankInert || pending}
               knownLast={knownLast}
               onMove={rankTo}
+              scope={scope}
             />
           ) : null}
           {/* P58 (owner bug 2026-11-23): the set priority is labelled, next to its control. */}

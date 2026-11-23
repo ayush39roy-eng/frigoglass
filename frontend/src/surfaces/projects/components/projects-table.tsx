@@ -28,6 +28,8 @@ import { PROJECT_TYPE_LABELS } from '@/types/enums';
 import type { ProjectFilterRow } from '@/surfaces/dashboard/api/types';
 import type { EngineerOption } from '@/surfaces/registration/api/engineers-api';
 import { EditableBandRank } from '@/surfaces/registration/components/band-rank-field';
+import { GlobalRankMarker } from '@/components/shared/global-rank-marker';
+import { hubRankScope, rankTooltip } from '@/lib/hub-rank';
 
 import {
   fetchRegisterSteps,
@@ -152,6 +154,8 @@ export interface ProjectsTableProps {
   hiddenColumns?: readonly string[];
   columnWidths?: Readonly<Record<string, number>>;
   onColumnWidth?: (columnId: string, px: number) => void;
+  /** P60 (ADR 0068): a hub / country filter is on — the Rank column shows the hub rank only and sorts by it. */
+  hubFiltered?: boolean;
 }
 
 const HIDEABLE_IDS = new Set(HIDEABLE_COLUMNS.map((c) => c.id));
@@ -361,12 +365,13 @@ export function ProjectsTable({
   hiddenColumns = [],
   columnWidths = {},
   onColumnWidth,
+  hubFiltered = false,
 }: ProjectsTableProps): React.JSX.Element {
   const scrollRef = React.useRef<HTMLDivElement>(null);
   // P54 (ADR 0064 R2): the Rank header sorts the served rows by priority then
   // served band rank (the scheduling order); off = the server's own sort.
   const [rankSort, setRankSort] = React.useState<RankSort>('none');
-  const rows = React.useMemo(() => sortByBandRank(servedRows, rankSort), [servedRows, rankSort]);
+  const rows = React.useMemo(() => sortByBandRank(servedRows, rankSort, hubFiltered), [servedRows, rankSort, hubFiltered]);
   const moveHost = usePriorityMoveHost();
   const [liveWidth, setLiveWidth] = React.useState<{ id: string; px: number } | null>(null);
   const active = edit?.active ?? false;
@@ -916,30 +921,45 @@ export function ProjectsTable({
         resizable: true,
         sort: { state: rankSort, onToggle: () => setRankSort(nextRankSort) },
         cell: (row) => {
-          const rank = row.band_rank ?? null;
+          // P60 (ADR 0068): the served HUB rank first; the global rank on hover
+          // (and "G16") only without a hub filter.
+          const rank = row.hub_rank ?? null;
           // P57 (ADR 0067): no band, so no rank, for Commercialized / Cancelled.
           if (row.priority === null || rank === null || rowPriorityNotApplicable(row)) return DASH;
           const canMove = canEdit && moveHost !== null && (edit === undefined || edit.isWritable(row));
+          const scope = hubRankScope(row.hub, row.priority);
+          const tooltip = rankTooltip(
+            {
+              priority: row.priority,
+              hub: row.hub,
+              hub_rank: rank,
+              hub_band_size: row.hub_band_size,
+              band_rank: row.band_rank,
+              band_size: row.band_size,
+            },
+            hubFiltered,
+          );
           return (
             <span className="inline-flex items-center gap-1 text-xs font-semibold tabular-nums text-text" data-testid="rank-cell" data-numeric="">
               {canMove ? (
-                <>
-                  <EditableBandRank
-                    host={moveHost}
-                    canMove
-                    projectId={row.project_id}
-                    projectName={row.project_name}
-                    status={row.status}
-                    band={row.priority}
-                    rank={rank}
-                    dense
-                  />
-                </>
+                <EditableBandRank
+                  host={moveHost}
+                  canMove
+                  projectId={row.project_id}
+                  projectName={row.project_name}
+                  status={row.status}
+                  band={row.priority}
+                  rank={rank}
+                  dense
+                  scope={scope}
+                  tooltip={tooltip}
+                />
               ) : (
-                <span title={row.band_size ? `Position ${String(rank)} of ${String(row.band_size)} in ${row.priority}` : undefined}>
+                <span title={tooltip ?? undefined} data-testid="rank-cell-value">
                   #{rank}
                 </span>
               )}
+              <GlobalRankMarker bandRank={row.band_rank} hidden={hubFiltered} />
             </span>
           );
         },
@@ -993,7 +1013,7 @@ export function ProjectsTable({
       },
     ];
     return all.filter((c) => !(HIDEABLE_IDS.has(c.id) && hiddenColumns.includes(c.id)));
-  }, [canEdit, highlightId, highlightLabel, showCharter, canPinVip, edit, active, hiddenColumns, toggleEdit, canReadSteps, rankSort, moveHost]);
+  }, [canEdit, highlightId, highlightLabel, showCharter, canPinVip, edit, active, hiddenColumns, toggleEdit, canReadSteps, rankSort, moveHost, hubFiltered]);
 
   const widthOf = (col: Column): number | undefined =>
     liveWidth?.id === col.id ? liveWidth.px : col.resizable ? columnWidths[col.id] : undefined;

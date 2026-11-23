@@ -669,8 +669,11 @@ export function ProjectForm({
                 projectId={project?.id ?? null}
                 projectName={project?.name ?? ''}
                 status={project?.status ?? null}
-                rank={project?.band_rank ?? null}
-                size={project?.band_size ?? null}
+                rank={project?.hub_rank ?? null}
+                size={project?.hub_band_size ?? null}
+                hub={hubs.find((h) => h.id === project?.hub_id)?.name ?? null}
+                globalRank={project?.band_rank ?? null}
+                globalSize={project?.band_size ?? null}
                 host={moveHost}
                 canMove={canMovePriority}
               />

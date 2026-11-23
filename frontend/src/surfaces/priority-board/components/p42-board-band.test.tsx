@@ -20,7 +20,7 @@ function card(id: string, overrides: Partial<PriorityBoardCard> = {}): PriorityB
     project_id: id, name: `Project ${id}`, hub_id: 'h', hub: 'R&D-Greece', category: 'A',
     status: 'In Queue', external_code: null, score: null, band: null, suggested_band: null, score_band: null,
     capacity_fill: false, capacity_fill_reason: null, hard_gated: false, is_vip: false, projected_end_week: 40,
-    within_year: true, health: 'on_track', tracking_status: 'live', band_rank: 1, frozen: false,
+    within_year: true, health: 'on_track', tracking_status: 'live', band_rank: 1, hub_rank: 1, hub_band_size: null, frozen: false,
     counts_toward_year: true, not_scheduled_priority: false, queued: false, outcome_label: null,
     ...overrides,
   };

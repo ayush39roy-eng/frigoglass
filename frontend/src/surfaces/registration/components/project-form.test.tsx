@@ -155,7 +155,7 @@ describe('ProjectFormDialog', () => {
           selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
           target_end_week: null, certification_testing_required: true, estimated_design_weeks: null,
           estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD',
-          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null,
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null, hub_rank: null, hub_band_size: null,
         }}
         open
         onOpenChange={vi.fn()}
@@ -186,7 +186,7 @@ describe('ProjectFormDialog', () => {
           estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null,
           scoring_tags: ['new_options', 'improvement'], tag_dimension_keys: ['new_options', 'quality_improvements'],
           schedule_stale: false, workflow_id: 'PDD',
-          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null,
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null, hub_rank: null, hub_band_size: null,
         }}
         onOpenChange={vi.fn()}
         hubs={hubs}
@@ -233,7 +233,7 @@ describe('ProjectFormDialog', () => {
           estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null,
           scoring_tags: ['new_models'], tag_dimension_keys: ['new_models'],
           schedule_stale: false, workflow_id: 'PDD',
-          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null,
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null, hub_rank: null, hub_band_size: null,
         }}
         onOpenChange={vi.fn()}
         hubs={hubs}
@@ -309,7 +309,7 @@ describe('ProjectFormDialog', () => {
           schedule_stale: false,
           workflow_id: 'PDD',
           created_at: '2026-01-01T00:00:00Z',
-          updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null,
+          updated_at: '2026-01-01T00:00:00Z', band_rank: null, band_size: null, hub_rank: null, hub_band_size: null,
         }}
         open
         onOpenChange={vi.fn()}
@@ -615,7 +615,7 @@ describe('ProjectForm — unsaved-changes reporting (P22-T01)', () => {
     customer_name: null, tcogs_eur: 100.5, selling_price_eur: null, gross_margin_pct: null, capex_keur: null,
     rm_savings_keur: null, target_end_week: null, certification_testing_required: true,
     estimated_design_weeks: null, estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD' as const,
-    created_at: '', updated_at: '', band_rank: null, band_size: null,
+    created_at: '', updated_at: '', band_rank: null, band_size: null, hub_rank: null, hub_band_size: null,
   };
 
   it('a freshly opened edit form is clean; an edit makes it dirty; undoing the edit makes it clean again', async () => {
