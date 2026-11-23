@@ -601,9 +601,8 @@ async def test_workflow_change_clears_exclusions(db_session, dispatch):
         resp = await _save(
             client, {"project_id": str(pid), "hub_id": str(oem_id), "category": "B-OEM"}
         )
-        assert resp.status_code == 422  # category is not a register field
-        resp = await client.patch(f"/projects/{pid}", json={"hub_id": str(oem_id),
-                                                           "category": "B-OEM"})
+        # P59-B: `category` is a register field, so the batch moves the
+        # workflow itself (it was a 422 here, then a PATCH).
         assert resp.status_code == 200, resp.text
     live = await _rows(db_session, pid)
     assert set(live) == {f"OEM-{c}" for c in "ABCDEFGHIJKLMN"}

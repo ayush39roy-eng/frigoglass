@@ -391,8 +391,8 @@ async def test_duplicate_and_unknown_fields_are_422(db_session, dispatch):
         )
         assert resp.status_code == 422
         assert resp.json()["detail"]["errors"][0]["code"] == "DUPLICATE_PROJECT"
-        # Not in the single PATCH's write set (priority) or read-only.
-        for extra in ({"priority": "P1"}, {"requesting_department": "X"}, {"tcogs_eur": 1}):
+        # Read-only or financial (P59-B: `priority` is now a register field).
+        for extra in ({"requesting_department": "X"}, {"tcogs_eur": 1}):
             resp = await client.post(
                 _URL, json={"edits": [{"project_id": str(project.id), **extra}]}
             )

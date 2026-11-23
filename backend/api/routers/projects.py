@@ -150,6 +150,7 @@ from services.plan_clock import now as plan_clock_now
 from services.priority_applicability import priority_applicable, priority_filter_predicate
 from services.priority_move import (
     AutoRecalcOutcome,
+    add_priority_move_audit,
     apply_priority_change,
     decide_auto_recalc_batch,
     dispatch_auto_recalc_batch,
@@ -917,6 +918,7 @@ async def stage_project_update(
     step_edits: StepEdits | None = None,
     clock: PlanClock | None = None,
     leader_cause: str = CAUSE_PROJECT_UPDATE,
+    apply_priority: bool = False,
 ) -> StagedProjectUpdate:
     """The single PATCH's validation and writes, shared with the register's
     batch (`POST /projects/register-edits`, P35). The caller has already
@@ -946,7 +948,14 @@ async def stage_project_update(
     active, and a reopen (out of Commercialized / Cancelled) needs an active
     leader or an explicit one in the same write (422 `LEADER_INACTIVE`); the
     leader row is locked `FOR SHARE` (R38-5). Every leader change writes one
-    `project_leader_history` row (`leader_cause`), at `clock`'s week."""
+    `project_leader_history` row (`leader_cause`), at `clock`'s week.
+
+    P59-B: `apply_priority=True` (the register batch only, with
+    `band_rank_plan` planned on the new priority) sets a changed priority on
+    the row together with its status and planned rank (the membership CHECK
+    is immediate) and counts it as a scheduler input; the caller then writes
+    the `project.priority_move` audit row once the batch's recalc is
+    decided."""
 
     status_before = project.status
     if "external_code" in updates:
@@ -1112,6 +1121,9 @@ async def stage_project_update(
         and "actual_end_week" not in updates
     ):
         project.actual_end_week = (clock or plan_clock_now()).week
+    if apply_priority and priority_moves:
+        project.priority = new_priority
+        schedule_inputs_changed = True
     if schedule_inputs_changed:
         project.schedule_stale = True
     if band_rank_plan is not None:
@@ -1248,6 +1260,24 @@ def _register_step_edits(edit: RegisterEditPatch) -> StepEdits:
     )
 
 
+#: P59-B: register patch keys whose `Project` column has another name.
+_REGISTER_COLUMN_OF: dict[str, str] = {"project_type": "type"}
+
+
+def _register_updates(edit: RegisterEditPatch) -> dict[str, Any]:
+    """The patch's sent project fields keyed by `Project` column (as the
+    PATCH's `updates`): `project_type` -> `type`."""
+
+    data = edit.model_dump(exclude_unset=True, exclude={"project_id", "base", *_STEP_EDIT_FIELDS})
+    return {_REGISTER_COLUMN_OF.get(k, k): v for k, v in data.items()}
+
+
+def _register_base(edit: RegisterEditPatch) -> dict[str, Any]:
+    """`edit.base` keyed like `_register_updates`."""
+
+    return {_REGISTER_COLUMN_OF.get(k, k): v for k, v in edit.base.items()}
+
+
 def _register_error(project_id: uuid.UUID, exc: HTTPException) -> RegisterEditError:
     """A single-PATCH failure as one batch error: its code, and its message
     (a coded detail list is joined; never any field value beyond the week
@@ -1359,6 +1389,12 @@ async def save_register_edits(
        input changed on a project schedulable before or after its edit,
        `deferred` (coalesced follow-up) when a run is in flight, else
        `queued`. Never solves in-process.
+
+    P59-B (bulk edit): `priority`, `category` and `type` follow the PATCH.
+    A changed priority is a priority move (band end, one
+    `project.priority_move` audit row per project, the one recalc above);
+    `PRIORITY_NOT_APPLICABLE` / `HARD_GATE_FORCES_P1` come back per project
+    in the 422 `REGISTER_EDITS_INVALID` errors.
     """
 
     allowed, retry_after = REGISTER_EDITS_RATE_LIMIT.allow(
@@ -1389,6 +1425,13 @@ async def save_register_edits(
             HTTP_422, "REGISTER_EDITS_INVALID",
             "Nothing was saved: fix the projects listed in errors.", duplicates,
         )
+    # P59-B: an unknown category is the PATCH's enum-shaped 422 (contract
+    # B3), at the row's body location, before any lock.
+    for index, edit in enumerate(body.edits):
+        if "category" in edit.model_fields_set:
+            await check_category_code(
+                db, edit.category, loc=("body", "edits", index, "category")
+            )
 
     edits = sorted(body.edits, key=lambda e: e.project_id)
     # P36-R01 (security M-1): scoped lookup + write authorisation with plain
@@ -1415,11 +1458,15 @@ async def save_register_edits(
     if effort_edit_ids:
         await share_lock_categories(
             db,
-            (
-                await db.execute(
-                    select(Project.category).where(Project.id.in_(effort_edit_ids))
-                )
-            ).scalars(),
+            [
+                *(
+                    await db.execute(
+                        select(Project.category).where(Project.id.in_(effort_edit_ids))
+                    )
+                ).scalars(),
+                # P59-B: a category change re-copies the TARGET category.
+                *(e.category for e in edits if "category" in e.model_fields_set),
+            ],
         )
     # P38 (R38-5): the engineer rows a leader write names (a written leader,
     # or the stored leader of a project whose status is edited, which may be
@@ -1467,10 +1514,8 @@ async def save_register_edits(
                 await project_conflicts(
                     db,
                     projects[edit.project_id],
-                    edit.base,
-                    edit.model_dump(
-                        exclude_unset=True, exclude={"project_id", "base", *_STEP_EDIT_FIELDS}
-                    ),
+                    _register_base(edit),
+                    _register_updates(edit),
                     step_edits=_register_step_edits(edit),
                 )
             )
@@ -1479,17 +1524,32 @@ async def save_register_edits(
         await db.rollback()
         raise error
 
+    # P59-B: the stored priority / rank of every row before anything moves
+    # (the `project.priority_move` audit row's before state).
+    priority_before = {pid: (p.priority, p.band_rank) for pid, p in projects.items()}
     # ADR 0050 / R36-8: one band-rank plan for the whole batch (leavers
-    # removed, enterers appended in ascending id, each band renumbered once),
-    # read before any status is written. A row whose staging fails rolls the
-    # whole batch back below.
+    # removed, enterers appended last, each band renumbered once), read
+    # before any status or priority is written, on the TARGET status and
+    # priority (P59-B: a priority move enters its new band last, several in
+    # their current rank, then name, order). A row whose staging fails
+    # (e.g. `PRIORITY_NOT_APPLICABLE`) rolls the whole batch back below.
     band_rank_plan = await plan_batch_band_ranks(
         db,
         [
-            (projects[e.project_id], e.status)
+            (
+                projects[e.project_id],
+                e.status
+                if "status" in e.model_fields_set and e.status is not None
+                else projects[e.project_id].status,
+                e.priority
+                if "priority" in e.model_fields_set and e.priority is not None
+                else projects[e.project_id].priority,
+            )
             for e in edits
-            if "status" in e.model_fields_set
-            and e.status is not None
+            if (
+                ("status" in e.model_fields_set and e.status is not None)
+                or ("priority" in e.model_fields_set and e.priority is not None)
+            )
             and e.status != ProjectStatus.DRAFT
             and projects[e.project_id].status != ProjectStatus.DRAFT
         ],
@@ -1500,9 +1560,7 @@ async def save_register_edits(
     known_hubs: dict[uuid.UUID, bool] = {}
     for edit in edits:
         project = projects[edit.project_id]
-        updates = edit.model_dump(
-            exclude_unset=True, exclude={"project_id", "base", *_STEP_EDIT_FIELDS}
-        )
+        updates = _register_updates(edit)
         step_edits = _register_step_edits(edit)
         tracks_eff = bool(
             edit.model_fields_set & (SCHEDULE_INPUT_FIELDS | _STEP_EDIT_FIELDS)
@@ -1532,6 +1590,7 @@ async def save_register_edits(
                 step_edits=step_edits,
                 clock=clock,
                 leader_cause=CAUSE_REGISTER_EDIT,
+                apply_priority=True,
             )
             if tracks_eff:
                 eff_after = await project_eff_map(db, project, await _workflow_id(db, project))
@@ -1570,6 +1629,15 @@ async def save_register_edits(
     recalc, baseline_id = await decide_auto_recalc_batch(
         db, needs_run=needs_run, trigger_reason=REGISTER_EDIT_TRIGGER_REASON
     )
+    for pid, result in staged.items():
+        if result.priority_moves:
+            # P59-B: one `project.priority_move` row per moved project, the
+            # single move's shape, with the batch's recalc decision.
+            before, rank_before = priority_before[pid]
+            add_priority_move_audit(
+                db, projects[pid], before, result.new_priority, current_user,
+                recalc=recalc, baseline_id=baseline_id, band_rank_before=rank_before,
+            )
     outcome = await dispatch_auto_recalc_batch(
         db, changed, current_user,
         recalc=recalc, baseline_id=baseline_id, trigger_reason=REGISTER_EDIT_TRIGGER_REASON,

@@ -17,8 +17,9 @@ the lock and writes the results back. Nothing here computes a rank by hand.
   schedulable status, R36-3) keeps the rank. Uses
   `scheduling.band_rank.transition`.
 - `plan_batch_band_ranks`: the P35 register batch, all projects that
-  enter one band appended in ascending id and the band renumbered once
-  (`append_all_last`); leavers removed.
+  enter one band appended (status enterers in ascending id, P59-B priority
+  movers after them in current rank, name, id) and the band renumbered
+  once; leavers removed.
 - `place_in_band`: the re-rank write (`scheduling.band_rank.place`).
 - `assign_default_band_ranks`: the R36-1 backfill rule in Python (status
   ordinal, live `categories.rank`, id; uncategorised last by id), for the
@@ -40,6 +41,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 from fastapi import status as http_status
 from sqlalchemy import func, select, update
@@ -255,29 +257,35 @@ async def reconcile_band_rank(
 
 async def plan_batch_band_ranks(
     db: AsyncSession,
-    transitions: Sequence[tuple[Project, ProjectStatus]],
+    transitions: Sequence[tuple[Project, ProjectStatus, ProjectPriority | None]],
 ) -> dict[uuid.UUID, int | None]:
     """The P35 register batch (R36-8): `transitions` = `(project,
-    new_status)` for every row whose status the batch sets, read BEFORE any
-    of them is written (the batch carries no priority). Leavers are removed
-    from their band; per band, every entering project is appended in
-    ascending `project_id` (`append_all_last`) and the band renumbered ONCE.
+    new_status, new_priority)` for every row whose status or priority the
+    batch sets (unchanged values passed as the stored ones), read BEFORE any
+    of them is written. Leavers are removed from their band; per band, the
+    entering projects are appended last and the band renumbered ONCE.
+
+    Order of the projects entering one band: first those whose priority is
+    unchanged (a status change, e.g. un-hold), in ascending `project_id`
+    (`append_all_last`, as before P59); then those moved there by a priority
+    change (P59-B bulk priority), in their current `band_rank` (unranked
+    last), then name, then id, so a bulk move keeps their relative order.
 
     Writes the renumbered neighbours now (by primary key; the deferred unique
     constraint allows the transient overlap) and returns the new
     `band_rank` of every project that enters or leaves a band, for the
-    caller to set together with its status (the membership CHECK is
-    immediate). Projects that keep their band are absent. The caller holds
+    caller to set together with its status / priority (the membership CHECK
+    is immediate). Projects that keep their band are absent. The caller holds
     `lock_band_ranks`."""
 
     leaving: dict[str, list[str]] = {}
-    entering: dict[str, list[str]] = {}
+    entering: dict[str, list[tuple[tuple[Any, ...], str]]] = {}
     moved: dict[str, uuid.UUID] = {}
-    for project, new_status in transitions:
+    for project, new_status, new_priority in transitions:
         before = band_of_project(project.status, project.priority)
         if project.band_rank is None:
             before = None
-        after = band_of_project(new_status, project.priority)
+        after = band_of_project(new_status, new_priority)
         if before == after and (after is None or project.band_rank is not None):
             continue
         pid = str(project.id)
@@ -285,7 +293,18 @@ async def plan_batch_band_ranks(
         if before is not None:
             leaving.setdefault(before, []).append(pid)
         if after is not None:
-            entering.setdefault(after, []).append(pid)
+            key: tuple[Any, ...] = (
+                (0, pid)
+                if new_priority == project.priority
+                else (
+                    1,
+                    project.band_rank is None,
+                    project.band_rank or 0,
+                    project.name,
+                    pid,
+                )
+            )
+            entering.setdefault(after, []).append((key, pid))
     if not moved:
         return {}
     result: dict[uuid.UUID, int | None] = dict.fromkeys(moved.values())
@@ -296,7 +315,8 @@ async def plan_batch_band_ranks(
         new_order = order
         for pid in leaving.get(band, []):
             new_order = br.remove(new_order, pid)
-        new_order = br.append_all_last(new_order, entering.get(band, []))
+        for _key, pid in sorted(entering.get(band, [])):
+            new_order = br.append_last(new_order, pid)
         for pid, rank in br.ranks(new_order).items():
             if pid in moved:
                 result[moved[pid]] = rank

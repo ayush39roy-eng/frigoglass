@@ -549,8 +549,7 @@ class RegisterEditPatch(BaseModel):
     """One project's changes from the register's Edit mode / Edit popup. A
     subset of `ProjectUpdateRequest` (same types and bounds, same PATCH
     semantics: only the keys sent are applied, `null` clears where the PATCH
-    allows it) plus `actual_end_week`. No priority (a priority move has its
-    own preview / confirm flow), no category, no financial field.
+    allows it) plus `actual_end_week`. No financial field.
     `requesting_department` is read-only (workbook charter field, ADR 0035)
     and so is not accepted either.
 
@@ -579,6 +578,24 @@ class RegisterEditPatch(BaseModel):
         AfterValidator(_unique_step_codes),
     ] = None
     current_step_code: StepCode | None = None
+    #: P59-B (bulk edit / Priority board bulk move): the PATCH's rules. A
+    #: changed priority is applied as a priority move (ADR 0015 / 0050): the
+    #: project goes last in its new band (several moved into one band keep
+    #: their current rank, then name, order), one `project.priority_move`
+    #: audit row each, the batch's one recalculation. The same priority is
+    #: unchanged. Commercialized / Cancelled: per-project error
+    #: `PRIORITY_NOT_APPLICABLE` (ADR 0067; `null` there is the unchanged
+    #: round-trip); a hard-gated project to P2+: `HARD_GATE_FORCES_P1`;
+    #: `null` on a schedulable project: `NULL_NOT_ALLOWED`. On a
+    #: non-schedulable status (On Hold) it is saved without a recalculation.
+    priority: ProjectPriority | None = None
+    #: P59-B: a `categories.code` (unknown: the PATCH's enum-shaped 422 at
+    #: `body.edits.<i>.category`); not in the hub's workflow: per-project
+    #: `CATEGORY_WORKFLOW_MISMATCH`. `null` clears it, as the PATCH.
+    category: CategoryCode | None = None
+    #: P59-B: the project type (the PATCH's / `ProjectRead`'s `type`; the
+    #: batch writes it to the same column).
+    project_type: ProjectType | None = None
     #: P47 (ADR 0059): this row's values the user started from, per changed
     #: field; `step_exclusions` as `{step_code: excluded}` (or the request's
     #: own list shape), `current_step_code` as the code served.
