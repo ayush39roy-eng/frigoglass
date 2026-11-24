@@ -102,8 +102,28 @@ if [ -z "${RPD_DATABASE_URL:-}" ]; then
     export RPD_DATABASE_URL="postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
 fi
 
+# Owner 2026-11-24: a hosted deploy failed (exit 1) because the managed
+# Postgres was briefly unreachable / "in recovery mode" while the container
+# started, and a crash-looping instance then took the live service down with
+# it. Retry the migration with backoff (about 5 minutes in total) instead of
+# giving up on the first connection error. A real migration error still
+# fails the start after the last attempt.
 echo "docker-entrypoint: running 'alembic upgrade head'..."
-alembic upgrade head
+attempt=1
+max_attempts="${RPD_MIGRATE_ATTEMPTS:-10}"
+delay=5
+until alembic upgrade head; do
+    if [ "$attempt" -ge "$max_attempts" ]; then
+        echo "docker-entrypoint: 'alembic upgrade head' failed after ${attempt} attempts" >&2
+        exit 1
+    fi
+    echo "docker-entrypoint: migration attempt ${attempt} failed (database not ready?), retrying in ${delay}s..." >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    if [ "$delay" -lt 60 ]; then
+        delay=$((delay * 2))
+    fi
+done
 
 echo "docker-entrypoint: migrations applied, starting: $*"
 exec "$@"

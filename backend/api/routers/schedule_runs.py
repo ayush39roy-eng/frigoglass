@@ -481,6 +481,54 @@ async def db_activity(
     }
 
 
+_DB_HEALTH_SQL = text(
+    """
+    SELECT pg_database_size(current_database()) AS db_bytes,
+           pg_postmaster_start_time() AS postmaster_start,
+           now() AS now,
+           (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database())
+               AS connections,
+           current_setting('max_connections') AS max_connections,
+           current_setting('shared_buffers') AS shared_buffers,
+           current_setting('work_mem') AS work_mem,
+           current_setting('maintenance_work_mem') AS maintenance_work_mem,
+           current_setting('max_wal_size') AS max_wal_size,
+           d.temp_files, d.temp_bytes, d.deadlocks, d.xact_commit, d.xact_rollback,
+           d.stats_reset
+    FROM pg_stat_database d
+    WHERE d.datname = current_database()
+    """
+)
+
+_DB_TABLE_SIZES_SQL = text(
+    """
+    SELECT c.relname AS table, pg_total_relation_size(c.oid) AS bytes,
+           c.reltuples::bigint AS approx_rows,
+           s.n_dead_tup AS dead_rows, s.last_autovacuum
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+    WHERE c.relkind = 'r' AND n.nspname = 'public'
+    ORDER BY pg_total_relation_size(c.oid) DESC
+    LIMIT 15
+    """
+)
+
+
+@router.get("/db-health")
+async def db_health(
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_super_admin_only),
+) -> dict[str, object]:
+    """Super Admin diagnostics: database size, largest tables, memory
+    settings, connection count and when Postgres last (re)started. Used to
+    find why the hosted database went into crash recovery."""
+
+    health = dict((await db.execute(_DB_HEALTH_SQL)).mappings().one())
+    tables = [dict(r) for r in (await db.execute(_DB_TABLE_SIZES_SQL)).mappings().all()]
+    return {"server": health, "tables": tables}
+
+
 @router.get("/{run_id}/changes", response_model=ScheduleRunChanges)
 async def get_schedule_run_changes(
     run_id: uuid.UUID,

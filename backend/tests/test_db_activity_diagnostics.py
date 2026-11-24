@@ -12,7 +12,6 @@ from tests.factories import make_schedule_run
 from tests.p12_helpers import act_as, client_for
 
 
-
 @pytest.fixture(autouse=True)
 def _cleanup():
     yield
@@ -37,4 +36,22 @@ async def test_admin_is_refused(db_session):
     await act_as(db_session, RoleName.ADMIN)
     async with client_for(db_session) as client:
         resp = await client.get("/schedule-runs/db-activity")
+    assert resp.status_code == 403
+
+
+async def test_super_admin_sees_db_health(db_session):
+    await act_as(db_session, RoleName.SUPER_ADMIN)
+    async with client_for(db_session) as client:
+        resp = await client.get("/schedule-runs/db-health")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["server"]["db_bytes"] > 0
+    assert body["server"]["max_connections"]
+    assert isinstance(body["tables"], list) and body["tables"]
+
+
+async def test_admin_is_refused_db_health(db_session):
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as client:
+        resp = await client.get("/schedule-runs/db-health")
     assert resp.status_code == 403
