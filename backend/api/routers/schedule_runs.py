@@ -227,7 +227,7 @@ from typing import Literal
 import redis.asyncio as redis_asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db, get_session_factory
@@ -423,6 +423,62 @@ async def recalculate_now(
         in_flight_run_id=in_flight,
         stale_project_count=stale,
     )
+
+
+_super_admin_only = require_roles(RoleName.SUPER_ADMIN)
+
+#: Owner 2026-11-24 (runs stuck "running"): what each session of this
+#: database is doing and waiting on. Constant SQL; statement text only (bound
+#: values are never in `pg_stat_activity.query` for this app's parameterised
+#: statements), truncated.
+_DB_ACTIVITY_SQL = text(
+    """
+    SELECT a.pid, a.application_name, a.state, a.wait_event_type, a.wait_event,
+           EXTRACT(EPOCH FROM (now() - a.xact_start))::int AS xact_seconds,
+           EXTRACT(EPOCH FROM (now() - a.state_change))::int AS state_seconds,
+           pg_blocking_pids(a.pid) AS blocked_by,
+           left(a.query, 300) AS query,
+           (SELECT array_agg(DISTINCT l.locktype || ':'
+                             || coalesce(l.objid::text, l.relation::regclass::text, '')
+                             || CASE WHEN l.granted THEN '' ELSE ' (waiting)' END)
+              FROM pg_locks l
+             WHERE l.pid = a.pid
+               AND l.locktype IN ('advisory', 'relation', 'tuple', 'transactionid')
+               AND (l.locktype <> 'relation' OR l.mode <> 'AccessShareLock')) AS locks
+      FROM pg_stat_activity a
+     WHERE a.datname = current_database() AND a.pid <> pg_backend_pid()
+     ORDER BY a.xact_start NULLS LAST
+    """
+)
+
+
+@router.get("/db-activity")
+async def db_activity(
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_super_admin_only),
+) -> dict[str, object]:
+    """Super Admin diagnostics: DB sessions with their state, waits, blockers
+    and non-trivial locks, plus the last runs' status and error text."""
+
+    sessions = [dict(r) for r in (await db.execute(_DB_ACTIVITY_SQL)).mappings().all()]
+    runs = (
+        await db.execute(select(ScheduleRun).order_by(ScheduleRun.version.desc()).limit(8))
+    ).scalars().all()
+    return {
+        "sessions": sessions,
+        "runs": [
+            {
+                "version": r.version,
+                "status": r.status.value,
+                "trigger_reason": r.trigger_reason,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+                "error_message": (r.error_message or "")[:500] or None,
+            }
+            for r in runs
+        ],
+    }
 
 
 @router.get("/{run_id}/changes", response_model=ScheduleRunChanges)
