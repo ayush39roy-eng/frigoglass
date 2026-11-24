@@ -256,6 +256,12 @@ from services.plan_week import any_run_in_flight
 from services.priority_move import dispatch_auto_recalc_batch
 from services.run_changes import compute_run_changes
 from services.run_dispatch import enqueue_or_fail, find_in_flight_run
+from services.run_retention import (
+    KEEP_RUNS_WITH_STEPS,
+    count_prunable_step_rows,
+    prune_old_run_steps,
+    runs_to_prune,
+)
 from services.schedule_persistence import (
     build_schedule_input_from_db,
     create_queued_schedule_run,
@@ -527,6 +533,41 @@ async def db_health(
     health = dict((await db.execute(_DB_HEALTH_SQL)).mappings().one())
     tables = [dict(r) for r in (await db.execute(_DB_TABLE_SIZES_SQL)).mappings().all()]
     return {"server": health, "tables": tables}
+
+
+@router.post("/prune-old-steps")
+async def prune_old_steps(
+    dry_run: bool = Query(default=True),
+    max_runs: int = Query(default=40, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_super_admin_only),
+) -> dict[str, object]:
+    """Super Admin (owner 2026-11-24): delete the per-step output of old
+    runs, keeping the latest `KEEP_RUNS_WITH_STEPS` completed runs, the
+    active run and plan-week rollover runs in full. Run rows and per-project
+    outcomes are never deleted. `dry_run` (default) only counts. At most
+    `max_runs` runs per call; call again until `remaining_runs` is 0."""
+
+    run_ids = await runs_to_prune(db)
+    batch = run_ids[:max_runs]
+    rows = await count_prunable_step_rows(db, batch)
+    if dry_run:
+        return {
+            "dry_run": True,
+            "keep_runs": KEEP_RUNS_WITH_STEPS,
+            "runs_in_batch": len(batch),
+            "step_rows_in_batch": rows,
+            "remaining_runs": len(run_ids),
+        }
+    await db.rollback()
+    pruned, deleted = await prune_old_run_steps(get_session_factory(), max_runs=max_runs)
+    return {
+        "dry_run": False,
+        "keep_runs": KEEP_RUNS_WITH_STEPS,
+        "runs_pruned": pruned,
+        "step_rows_deleted": deleted,
+        "remaining_runs": max(len(run_ids) - pruned, 0),
+    }
 
 
 @router.get("/{run_id}/changes", response_model=ScheduleRunChanges)

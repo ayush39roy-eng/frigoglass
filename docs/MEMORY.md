@@ -46892,3 +46892,14 @@ Fixes from "[2026-11-23] QA — urgent end-to-end What-if planner test". Not com
   - algorithm-engineer: `scheduling.demand.check_i26_effort_split` does not know the held-back rule. Callers must pass held-back steps as `excluded=True` in `LiveProjectRow`.
   - Frontend: no UI for the sync endpoint (curl / OpenAPI only); the frontend was not touched.
   - Gate: qa / workflow / security review of ADR 0070 pending (orchestrator).
+
+## 2026-11-24 — Hosted Postgres crash recovery: root cause and fixes (owner: "find a real and permanent solution")
+
+- **Symptom:** a deploy exited 1 — `alembic upgrade head` timed out, then "the database system is in recovery mode". The 14:09–14:51 IST outage earlier the same day matches.
+- **Evidence** (new Super Admin `GET /schedule-runs/db-health`): `shared_buffers` 64 MB and `max_connections` 103, i.e. Render's 256 MB-RAM Postgres tier. The postmaster has been up since 2026-10-26, but its statistics were reset (`stats_reset` null, ~1k transactions, no autovacuum history). So a Postgres backend was killed (OOM) and the server went through crash recovery, rather than being restarted. `schedule_run_project_steps` held 500k rows / 179 MB of the 240 MB database, because every run's step output was kept forever.
+- **Fixes:**
+  - `docker-entrypoint.sh` retries migrations with backoff (10 attempts, about 6 min; `RPD_MIGRATE_ATTEMPTS`). A short DB outage no longer fails a deploy or crash-loops the instance.
+  - App pool 5+5 per gunicorn worker (was 10+20; `RPD_DB_POOL_SIZE` / `RPD_DB_MAX_OVERFLOW`), and the run engine 2+1. That's about 23 connections at most, against about 70 before.
+  - Run retention (`services/run_retention.py`, owner chose "Prune, keep last 20"). Step rows are kept only for the latest 20 completed runs, the active run and plan-week-rollover runs. Run rows and outcomes are never deleted. Each completed run prunes up to 10 old runs; Super Admin `POST /schedule-runs/prune-old-steps?dry_run=` (max_runs ≤ 200) clears the backlog one run per transaction.
+- **Owner will upgrade** the Render Postgres to Basic-1GB. That is the actual permanent fix for memory; the code changes reduce load.
+- Tests: `tests/test_run_retention.py` and `tests/test_db_activity_diagnostics.py`. 800 related tests pass; the only failure is the pre-existing `test_migrations` table-count test.

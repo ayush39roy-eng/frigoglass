@@ -127,12 +127,17 @@ from models.schedule import ScheduleRun
 from scheduling.cp_sat import run_cp_sat
 from scheduling.greedy import run_greedy_sgs
 from services.run_dispatch import in_flight_window
+from services.run_retention import prune_old_run_steps
 from services.schedule_apply import persist_solved_run
 from services.schedule_persistence import build_schedule_input_from_db
 from workers.celery_app import celery_app
 from workers.progress import publish_progress
 
 logger = logging.getLogger(__name__)
+
+# Old runs whose step detail one completed run deletes (services.run_retention);
+# small, so a backlog clears over a few runs without one long tail.
+RUNS_PRUNED_PER_RUN = 10
 
 #: Celery task name — explicit (not left to Celery's auto-derived
 #: `module.function` name) so it stays stable across any future module move.
@@ -478,6 +483,13 @@ async def _run_schedule_body(
             )
             await db.commit()
             publish_progress(schedule_run_id, status="completed", percent=100.0)
+            # Owner 2026-11-24: keep only the latest runs' step detail
+            # (services.run_retention). Best-effort: the run is already
+            # committed, so a failure here only logs.
+            try:
+                await prune_old_run_steps(session_factory, max_runs=RUNS_PRUNED_PER_RUN)
+            except Exception:  # noqa: BLE001
+                logger.warning("Pruning old run steps failed", exc_info=True)
             return {
                 "status": "completed",
                 "schedule_run_id": schedule_run_id,
