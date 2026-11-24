@@ -991,6 +991,14 @@ async def stream_schedule_run_progress(
         await _close_redis_quietly(redis_client, pubsub, channel)
         redis_client = pubsub = None
 
+    # Pool exhaustion 2026-11-23 ("QueuePool limit of size 10 overflow 20
+    # reached"): FastAPI keeps a yield-dependency session open until the
+    # response ends, and this stream lives up to ~17 min, so every open tab
+    # pinned one pooled connection. Hand it back now (the session holds a
+    # connection only inside a transaction); the generator reads the
+    # run row with its own short sessions (`_read_run_for_stream`).
+    await db.commit()  # read-only; ends the transaction, connection back to the pool
+
     generator = _progress_event_source(
         request=request,
         schedule_run_id=schedule_run_id,
