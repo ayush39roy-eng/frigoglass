@@ -46809,3 +46809,86 @@ Fixes from "[2026-11-23] QA — urgent end-to-end What-if planner test". Not com
 - **Open:**
   - ADR 0069 should get an amendment: the switch was removed and manual-only is now the rule (orchestrator).
   - Optional cleanup: remove the dead auto branches, `MOVE_COPY.deferred`, and the store's per-user state.
+
+## [2026-11-24] ADR 0070 — A step revived from 0 weeks joins the own-effort split ("Split the figure") + band-rank lock first on template apply — backend-builder: DONE (not committed)
+- **Problem (hosted):** the client applied category B lead weeks PDD-B 0→1, PDD-F 0→3 and PDD-H 6→4. Projects with their own lab or design figure did not get them:
+  - OR-4 flagged them `own_effort_length_not_applied`;
+  - the weight stayed 0 (R33-2 immutable, DB trigger);
+  - so F got no share and stayed skipped ("n/a").
+- **Owner decision 2026-11-24 ("Split the figure"):** ADR 0070 (new), an amendment appended to ADR 0046, and DOMAIN_RULES "Category templates" §G (new).
+- **Weight revive:**
+  - When an apply sets `weeks` 0→N>0 on a row whose `effort_weight_weeks` is 0, it also sets weight = N (`services.template_apply.revived_weights`, written by `_write_template`).
+  - Every other weight is untouched. B/PDD-H 6→4 keeps weight 6.
+  - Migration **`p70a_effort_weight_revive`** (revises `p53a_week_line`) only `CREATE OR REPLACE`s the p33b trigger function. The trigger now allows exactly `OLD.w = 0 ∧ NEW.weeks > 0 ∧ NEW.w = NEW.weeks` and keeps rejecting everything else (23514). It writes no data. It is a schema change, so it runs at deploy through the entrypoint.
+  - Checked on a throwaway Postgres: upgrade, downgrade -1 (strict again) and re-upgrade all work.
+- **Apply (OR-4 amended):**
+  - A received own-effort pair of a revived step gets the copy `plan_weeks = N`.
+  - Its project's effort is re-derived with `rederive_project_effort` (trigger `template_revive`, audit `project.effort_rederived`, stale).
+  - `plan_effort_revive` predicts the re-derivation for the preview and gates it. The pair is refused, and falls back to the own-effort flag with nothing written, when:
+    - the re-split would change `effort_weeks` on any reached step (`started_share`);
+    - R7 rejects it (`split_rejected`).
+  - The preview lists the revived step (flag `revived`) and every other step whose `eff` changes (no flag). No schema change on E2/E3.
+  - The `project.template_applied` audit gains `effort_rederived`. The `workflow_template.applied` audit gains `effort_weights_revived` and `effort_rederived`. `template_changes.changes` steps gain `effort_weight_weeks: [0, N]`.
+- **Held back (I26 rev. 3), `services.project_effort.held_out` / `held_out_step_ids`:**
+  - A step is outside S′ (passed as `excluded` to the split) when it is Not Started, has null effort, its kind has own effort, its weight is > 0, it is not excluded, and its copy `plan_weeks` = 0.
+  - Never when that would empty S′.
+  - Applied in `derive_for`, `rederive_project_effort` and `validate_effort_split` (default `hold_back=True`). The PATCH passes `hold_back=False` on a category or workflow change.
+  - Why: without it, every reached, frozen or unselected project would pick up F's new weight at its next stage crossing or check-in. That would revive F behind a started H and cut H's (Done / In Progress) share.
+  - On pre-revive data no step meets these conditions, so behaviour is unchanged.
+- **Run input (OR-3), `run_input_lead_and_override`:** an own-effort step with `effort_weeks` null maps to `lead_weeks = 0`, never to its weight. Before ADR 0070 the weight was always 0 there, so the input is byte-identical.
+- **Endpoint `POST /workflow-templates/sync-effort-weights`:**
+  - Super Admin only (`require_roles(SUPER_ADMIN)`); rate limit 6/min.
+  - Body `{"dry_run": bool}`: strict, required, `extra=forbid`.
+  - Response `EffortWeightSyncResponse`:
+    - `dry_run`;
+    - `counts` {template_rows, categories, projects_rederived, projects_skipped};
+    - `categories` [{workflow_id, category, steps [{step_id, kind, weeks, weight_before, weight_after}]}];
+    - `projects` [{project_id, name, category, step_ids, effort_before, effort_after}] (changed steps only);
+    - `skipped` [{project_id, name, category, reason ∈ frozen|cancelled|commercialized|reached_stage|started_share|split_rejected, step_ids}];
+    - `project_ids`.
+  - **Dry run:** read-only, no locks, the session is rolled back.
+  - **Apply:**
+    - locks: band-rank lock → category rows `FOR NO KEY UPDATE` → project rows `FOR UPDATE` in id order;
+    - writes: weights; copies (audit `project.effort_weight_synced`); `rederive_project_effort` (trigger `effort_weight_sync`); `mark_projects_stale`; summary audit `workflow_template.effort_weights_synced`; then commit;
+    - **no run is dispatched**.
+  - Only own-effort pairs are touched. Projects without a figure for the kind keep what the original apply decided.
+  - Idempotent: after an apply there are no rows with weeks > 0 and weight 0, so a second call returns zeros.
+  - Not an Alembic data migration: the owner triggers it.
+  - Code: `services/effort_weight_sync.py`.
+- **Coordinator add-on (run 307 deadlock):** `POST /workflow-templates/apply` and the sync apply call `lock_band_ranks(db)` FIRST, after the rate limit and the selected-id existence SELECT, before any category or project lock (5 s → 503 `BAND_RANK_BUSY`). The dry run and the apply-preview take no lock.
+- **Note vs coordinator's example ("weights 3:4"):** H's weight stays 6, per "leave weights alone otherwise". So B lab 6 → F 2, H 4, not F 3, H 3. Changing that needs an owner decision.
+- **Tests:** new `backend/tests/test_p70_effort_weight_revive.py` (12):
+  - revive gives the own-effort project F 2 / H 4, total 6, F not skipped, copy 3, audit trigger, summary fields, stale;
+  - a non-figure project keeps the old behaviour;
+  - a reached project is untouched and stays held back through a later stage re-derivation; run-input lead 0;
+  - a re-split that would cut a started E is refused;
+  - non-revive H 6→4 keeps weight 6 and the flag;
+  - run-input mapping unchanged on pre-ADR states;
+  - the DB trigger allows only the revive shape;
+  - sync dry run vs apply (writes nothing / writes everything, no run, audits), idempotent;
+  - sync 403 for Admin / PM / Hub Planner; strict body 422;
+  - apply and sync get 503 `BAND_RANK_BUSY` while another session holds the band-rank lock, and nothing is written.
+- **Existing tests:** none needed changing (the old immutability test changes a non-zero weight and still raises).
+- **Results:**
+  - Full backend suite: 4135 passed, 1 failed, 1 deselected.
+  - Failed: `test_p20_fte_followups.py::test_gantt_step_row_contract`, extra `pin_lapsed` / `pin_clearable`. Pre-existing and unrelated (P40 Gantt fields).
+  - Deselected: `test_migrations.py::test_migration_up_down_up_down_cycle`. It fails at the first `upgrade head` (44 tables vs `EXPECTED_TABLE_COUNT = 38`, stale since P41/P53), before p70a is involved.
+  - ruff clean on touched files; mypy shows no errors in the touched modules.
+- **Files:**
+  - `backend/alembic/versions/p70a_effort_weight_revive.py` (new)
+  - `backend/services/effort_weight_sync.py` (new)
+  - `backend/services/template_apply.py`
+  - `backend/services/project_effort.py`
+  - `backend/services/workflow_durations.py`
+  - `backend/api/routers/workflow_templates.py`
+  - `backend/api/routers/projects.py` (`hold_back` on category/workflow change)
+  - `backend/schemas/workflow_templates.py`
+  - `backend/tests/test_p70_effort_weight_revive.py` (new)
+  - `docs/ADR/0070-revived-step-joins-the-effort-split.md` (new)
+  - `docs/ADR/0046-…md` (amendment appended)
+  - `docs/DOMAIN_RULES.md` (§G)
+- **Open:**
+  - **Hosted run order:** deploy (p70a runs at start), then a Super Admin calls `POST /workflow-templates/sync-effort-weights` with `{"dry_run": true}`, reviews it, then calls it with `false`, then presses Recalculate.
+  - algorithm-engineer: `scheduling.demand.check_i26_effort_split` does not know the held-back rule. Callers must pass held-back steps as `excluded=True` in `LiveProjectRow`.
+  - Frontend: no UI for the sync endpoint (curl / OpenAPI only); the frontend was not touched.
+  - Gate: qa / workflow / security review of ADR 0070 pending (orchestrator).

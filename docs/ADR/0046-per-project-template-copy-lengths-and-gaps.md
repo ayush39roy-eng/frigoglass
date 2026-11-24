@@ -554,3 +554,18 @@ over §1–§3 and over R33-1, R33-3, R33-11 and I26/I31/I32 where they mention 
     certification off);
   - (iii) for every step with `ownEffort(p, kind(s))`, `eff = effort_weeks ?? 0`. Two inputs that
     differ only in those steps' `plan_weeks` or in the template `weeks` give identical runs.
+
+## Amendment (2026-11-24) — ADR 0070: a step revived from 0 weeks joins the effort split
+
+Owner decision "Split the figure", in full in ADR 0070. Summary:
+
+- **R33-2:** a template apply that sets a step's `weeks` from 0 to N > 0 while its
+  `effort_weight_weeks` is 0 also sets the weight to N. Every other weight stays immutable. Migration
+  `p70a` lets the trigger accept exactly this change.
+- **OR-4:** a received own-effort pair of such a step gets the copy `plan_weeks = N`, and its
+  project's effort is re-derived (R6, trigger `template_revive`). The pair is refused, and keeps
+  `own_effort_length_not_applied`, when the re-split would change a reached step's share or R7 rejects it.
+- **I26:** a Not Started, share-less, weighted, not-excluded step of an own-effort kind whose copy is 0
+  is held out of S′. This makes the revive stick only to the projects that received it.
+- **OR-3:** an own-effort step with no share maps to `lead_weeks = 0`.
+- **One-time catch-up:** `POST /workflow-templates/sync-effort-weights` (Super Admin; dry run / apply).

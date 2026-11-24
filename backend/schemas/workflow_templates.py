@@ -301,3 +301,80 @@ class CategoryCreateResponse(BaseModel):
     categories: list[CategoryRead]
     template_rows: int
     engineers_extended: int
+
+
+# --- ADR 0070: one-time effort-weight sync (Super Admin) ------------------------------
+
+
+class EffortWeightSyncRequest(BaseModel):
+    """`POST /workflow-templates/sync-effort-weights`. `dry_run` is required
+    (no default), so an apply is always explicit."""
+
+    model_config = _STRICT
+
+    dry_run: bool
+
+
+class EffortWeightSyncStep(BaseModel):
+    """One template row whose weight is (or would be) revived: 0 -> weeks."""
+
+    step_id: str
+    kind: Literal["design", "lab", "elapsed"]
+    weeks: int
+    weight_before: int
+    weight_after: int
+
+
+class EffortWeightSyncCategory(BaseModel):
+    workflow_id: str
+    category: CategoryCodeOut
+    steps: list[EffortWeightSyncStep]
+
+
+class EffortWeightSyncProject(BaseModel):
+    """A project that receives the revive: its copy of the revived steps
+    becomes the template length and its effort is re-derived. `effort_before`
+    / `effort_after` list only the steps whose `effort_weeks` changes."""
+
+    project_id: uuid.UUID
+    name: str
+    category: CategoryCodeOut
+    step_ids: list[str]
+    effort_before: dict[str, int | None]
+    effort_after: dict[str, int | None]
+
+
+EffortWeightSyncSkipReason = Literal[
+    "frozen", "cancelled", "commercialized", "reached_stage", "started_share", "split_rejected"
+]
+
+
+class EffortWeightSyncSkipped(BaseModel):
+    """A project with its own effort for a revived step's kind that does not
+    receive it (never touched)."""
+
+    project_id: uuid.UUID
+    name: str
+    category: CategoryCodeOut
+    reason: EffortWeightSyncSkipReason
+    step_ids: list[str]
+
+
+class EffortWeightSyncCounts(BaseModel):
+    template_rows: int
+    categories: int
+    projects_rederived: int
+    projects_skipped: int
+
+
+class EffortWeightSyncResponse(BaseModel):
+    """ADR 0070 catch-up result. With `dry_run` nothing was written; the
+    lists are what an apply would do now. Projects are ordered by name, id.
+    `project_ids` = the projects re-derived (and marked `schedule_stale`)."""
+
+    dry_run: bool
+    counts: EffortWeightSyncCounts
+    categories: list[EffortWeightSyncCategory]
+    projects: list[EffortWeightSyncProject]
+    skipped: list[EffortWeightSyncSkipped]
+    project_ids: list[uuid.UUID]

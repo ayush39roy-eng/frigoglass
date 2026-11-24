@@ -15,8 +15,20 @@ contract Part A): the two previews are writes-in-preparation.
   in id order; the rule evaluated under the lock; template, `template_changes`
   row, copies, stale flags, audit), then ONE greedy run with the priority
   move's lifecycle (`trigger_reason="template_apply"`). No `effort_weeks` is
-  written and nothing is re-derived (R33-2).
+  written and nothing is re-derived (R33-2), except the ADR 0070 revive: a
+  length 0 -> N on a step with weight 0 sets the weight to N, and every
+  received own-effort pair of it gets the copy and its project's effort
+  re-derived (`services.template_apply` module docstring).
 - `POST /workflow-templates/categories` (B2): add a category.
+- `POST /workflow-templates/sync-effort-weights` (ADR 0070, Super Admin
+  only): the one-time catch-up of revives saved before ADR 0070; dry run or
+  apply; marks stale, never dispatches a run.
+
+Lock order (owner 2026-11-24, run 307 "deadlock detected"): the apply and
+the sync take the band-rank advisory lock FIRST (`lock_band_ranks`, 5 s ->
+503 `BAND_RANK_BUSY`), before any category or project row lock, the same
+first lock a schedule run's persistence takes (`wait_for_band_ranks`), so
+the two serialise instead of deadlocking on project rows.
 
 Rate limits are per API process (`services.rate_limit`): timeline preview
 120/min, apply preview 30/min (not in the contract; it reads every project of
@@ -38,14 +50,15 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
-from api.deps import require_workflow_templates_write
+from api.deps import require_roles, require_workflow_templates_write
 from api.errors import HTTP_422, CodedHTTPException
 from core.principal import Principal
 from models.audit import AuditLogEntry
 from models.category import Category
-from models.enums import NON_SCHEDULABLE_STATUSES
+from models.enums import NON_SCHEDULABLE_STATUSES, RoleName
 from models.project import Project
 from models.workflow import TemplateChange, WorkflowLeadTime
+from scheduling.effort_split import EffortSplitRejected
 from schemas.category import CategoryRead
 from schemas.workflow_templates import (
     AppliedCounts,
@@ -60,6 +73,8 @@ from schemas.workflow_templates import (
     CategoryCreateRequest,
     CategoryCreateResponse,
     CurrentStage,
+    EffortWeightSyncRequest,
+    EffortWeightSyncResponse,
     NotApplied,
     TemplateApplyRequest,
     TemplateApplyResponse,
@@ -68,9 +83,17 @@ from schemas.workflow_templates import (
     TimelinePreviewRequest,
     TimelinePreviewResponse,
 )
+from services.band_rank import lock_band_ranks
 from services.category_admin import add_category
+from services.effort_weight_sync import sync_effort_weights
 from services.hub_scope import hub_scope_filter
 from services.priority_move import decide_auto_recalc_batch, dispatch_auto_recalc_batch
+from services.project_effort import (
+    TRIGGER_TEMPLATE_REVIVE,
+    rederive_project_effort,
+    split_rejected_error,
+    template_kinds,
+)
 from services.rate_limit import TokenBucketLimiter
 from services.schedule_stale import mark_projects_stale
 from services.template_apply import (
@@ -95,6 +118,10 @@ TIMELINE_PREVIEW_RATE_LIMIT = TokenBucketLimiter(capacity=120, refill_per_second
 APPLY_PREVIEW_RATE_LIMIT = TokenBucketLimiter(capacity=30, refill_per_second=0.5)
 APPLY_RATE_LIMIT = TokenBucketLimiter(capacity=6, refill_per_second=0.1)
 ADD_CATEGORY_RATE_LIMIT = TokenBucketLimiter(capacity=10, refill_per_second=1 / 6)
+SYNC_EFFORT_WEIGHTS_RATE_LIMIT = TokenBucketLimiter(capacity=6, refill_per_second=0.1)
+
+#: ADR 0070 / ADR 0058: the one-time effort-weight sync is Super Admin only.
+_super_admin_only = require_roles(RoleName.SUPER_ADMIN)
 
 #: `ScheduleRun.trigger_reason` of the apply's run (contract Part H).
 TEMPLATE_APPLY_TRIGGER_REASON = "template_apply"
@@ -326,10 +353,11 @@ async def _check_selected_ids_exist(
         )
 
 
-async def _write_template(db: AsyncSession, entry: ResolvedEntry) -> None:
+async def _write_template(db: AsyncSession, entry: ResolvedEntry, revived: dict[str, int]) -> None:
     """Contract E3 step 4: the template's `weeks` / `gap_weeks` of the changed
-    steps (never `effort_weight_weeks`, which is immutable) and
-    `template_version + 1`. The category row is locked by the caller."""
+    steps and `template_version + 1`. `effort_weight_weeks` is written only
+    for a revived step (ADR 0070: 0 -> N, `revived`); every other weight is
+    left alone. The category row is locked by the caller."""
 
     for d in entry.changed:
         values: dict[str, int] = {}
@@ -337,6 +365,8 @@ async def _write_template(db: AsyncSession, entry: ResolvedEntry) -> None:
             values["weeks"] = d.weeks_after
         if d.gap_changed:
             values["gap_weeks"] = d.gap_after
+        if d.step_id in revived:
+            values["effort_weight_weeks"] = revived[d.step_id]
         await db.execute(
             update(WorkflowLeadTime)
             .where(
@@ -366,6 +396,12 @@ async def apply_template(
     selected_ids = set(body.selection.project_ids)
     if selected_ids:
         await _check_selected_ids_exist(db, current_user, selected_ids)
+
+    # 0. The band-rank lock FIRST (owner 2026-11-24, run 307 deadlock): a
+    # schedule run's persistence takes it before its first write, so the
+    # apply's project row locks never interleave with a persisting run.
+    # Bounded: 503 BAND_RANK_BUSY after 5 s, nothing written.
+    await lock_band_ranks(db)
 
     # 1. category rows locked, versions checked; 2–3. the category's projects
     # locked in id order, the stage rule and ownEffort evaluated under it.
@@ -399,8 +435,9 @@ async def apply_template(
     change_id = uuid.uuid4()
     summaries: list[dict[str, Any]] = []
     for e in entries:
-        await _write_template(db, e)
-        summaries.append(change_summary(e, e.category.template_version))
+        revived = evaluation.revived.get(e.category.code, {})
+        await _write_template(db, e, revived)
+        summaries.append(change_summary(e, e.category.template_version, revived))
     db.add(
         TemplateChange(
             id=change_id,
@@ -415,9 +452,11 @@ async def apply_template(
     # 6. the copies (OR-4; no effort_weeks, no progress field); 8. one
     # project.template_applied row per changed project.
     changed: list[tuple[Project, str]] = []
+    rederived: list[uuid.UUID] = []
+    kinds = await template_kinds(db) if any(o.needs_rederive for o, _ in receivers) else {}
     for o, how in receivers:
         before, after = write_copies(o, change_id)
-        if not after:  # pragma: no cover - a listed receiver always writes
+        if not after and not o.needs_rederive:  # pragma: no cover - a receiver writes
             continue
         changed.append((o.project, how))
         db.add(
@@ -434,9 +473,29 @@ async def apply_template(
                     "category": o.entry.category.code,
                     "received_as": how,
                     "steps": after,
+                    "effort_rederived": o.needs_rederive,
                 },
             )
         )
+        if o.needs_rederive:
+            # ADR 0070: the revived weight reaches this project; the same R6
+            # re-derivation as the project PATCH (audit
+            # `project.effort_rederived`), after the template weights and the
+            # copies above are in the session.
+            await db.flush()
+            try:
+                await rederive_project_effort(
+                    db,
+                    o.project,
+                    trigger=TRIGGER_TEMPLATE_REVIVE,
+                    actor_user_id=current_user.user_id,
+                    kinds=kinds,
+                    rows=sorted(o.rows.values(), key=lambda r: r.sequence_order),
+                )
+            except EffortSplitRejected as exc:  # pragma: no cover - predicted in evaluate
+                await db.rollback()
+                raise split_rejected_error(exc, kinds) from exc
+            rederived.append(o.project.id)
     await db.flush()
     # 7. stale on the changed projects.
     await mark_projects_stale(db, [p.id for p, _ in changed])
@@ -463,6 +522,12 @@ async def apply_template(
                 "automatic": [str(p.id) for p, how in changed if how == "automatic"],
                 "selected": [str(p.id) for p, how in changed if how == "selected"],
                 "own_effort": [str(o.project.id) for o in own_effort],
+                # ADR 0070: revived weights and the projects re-derived.
+                "effort_weights_revived": {
+                    code: dict(sorted(steps.items()))
+                    for code, steps in sorted(evaluation.revived.items())
+                },
+                "effort_rederived": [str(pid) for pid in rederived],
                 "never": [
                     {"project_id": str(o.project.id), "reason": reason, "step_ids": step_ids}
                     for o, reason, step_ids in evaluation.never()
@@ -499,6 +564,46 @@ async def apply_template(
         schedule_run_id=outcome.schedule_run_id,
         task_id=outcome.task_id,
     )
+
+
+# --- ADR 0070: one-time effort-weight sync ------------------------------------------------------
+
+
+@router.post("/sync-effort-weights", response_model=EffortWeightSyncResponse)
+async def sync_effort_weights_endpoint(
+    body: EffortWeightSyncRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_super_admin_only),
+) -> EffortWeightSyncResponse:
+    """ADR 0070 catch-up (owner 2026-11-24, "Split the figure"): every
+    template row with `weeks > 0` and `effort_weight_weeks = 0` gets weight
+    = weeks, and every not-closed, not-frozen project of those categories
+    with its own effort for the step's kind and the step not reached gets the
+    copy and a re-derived split (`services.effort_weight_sync`).
+
+    `dry_run: true` reads only (no lock, no write, no audit). `dry_run:
+    false` takes the band-rank lock first (503 `BAND_RANK_BUSY`), writes the
+    weights, copies and effort, audit rows and `schedule_stale` in one
+    transaction, and never dispatches a run (recalculation is manual,
+    ADR 0069). Idempotent: once applied there is nothing left to sync."""
+
+    _rate_limit(
+        SYNC_EFFORT_WEIGHTS_RATE_LIMIT, "sync-effort-weights", current_user, "effort-weight syncs"
+    )
+    if not body.dry_run:
+        await lock_band_ranks(db)
+    try:
+        result = await sync_effort_weights(
+            db, dry_run=body.dry_run, actor_user_id=current_user.user_id
+        )
+    except EffortSplitRejected as exc:  # pragma: no cover - predicted per project
+        await db.rollback()
+        raise split_rejected_error(exc) from exc
+    if body.dry_run:
+        await db.rollback()
+    else:
+        await db.commit()
+    return result
 
 
 # --- B2: add category -------------------------------------------------------------------------

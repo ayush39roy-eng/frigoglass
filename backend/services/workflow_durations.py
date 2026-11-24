@@ -296,4 +296,11 @@ def run_input_lead_and_override(
         return (None if table_weeks == 0 else 0), None
     lead = effort_weight_weeks if own_effort else plan_weeks
     override = effort_weeks if own_effort else None
+    if own_effort and effort_weeks is None:
+        # ADR 0070: a revived weight can sit on an own-effort step that has no
+        # share (held back, or not yet re-derived). OR-2 gives it `eff = 0`,
+        # so the run must too: lead 0, never `override ?? weight`. Before ADR
+        # 0070 such a step always had weight 0 (I26), so this is the same
+        # input on every earlier state.
+        lead = 0
     return (None if lead == table_weeks else lead), override

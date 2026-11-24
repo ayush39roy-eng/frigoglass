@@ -1503,6 +1503,45 @@ the validator.
   - (iii) for every step with `ownEffort(p, kind(s))`, `eff = effort_weeks ?? 0`, independent of
     `plan_weeks` and of the template `weeks`.
 
+### G. Revived step joins the effort split *(2026-11-24, ADR 0070; owner "Split the figure")*
+
+Binding over §A ("`effort_weight_weeks` … never"), §B (R2 / R6 triggers) and §C (OR-4), I26 and
+I31(iii) where they differ.
+
+- **Weight revive.** An apply that sets a step's `weeks` from 0 to N > 0 while its
+  `effort_weight_weeks` is 0 also sets that weight to N. Every other weight stays as it is. For
+  example, B/PDD-H 6 → 4 keeps weight 6.
+- **What a received own-effort pair of a revived step gets.**
+  - It gets the copy `plan_weeks = N`.
+  - Its project's effort is re-derived in the same transaction (R6, audit `project.effort_rederived`,
+    trigger `template_revive`).
+  - The figure's total is unchanged. For example, B lab 6 with weights F 3 : H 6 gives F 2, H 4.
+  - The pair is refused, and flagged `own_effort_length_not_applied` as before, when the re-split
+    would change the `effort_weeks` of a reached step or R7 rejects it.
+  - Never pairs are untouched, as before.
+- **Held back.** A step is outside S′ (as if excluded) when all of these hold:
+  - it is Not Started;
+  - its `effort_weeks` is null;
+  - its kind has own effort;
+  - its weight is > 0;
+  - it is not excluded;
+  - its copy `plan_weeks` is 0.
+
+  Exceptions:
+  - when that would empty the kind's S′;
+  - on a category or workflow change, which re-derives without this rule.
+
+  This keeps reached, unselected, frozen and closed projects on their old split through every later
+  re-derivation.
+- **Run input.** An own-effort step with null `effort_weeks` has `lead_weeks = 0`, so `eff = 0` as in §B.
+- **Catch-up.** `POST /workflow-templates/sync-effort-weights` `{dry_run}`:
+  - Super Admin only;
+  - weight = weeks on every row with `weeks > 0` and weight 0, then the rule above for every
+    own-effort pair;
+  - marks `schedule_stale` and never dispatches a run;
+  - idempotent.
+- **Lock order.** The apply and the sync take the band-rank lock first (`BAND_RANK_BUSY` 503 after 5 s).
+
 ## Per-project step exclusion *(2026-11-15, P35, ADR 0049 as ruled at P35-T03)*
 
 A project may switch off individual applicable steps (owner OQ #81/#82/#83). The items below are

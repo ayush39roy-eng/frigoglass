@@ -1071,6 +1071,12 @@ async def stage_project_update(
                     effort_target["certification_testing_required"]
                 ),
                 project_id=project.id,
+                # ADR 0070: a category / workflow change re-derives without
+                # the held-back rule (ADR 0041 R6 as before).
+                hold_back=(
+                    target_category == project.category
+                    and target_hub.is_oem == current_hub.is_oem
+                ),
             )
         except EffortSplitRejected as exc:
             raise split_rejected_error(exc, await template_kinds(db)) from exc
@@ -1189,6 +1195,7 @@ async def stage_project_update(
                 else TRIGGER_PROJECT_FIELDS
             ),
             actor_user_id=current_user.user_id,
+            hold_back=not (category_changes or workflow_changes),
         )
         # OR-5: a kind that lost its own figure follows the template again.
         if rederived is not None and rederived.template_copy:

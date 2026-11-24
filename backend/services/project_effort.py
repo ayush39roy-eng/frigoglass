@@ -15,10 +15,24 @@ else the project's template copy `plan_weeks`
 (`services.workflow_durations.live_step_effective_weeks`); a step whose
 effective duration is 0 is skipped (R5).
 
-**Weights (P33-T08, R33-2).** R2 splits a figure over the category
-template's immutable `effort_weight_weeks` (backfilled = `weeks`), never over
-`weeks` or a project's `plan_weeks`, so a template edit never reshapes a
-project's split.
+**Weights (P33-T08, R33-2; amended by ADR 0070).** R2 splits a figure over
+the category template's `effort_weight_weeks` (backfilled = `weeks`), never
+over `weeks` or a project's `plan_weeks`, so a template edit never reshapes a
+project's split. The one exception (owner 2026-11-24, "Split the figure",
+ADR 0070): a template step revived from 0 to N weeks whose weight is 0 gets
+weight N (the template apply, and the Super-Admin effort-weight sync).
+
+**Held back (ADR 0070).** A revived weight reaches a project only through
+its copy: a step is held out of the split (treated as outside S′, exactly
+like an excluded step, R35-3) when it is Not Started, carries no effort
+share (`effort_weeks` null), its kind already follows the project's own
+figure, it has a weight, and the project's copy `plan_weeks` is 0
+(`held_out_step_ids`). The apply / sync writes `plan_weeks` on the pairs
+that receive the revive, so only those projects re-split; a project that
+had reached the step, was not selected, or was frozen / closed keeps its
+split on every later re-derivation. Never applied when it would leave the
+kind's S′ empty. Category and workflow changes re-derive without it
+(`hold_back=False`, ADR 0041 R6 as before).
 
 **Re-derivation** (`rederive_project_effort`, R6) runs, in the same
 transaction, on:
@@ -30,7 +44,10 @@ transaction, on:
   `sync_project_steps` re-points the rows and clears their timing);
 - a step-kind edit on Workflow Settings (`rederive_all_projects`). Since
   P33 (DOMAIN_RULES §B: "R6 triggers minus the lead-time edit") a lead-time
-  / template edit is no trigger: the weights are immutable;
+  / template edit is no trigger: the weights are immutable — except (ADR
+  0070) a template apply that revives a step's weight, which re-derives the
+  receiving pairs' projects (`TRIGGER_TEMPLATE_REVIVE`), and the one-time
+  Super-Admin sync (`TRIGGER_EFFORT_WEIGHT_SYNC`);
 - unfreezing a project (the Gantt freeze toggle);
 - a stage status crossing `Not Started` (Workspace stage PATCH, weekly
   check-in), because R3's `started` flag is an input of the split.
@@ -105,6 +122,11 @@ TRIGGER_CREATE = "project_create"
 TRIGGER_IMPORT = "import"
 #: P35 (R35-6): an exclusion or re-inclusion re-derives the split over S′.
 TRIGGER_STEP_EXCLUSION = "step_exclusion"
+#: ADR 0070: a template apply that revived a step's weight (the project
+#: received the revived length).
+TRIGGER_TEMPLATE_REVIVE = "template_revive"
+#: ADR 0070: the Super-Admin one-time effort-weight sync.
+TRIGGER_EFFORT_WEIGHT_SYNC = "effort_weight_sync"
 
 
 @dataclass(frozen=True)
@@ -125,16 +147,88 @@ def _figure_str(value: object) -> str | None:
     return None if value is None else str(value)
 
 
+@dataclass(frozen=True)
+class HoldBackStep:
+    """One step as `held_out` reads it (live row or a target state)."""
+
+    step_id: str
+    kind: str
+    weight: int
+    excluded: bool
+    not_started: bool
+    effort_weeks: int | None
+    plan_weeks: int
+
+
+def held_out(steps: Iterable[HoldBackStep]) -> frozenset[str]:
+    """ADR 0070 (module docstring, "Held back"): the steps held out of the
+    split. A step is held out when it is Not Started, has no effort share,
+    its kind already has the project's own effort (OR-1), it carries a
+    weight, it is not excluded, and its copy `plan_weeks` is 0. A kind whose
+    every S′ member would be held out holds none (S′ is never emptied here).
+
+    Before ADR 0070 no such step exists (a weighted step of an own-effort
+    kind always carries a share, I26), so this changes nothing on data that
+    predates a revive."""
+
+    steps = list(steps)
+    own = own_effort_kinds(
+        ((s.step_id, s.effort_weeks) for s in steps), {s.step_id: s.kind for s in steps}
+    )
+    if not own:
+        return frozenset()
+    members: dict[str, set[str]] = {}
+    candidates: dict[str, set[str]] = {}
+    for s in steps:
+        if s.kind not in own or s.weight <= 0 or s.excluded:
+            continue
+        members.setdefault(s.kind, set()).add(s.step_id)
+        if s.not_started and s.effort_weeks is None and s.plan_weeks == 0:
+            candidates.setdefault(s.kind, set()).add(s.step_id)
+    out: set[str] = set()
+    for kind, held in candidates.items():
+        if members[kind] - held:
+            out |= held
+    return frozenset(out)
+
+
+def held_out_step_ids(
+    rows: Iterable[ProjectWorkflowStep],
+    kinds: Mapping[str, str],
+    weights: Mapping[str, int],
+    *,
+    plan_overrides: Mapping[str, int] | None = None,
+) -> frozenset[str]:
+    """`held_out` on live rows (`plan_overrides`: copies about to be written,
+    for a preview of an apply / sync)."""
+
+    plan = plan_overrides or {}
+    return held_out(
+        HoldBackStep(
+            step_id=r.step_template_id,
+            kind=kinds.get(r.step_template_id, "elapsed"),
+            weight=weights.get(r.step_template_id, 0),
+            excluded=bool(r.excluded),
+            not_started=r.status == WorkflowStepStatus.NOT_STARTED,
+            effort_weeks=r.effort_weeks,
+            plan_weeks=plan.get(r.step_template_id, r.plan_weeks),
+        )
+        for r in rows
+    )
+
+
 def effort_inputs(
     rows: Iterable[ProjectWorkflowStep],
     kinds: dict[str, str],
     weights: Mapping[str, int],
+    held: frozenset[str] = frozenset(),
 ) -> tuple[EffortStepInput, ...]:
     """The split's step inputs from live rows: lead = the category template's
     `effort_weight_weeks` of the step (R33-2; `weights`, 0 when the template
     has no row), kind = the template's kind on Workflow Settings, started =
     stored status ≠ Not Started (R3), excluded = the row's P35 flag (R35-3:
-    the split runs over S′, the weighted steps that are not excluded)."""
+    the split runs over S′, the weighted steps that are not excluded) or a
+    held-back step (`held`, ADR 0070)."""
 
     return tuple(
         EffortStepInput(
@@ -143,7 +237,7 @@ def effort_inputs(
             kind=kinds.get(r.step_template_id, "elapsed"),
             lead_weeks=weights.get(r.step_template_id, 0),
             started=r.status != WorkflowStepStatus.NOT_STARTED,
-            excluded=bool(r.excluded),
+            excluded=bool(r.excluded) or r.step_template_id in held,
         )
         for r in rows
     )
@@ -154,22 +248,32 @@ def derive_for(
     rows: Sequence[ProjectWorkflowStep],
     kinds: dict[str, str],
     weights: Mapping[str, int],
+    *,
+    hold_back: bool = True,
+    plan_overrides: Mapping[str, int] | None = None,
 ) -> ProjectEffortDerivation:
     """`derive_project_effort` of a project's live rows over the R2 weights
-    of its category (`effort_weights`). Raises `EffortSplitRejected` (R7)."""
+    of its category (`effort_weights`), with the ADR 0070 held-back steps
+    outside S′ (unless `hold_back` is False). Raises `EffortSplitRejected`
+    (R7)."""
 
+    held = (
+        held_out_step_ids(rows, kinds, weights, plan_overrides=plan_overrides)
+        if hold_back
+        else frozenset()
+    )
     return derive_project_effort(
         design_effort_weeks=project.design_effort_weeks,
         lab_effort_weeks=project.lab_effort_weeks,
         certification_testing_required=project.certification_testing_required,
-        steps=effort_inputs(rows, kinds, weights),
+        steps=effort_inputs(rows, kinds, weights, held),
     )
 
 
 async def effort_weights(
     db: AsyncSession, workflow_id: str, category: str | None
 ) -> dict[str, int]:
-    """R33-2: the immutable `effort_weight_weeks` of `workflow_id` × `category`
+    """R33-2: the `effort_weight_weeks` of `workflow_id` × `category`
     by step id (empty without a category: no split applies)."""
 
     if category is None:
@@ -225,6 +329,7 @@ async def validate_effort_split(
     project_id: uuid.UUID | None = None,
     excluded_step_ids: Iterable[str] | None = None,
     started_step_ids: Iterable[str] | None = None,
+    hold_back: bool = True,
 ) -> ProjectEffortDerivation | None:
     """R7 BEFORE anything is written: the split the target state would get
     (the workflow of `hub_is_oem`, the lead times of `category`, the stored
@@ -236,7 +341,12 @@ async def validate_effort_split(
     workflow change clears them, R35-11) unless `excluded_step_ids` gives the
     final state of a Save; `started_step_ids` likewise overrides the stored
     R3 flags. Returns the derivation (None without a figure), so the caller
-    can apply `exclusion_guard_error` (R35-5 (a))."""
+    can apply `exclusion_guard_error` (R35-5 (a)).
+
+    ADR 0070: with `project_id` and `hold_back`, the held-back steps of the
+    stored rows (`held_out`) are outside S′, exactly as the re-derivation
+    will treat them; a category or workflow change passes
+    `hold_back=False`."""
 
     if design_effort_weeks is None and lab_effort_weeks is None:
         return None
@@ -255,13 +365,16 @@ async def validate_effort_split(
     lead = await effort_weights(db, workflow_id, category)
     started: set[str] = set()
     excluded: set[str] = set()
+    stored: dict[str, tuple[int | None, int]] = {}
     if project_id is not None:
-        for step_id, status, is_excluded in (
+        for step_id, status, is_excluded, effort, plan in (
             await db.execute(
                 select(
                     ProjectWorkflowStep.step_template_id,
                     ProjectWorkflowStep.status,
                     ProjectWorkflowStep.excluded,
+                    ProjectWorkflowStep.effort_weeks,
+                    ProjectWorkflowStep.plan_weeks,
                 ).where(ProjectWorkflowStep.project_id == project_id)
             )
         ).all():
@@ -269,10 +382,26 @@ async def validate_effort_split(
                 started.add(step_id)
             if is_excluded:
                 excluded.add(step_id)
+            stored[step_id] = (effort, plan)
     if excluded_step_ids is not None:
         excluded = set(excluded_step_ids)
     if started_step_ids is not None:
         started = set(started_step_ids)
+    held: frozenset[str] = frozenset()
+    if hold_back and stored:
+        held = held_out(
+            HoldBackStep(
+                step_id=step_id,
+                kind=kind.value,
+                weight=lead.get(step_id, 0),
+                excluded=step_id in excluded,
+                not_started=step_id not in started,
+                effort_weeks=stored[step_id][0],
+                plan_weeks=stored[step_id][1],
+            )
+            for step_id, _seq, kind in templates
+            if step_id in stored
+        )
     return derive_project_effort(
         design_effort_weeks=design_effort_weeks,  # type: ignore[arg-type]
         lab_effort_weeks=lab_effort_weeks,  # type: ignore[arg-type]
@@ -284,7 +413,7 @@ async def validate_effort_split(
                 kind=kind.value,
                 lead_weeks=lead.get(step_id, 0),
                 started=step_id in started,
-                excluded=step_id in excluded,
+                excluded=step_id in excluded or step_id in held,
             )
             for step_id, seq, kind in templates
         ),
@@ -334,11 +463,13 @@ async def rederive_project_effort(
     kinds: dict[str, str] | None = None,
     rows: Sequence[ProjectWorkflowStep] | None = None,
     audit: bool = True,
+    hold_back: bool = True,
 ) -> EffortRederivation | None:
     """Re-derive one project's `effort_weeks` (module docstring). `None` for a
     frozen project (no-op, R6/I10; its figures are still validated). Raises
     `EffortSplitRejected` before anything is written (R7). Flushes; the
-    caller commits."""
+    caller commits. `hold_back=False` (a category or workflow change)
+    ignores the ADR 0070 held-back rule."""
 
     if kinds is None:
         kinds = await _template_kinds(db)
@@ -358,7 +489,11 @@ async def rederive_project_effort(
     # R7 is checked for a frozen project too, so a figure stored while frozen
     # can always be applied on unfreeze; nothing is written for it (I10).
     derivation = derive_for(
-        project, rows, kinds, await effort_weights(db, workflow_id, project.category)
+        project,
+        rows,
+        kinds,
+        await effort_weights(db, workflow_id, project.category),
+        hold_back=hold_back,
     )
     if project.frozen:
         return None
