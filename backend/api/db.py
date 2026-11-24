@@ -44,8 +44,16 @@ def get_engine() -> AsyncEngine:
         _engine = create_async_engine(
             _database_url(),
             pool_pre_ping=True,
-            pool_size=10,
-            max_overflow=20,
+            # Owner 2026-11-24: the hosted Postgres (Render's 256 MB tier,
+            # shared_buffers 64 MB) was OOM-killed into crash recovery. Each
+            # Postgres connection costs several MB, so the old 10+20 per
+            # gunicorn worker (60 for two workers, plus run engines) could
+            # exhaust its memory under a burst. 5+5 per worker caps the app
+            # at 20; extra requests wait up to pool_timeout for a free
+            # connection instead of crashing the database.
+            pool_size=int(os.environ.get("RPD_DB_POOL_SIZE", "5")),
+            max_overflow=int(os.environ.get("RPD_DB_MAX_OVERFLOW", "5")),
+            pool_timeout=30,
             pool_recycle=300,
             # P9-F01/R04-L3: unhandled DB errors must not log bound SQL
             # parameters (free text / emails could leak into logs/tracebacks).

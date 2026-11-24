@@ -165,7 +165,11 @@ async def _open_session_factory() -> AsyncIterator[async_sessionmaker[AsyncSessi
     one across separate `asyncio.run()`-created event loops breaks asyncpg.
     """
 
-    engine: AsyncEngine = create_async_engine(_database_url())
+    # A run needs one or two connections; keep its pool small so a run plus
+    # the request pools stay within the hosted Postgres's memory.
+    engine: AsyncEngine = create_async_engine(
+        _database_url(), pool_size=2, max_overflow=1, hide_parameters=True
+    )
     try:
         yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
