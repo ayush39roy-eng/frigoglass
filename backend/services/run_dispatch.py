@@ -53,7 +53,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import event, func, select, update
+from sqlalchemy import ColumnElement, and_, event, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,6 +91,26 @@ def in_flight_window() -> timedelta:
     )
 
 
+#: Owner 2026-11-24: a greedy run takes ~1 s, so one still queued/running
+#: after this long is abandoned (a dead process or a lock it never got);
+#: CP-SAT keeps the Celery window. Before, a stuck greedy run blocked every
+#: recalculation (saves answered "deferred") for the full 17 min.
+GREEDY_IN_FLIGHT_WINDOW = timedelta(minutes=5)
+
+
+def abandoned_condition(now: datetime) -> ColumnElement[bool]:
+    """A queued/running row past its window: `GREEDY_IN_FLIGHT_WINDOW` for a
+    greedy run, `in_flight_window()` for CP-SAT. The negation is "in flight"."""
+
+    return or_(
+        ScheduleRun.created_at <= now - in_flight_window(),
+        and_(
+            ScheduleRun.solver_type == SolverType.GREEDY,
+            ScheduleRun.created_at <= now - GREEDY_IN_FLIGHT_WINDOW,
+        ),
+    )
+
+
 logger = logging.getLogger(__name__)
 
 #: ADR 0026 §4: `ScheduleRun.error_message` of a reaped run.
@@ -114,7 +134,6 @@ async def reap_abandoned_runs(db: AsyncSession) -> list[uuid.UUID]:
     its own tick for deployments with a worker.
     """
 
-    cutoff = datetime.now(UTC) - in_flight_window()
     stale = (
         (
             await db.execute(
@@ -123,7 +142,7 @@ async def reap_abandoned_runs(db: AsyncSession) -> list[uuid.UUID]:
                     ScheduleRun.status.in_(
                         [ScheduleRunStatus.QUEUED, ScheduleRunStatus.RUNNING]
                     ),
-                    ScheduleRun.created_at <= cutoff,
+                    abandoned_condition(datetime.now(UTC)),
                 )
                 .order_by(ScheduleRun.version)
             )
@@ -399,13 +418,12 @@ async def find_in_flight_run(
     await db.execute(select(func.pg_advisory_xact_lock(DISPATCH_LOCK_KEY)))
     # ADR 0026 §4: rows past the window are reaped where dispatch is decided.
     await reap_abandoned_runs(db)
-    cutoff = datetime.now(UTC) - in_flight_window()
     in_flight = (
         await db.execute(
             select(ScheduleRun.id)
             .where(
                 ScheduleRun.status.in_([ScheduleRunStatus.QUEUED, ScheduleRunStatus.RUNNING]),
-                ScheduleRun.created_at > cutoff,
+                ~abandoned_condition(datetime.now(UTC)),
             )
             .limit(1)
         )

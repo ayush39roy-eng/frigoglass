@@ -71,6 +71,9 @@ BAND_STATUSES: frozenset[ProjectStatus] = frozenset(
 #: local `lock_timeout` around the lock call only, so the dispatch lock and
 #: the row `FOR UPDATE` that follow keep the session's own setting.
 BAND_RANK_LOCK_TIMEOUT = "5s"
+#: Owner 2026-11-24: the bound on a schedule run's lock waits while it
+#: persists (`wait_for_band_ranks`); a greedy solve itself takes ~1 s.
+RUN_PERSIST_LOCK_TIMEOUT = "60s"
 #: Postgres `lock_not_available` (raised when `lock_timeout` expires).
 _LOCK_NOT_AVAILABLE = "55P03"
 #: Seconds the 503 asks the client to wait before retrying.
@@ -132,8 +135,17 @@ async def wait_for_band_ranks(db: AsyncSession) -> None:
     Every band-rank writer takes this lock before any row lock, so a run that
     takes it before its first write is serialised with them and never holds
     a project row lock they wait on. Re-entrant (an in-process priority-move
-    confirm already holds it)."""
+    confirm already holds it).
 
+    Owner 2026-11-24 (runs stuck "running" for 17 min, every save after them
+    "deferred"): the wait is bounded. A transaction-local `lock_timeout`
+    (`RUN_PERSIST_LOCK_TIMEOUT`) is set here and kept for the rest of the
+    run's persistence transaction, so this lock AND the row locks after it
+    give up instead of waiting forever on a holder that never finishes; the
+    run then fails cleanly (FAILED, follow-up dispatched) and a later run
+    retries."""
+
+    await db.execute(select(func.set_config("lock_timeout", RUN_PERSIST_LOCK_TIMEOUT, True)))
     await db.execute(select(func.pg_advisory_xact_lock(BAND_RANK_LOCK_KEY)))
 
 

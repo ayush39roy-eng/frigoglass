@@ -50,6 +50,11 @@ def get_engine() -> AsyncEngine:
             # P9-F01/R04-L3: unhandled DB errors must not log bound SQL
             # parameters (free text / emails could leak into logs/tracebacks).
             hide_parameters=True,
+            # Owner 2026-11-24: a request transaction left open and idle
+            # (holding advisory / row locks) blocked every schedule run. Postgres
+            # ends such a session after 5 min, releasing its locks. Request
+            # caps are far below this (what-if 40 s, preview 20 s).
+            connect_args={"server_settings": {"idle_in_transaction_session_timeout": "300000"}},
         )
     return _engine
 

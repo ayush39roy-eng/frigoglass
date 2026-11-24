@@ -834,16 +834,16 @@ async def build_workspace(
         status_ = live.status if live is not None else WorkflowStepStatus.NOT_STARTED
         percent = live.percent_complete if live is not None else 0
         override = live.remaining_weeks_override if live is not None else None
+        # Owner 2026-11-24 (steps F/G greyed "n/a" after a Workflow settings
+        # change gave them weeks): the live rows decide, not the last run. A
+        # step given weeks since that run is editable at once (the stage
+        # PATCH already checks the live rule); the run follows on recalc.
         skipped = (
-            run_step.skipped
-            if run_step is not None
-            else (
-                row_is_skipped(
-                    live, t.kind, project.certification_testing_required, own_effort=own_effort
-                )
-                if live is not None
-                else True
+            row_is_skipped(
+                live, t.kind, project.certification_testing_required, own_effort=own_effort
             )
+            if live is not None
+            else (run_step.skipped if run_step is not None else True)
         )
         stages.append(
             WorkspaceStage(

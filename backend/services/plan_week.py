@@ -27,7 +27,7 @@ from models.enums import ScheduleRunStatus
 from models.schedule import ScheduleRun
 from services.active_run import get_active_run
 from services.plan_clock import PlanClock
-from services.run_dispatch import in_flight_window
+from services.run_dispatch import abandoned_condition
 from services.week_rollover import rollover_failed_for_week
 
 PlanWeekStatus = Literal["current", "recalculating", "pending", "failed"]
@@ -37,13 +37,12 @@ async def any_run_in_flight(db: AsyncSession) -> bool:
     """A queued or running run inside the in-flight window (the same
     predicate as `run_dispatch.find_in_flight_run`, without its lock)."""
 
-    cutoff = datetime.now(UTC) - in_flight_window()
     return (
         await db.execute(
             select(ScheduleRun.id)
             .where(
                 ScheduleRun.status.in_([ScheduleRunStatus.QUEUED, ScheduleRunStatus.RUNNING]),
-                ScheduleRun.created_at > cutoff,
+                ~abandoned_condition(datetime.now(UTC)),
             )
             .limit(1)
         )
