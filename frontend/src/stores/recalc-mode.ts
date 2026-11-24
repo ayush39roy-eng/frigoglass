@@ -72,11 +72,17 @@ export const useRecalcModeStore = create<RecalcModeState>()(
   ),
 );
 
-function autoOf(state: RecalcModeState): boolean {
-  return state.manualUsers[state.activeEmail ?? ANON] !== true;
+/**
+ * Owner 2026-11-24: "remove the option for auto calculate, it should be
+ * manually hit". Recalculation is manual for everyone: every plan write
+ * carries `defer_recalc: true` and the header's Recalculate button runs the
+ * one coalesced run. The stored per-user switch is no longer read.
+ */
+function autoOf(_state: RecalcModeState): boolean {
+  return false;
 }
 
-/** The switch for the signed-in user (true = auto-recalculate, the default). */
+/** Always false since 2026-11-24 (manual recalculation only). */
 export function useAutoRecalc(): boolean {
   return useRecalcModeStore(autoOf);
 }

@@ -16,7 +16,7 @@ import { usePreferencesStore } from '@/stores/preferences';
 
 import { AppHeader } from './app-header';
 import { AppSidebar } from './app-sidebar';
-import { RecalcModeSync } from './auto-recalc-switch';
+import { RecalcModeSync } from './recalc-mode-sync';
 import { DensityRegion, type Density } from './density-zone';
 
 /**

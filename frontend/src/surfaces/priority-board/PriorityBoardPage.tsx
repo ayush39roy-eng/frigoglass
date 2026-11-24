@@ -120,7 +120,7 @@ export default function PriorityBoardPage(): React.JSX.Element {
     <PriorityMoveProvider>
       <PageHeader
         title="Priority board"
-        description="Every project by priority. Drag a card to another column, or use its priority control, to change its priority; drag it up or down within a column to change its position, which is its scheduling order inside that priority. The timeline recalculates after either move."
+        description="Every project by priority. Drag a card to another column, or use its priority control, to change its priority; drag it up or down within a column to change its position, which is its scheduling order inside that priority. Press Recalculate when you are done to update the timeline."
         actions={
           <>
             <CountrySegmented />

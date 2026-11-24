@@ -171,16 +171,17 @@ describe('PriorityMoveControl — recalc_status outcomes', () => {
     expect(within(panel).getByTestId('timeline-hidden-count')).toHaveTextContent('+3 more in hubs outside your scope');
   });
 
-  it('deferred: says the timeline updates automatically and watches for the follow-up run (ADR 0023)', async () => {
+  it('deferred (manual recalculation): says to press Recalculate; no follow-up run is watched', async () => {
     followUp.start.mockClear();
     api.moveProjectPriority.mockResolvedValue(response({ recalc_status: 'deferred', schedule_run_id: null, baseline_run_id: null, task_id: null }));
     const user = userEvent.setup();
     renderControl();
     await chooseP2(user);
     expect(await screen.findByTestId('priority-move-notice')).toHaveTextContent(
-      'Saved — the timeline updates automatically after the current recalculation',
+      'Press Recalculate once you are done editing to update the timeline.',
     );
-    expect(followUp.start).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Saved — plan not recalculated yet')).toBeInTheDocument();
+    expect(followUp.start).not.toHaveBeenCalled();
     expect(sse.streamSolverProgress).not.toHaveBeenCalled();
   });
 

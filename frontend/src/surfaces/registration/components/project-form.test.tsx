@@ -321,14 +321,14 @@ describe('ProjectFormDialog', () => {
     expect(screen.getByLabelText(/^Name/)).toHaveValue('Cooler A');
     expect(screen.getByLabelText(/TCOGS/)).toHaveValue(1000);
     // P11 (ADR 0015): an existing project's priority change recalculates.
-    expect(screen.getByText('Changing priority recalculates the timeline.')).toBeInTheDocument();
+    expect(screen.getByText('Press Recalculate after saving to update the timeline.')).toBeInTheDocument();
   });
 
   it('create mode has no recalculation note (a new project waits for the next run)', () => {
     renderWithProviders(
       <ProjectFormDialog mode="create" project={null} open onOpenChange={vi.fn()} hubs={hubs} onSubmit={vi.fn()} />,
     );
-    expect(screen.queryByText('Changing priority recalculates the timeline.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Press Recalculate after saving to update the timeline.')).not.toBeInTheDocument();
   });
 
   it('P11: a 409 HARD_GATE_FORCES_P1 on save shows the hard-gate copy', async () => {

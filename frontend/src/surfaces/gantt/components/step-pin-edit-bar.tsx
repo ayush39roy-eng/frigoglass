@@ -49,7 +49,7 @@ export function StepPinEditBar({
       <span className="text-xs font-semibold text-text" aria-live="polite" data-testid="step-pin-edit-count">
         {countText}
       </span>
-      <span className="text-2xs text-text-muted">Saving recalculates the timeline once for every changed step.</span>
+      <span className="text-2xs text-text-muted">Saving does not recalculate; press Recalculate when you are done.</span>
       {message ? (
         <p
           role={error || tooMany ? 'alert' : 'status'}

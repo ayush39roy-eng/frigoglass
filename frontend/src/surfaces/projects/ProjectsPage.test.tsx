@@ -651,12 +651,13 @@ describe('Projects page — registration drawer', () => {
     renderWithProviders(<FolderEditHarness projectId={P1} projectName="Cooler A" />);
     await user.click(screen.getByTestId('folder-edit'));
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
-    expect(within(drawer).getByText('Changing priority recalculates the timeline.')).toBeInTheDocument();
+    expect(within(drawer).getByText('Press Recalculate after saving to update the timeline.')).toBeInTheDocument();
     // Only a changed identity field is PATCHed (register popup, 2026-11-17).
     await user.type(within(drawer).getByLabelText(/^External code/), 'X-1');
     await user.click(within(drawer).getByRole('button', { name: 'Save changes' }));
+    // Manual recalculation (2026-11-24): the deferred save ran nothing.
     expect(await screen.findByTestId('priority-move-notice')).toHaveTextContent(
-      'Saved — the timeline updates automatically after the current recalculation',
+      'Press Recalculate once you are done editing to update the timeline.',
     );
   });
 

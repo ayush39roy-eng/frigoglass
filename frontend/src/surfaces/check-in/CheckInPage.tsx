@@ -290,7 +290,7 @@ export default function CheckInPage(): React.JSX.Element {
     <>
       <PageHeader
         title={title}
-        description="Report this week's progress on the stages due. Submitting saves the whole week at once and recalculates the timeline."
+        description="Report this week's progress on the stages due. Submitting saves the whole week at once; press Recalculate to update the timeline."
         actions={
           <>
             <CountrySegmented />

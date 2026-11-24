@@ -85,7 +85,8 @@ describe('workflow templates API (P33 B2, D, E2, E3)', () => {
     expect(calls).toEqual([
       ['/workflow-templates/timeline-preview', 'POST', JSON.stringify({ workflow_id: 'PDD', category: 'A', steps: [{ step_id: 'PDD-E', gap_weeks: -2 }] })],
       ['/workflow-templates/apply-preview', 'POST', JSON.stringify({ changes: [change] })],
-      ['/workflow-templates/apply', 'POST', JSON.stringify({ changes: [change], selection: { mode: 'none', project_ids: [] } })],
+      // Manual recalculation (2026-11-24): apply is a plan write, so it always defers.
+      ['/workflow-templates/apply', 'POST', JSON.stringify({ changes: [change], selection: { mode: 'none', project_ids: [] }, defer_recalc: true })],
       ['/workflow-templates/categories', 'POST', JSON.stringify({ code: 'B2', label: null, workflow_id: 'PDD', copy_from: 'B', insert_after: 'B' })],
     ]);
   });

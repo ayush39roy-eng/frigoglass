@@ -279,7 +279,7 @@ describe('P40-T03c step Start / End weeks', () => {
   });
 
   it.each([
-    ['deferred', /updates automatically|follow-up|in flight|after the run/i],
+    ['deferred', /Press Recalculate once you are done editing/],
     ['dispatch_failed', /could not be started/],
     ['unchanged', /already had these weeks/],
   ] as const)('reports %s as the priority move does', async (status, text) => {
@@ -600,18 +600,19 @@ describe('P40-R02 save lifecycle (queued → "Timeline updated", deferred, 403, 
     expect(sse.streamSolverProgress).not.toHaveBeenCalled();
   });
 
-  it('deferred: saved, the coalesced follow-up run is watched; Escape closes', async () => {
+  it('deferred (manual recalculation): saved, plan not recalculated, nothing watched; Escape closes', async () => {
     saveStepPins.mockResolvedValue(okResponse({ recalc_status: 'deferred' }));
     const user = userEvent.setup();
     renderWithProviders(<GanttPage />);
     await typeAndSave(user);
     const panel = await screen.findByTestId('step-pin-save-panel');
     expect(panel).toHaveAttribute('data-status', 'deferred');
-    expect(followUp.start).toHaveBeenCalledTimes(1);
+    expect(panel).toHaveTextContent('Saved — plan not recalculated yet');
+    expect(followUp.start).not.toHaveBeenCalled();
     expect(sse.streamSolverProgress).not.toHaveBeenCalled();
     expect(within(panel).getByTestId('step-pin-save-body')).toHaveTextContent('Saved 0 steps.');
-    expect(within(panel).getByTestId('step-pin-save-body')).toHaveTextContent('updates automatically after the current recalculation');
-    expect(within(panel).getByTestId('step-pin-save-follow-up')).toHaveTextContent('Waiting for the follow-up recalculation');
+    expect(within(panel).getByTestId('step-pin-save-body')).toHaveTextContent('Press Recalculate once you are done editing to update the timeline.');
+    expect(within(panel).queryByTestId('step-pin-save-follow-up')).toBeNull();
     within(panel).getByRole('button', { name: 'Close' }).focus();
     await user.keyboard('{Escape}');
     expect(screen.queryByTestId('step-pin-save-panel')).not.toBeInTheDocument();

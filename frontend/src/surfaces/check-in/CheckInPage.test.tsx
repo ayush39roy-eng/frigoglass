@@ -286,17 +286,18 @@ describe('CheckInPage — form validation and batch submit', () => {
     expect(document.body).not.toHaveTextContent(/commenting/i);
   });
 
-  it('deferred (ADR 0023): says the timeline updates automatically and starts the follow-up watcher', async () => {
+  it('deferred (manual recalculation): saved, plan not recalculated, no follow-up watcher', async () => {
     client.apiSend.mockResolvedValue(submitResponse({ recalc_status: 'deferred' }));
     const { user } = await renderPage();
     await user.click(within(stageEl('Design Detailing')).getByRole('button', { name: 'Confirm Design Detailing unchanged' }));
     await user.click(screen.getByTestId('check-in-submit'));
     const panel = await screen.findByTestId('check-in-result');
+    expect(panel).toHaveTextContent('Saved — plan not recalculated yet');
     expect(within(panel).getByTestId('check-in-result-body')).toHaveTextContent(
-      'Saved — the timeline updates automatically after the current recalculation',
+      'Press Recalculate once you are done editing to update the timeline.',
     );
-    expect(watcher.start).toHaveBeenCalledTimes(1);
-    expect(within(panel).getByTestId('check-in-follow-up')).toHaveTextContent('Waiting for the follow-up recalculation');
+    expect(watcher.start).not.toHaveBeenCalled();
+    expect(within(panel).queryByTestId('check-in-follow-up')).toBeNull();
   });
 
   it('dispatch_failed (P14): saved, marked stale, tells the user to press Recalculate', async () => {

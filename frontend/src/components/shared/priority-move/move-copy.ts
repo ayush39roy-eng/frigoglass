@@ -4,14 +4,14 @@
  */
 
 export const MOVE_COPY = {
-  confirmBody: 'The timeline will be recalculated.',
+  confirmBody: 'Press Recalculate when you are done editing to update the timeline.',
   // ADR 0023: a deferred auto-recalc gets one coalesced follow-up run; the
   // browser watches for it (`lib/use-follow-up-run.ts`) and refreshes.
   deferred: 'Saved — the timeline updates automatically after the current recalculation',
   followUpWatching: 'Waiting for the follow-up recalculation…',
-  // P61 (ADR 0069): Auto-recalculate is Off, so the save dispatched no run.
+  // P61 (ADR 0069); manual-only since 2026-11-24: the save dispatched no run.
   manualDeferredTitle: 'Saved — plan not recalculated yet',
-  manualDeferred: 'Auto-recalculate is off. Press Recalculate now on the banner once you are done editing.',
+  manualDeferred: 'Press Recalculate once you are done editing to update the timeline.',
   hardGate: 'This project has a hard gate (regulatory / certification / safety), so it must stay P1.',
   queuedWithoutRun: 'Saved. The recalculation was queued but no run was reported back — press Recalculate on the project.',
   staleAfterFailure: 'The priority is saved and the timeline is marked stale. Press Recalculate on the project to try again.',
@@ -19,7 +19,7 @@ export const MOVE_COPY = {
   noBaseline: 'There was no earlier schedule to compare against, so no list of moves is available.',
   unchangedOwn: "This project's finish week did not change.",
   noOtherMoves: 'No other project you can see moved.',
-  formHint: 'Changing priority recalculates the timeline.',
+  formHint: 'Press Recalculate after saving to update the timeline.',
   // P14 (ADR 0026): the preview dialog.
   previewIntro: 'Nothing is saved until you choose Yes.',
   previewLoading: 'Calculating what this move would change…',

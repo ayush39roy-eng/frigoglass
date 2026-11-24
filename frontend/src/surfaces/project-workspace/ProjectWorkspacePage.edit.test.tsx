@@ -130,8 +130,11 @@ describe('ProjectWorkspacePage — Edit popup (owner 2026-11-17)', () => {
     });
     expect(http.sendWithHeaders).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    // The recalculation affordance stays on the page after the popup closes.
-    expect(await screen.findByTestId('register-save-panel')).toHaveTextContent('Edits saved');
+    // The save outcome stays on the page after the popup closes. Recalculation is
+    // manual (2026-11-24): the save ran nothing, the user presses Recalculate.
+    const panel = await screen.findByTestId('register-save-panel');
+    expect(panel).toHaveTextContent('Saved — plan not recalculated yet');
+    expect(panel).toHaveTextContent('Press Recalculate once you are done editing');
   });
 
   it('a role without Registration write gets no Edit', async () => {

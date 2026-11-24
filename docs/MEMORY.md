@@ -46778,3 +46778,34 @@ Fixes from "[2026-11-23] QA — urgent end-to-end What-if planner test". Not com
 - **Tests:** `lib/api/defer-recalc.p61.test.ts` (5) and `components/shared/plan-freshness-banner.p61.test.tsx` (5).
 - **Results:** tsc -b 0; eslint 0 errors (warnings only); see report for vitest.
   - `app.test.tsx` "navigates to … Timeline" (Zoom slider) fails on the baseline too (checked with a stash), so it is not from P61.
+
+## [2026-11-24] P61 follow-up — Auto-recalculate option removed; recalculation is manual only (owner request) — frontend-builder: DONE (not committed)
+- **Owner (2026-11-24):** "remove the option for auto calculate, it should be manually hit".
+- **Product changes (already in the tree):**
+  - `stores/recalc-mode.ts` `autoOf` always returns false. So every allowlisted plan write carries `defer_recalc: true`.
+  - The header switch was removed.
+  - The copy was updated (move-copy confirmBody/formHint, check-in, priority board, register and step-pin edit bars).
+- **This pass:**
+  - `components/layout/auto-recalc-switch.tsx` was deleted. `RecalcModeSync` (still used by `app-shell.tsx`) moved to `components/layout/recalc-mode-sync.tsx`.
+  - Copy bug fixed: `MOVE_COPY.manualDeferred` still said "Auto-recalculate is off. Press Recalculate now on the banner…". It now says "Press Recalculate once you are done editing to update the timeline."
+  - The stored `manualUsers` / `setAutoRecalc` are left in the store but are unread.
+  - The auto "deferred → follow-up watcher" branches in the save hooks are now unreachable. They were left in place, not deleted.
+- **Tests rewritten to manual behaviour:** deferred outcomes show "Saved — plan not recalculated yet" plus the Recalculate hint, with no follow-up watcher. The P33 apply body now includes `defer_recalc: true`. Files:
+  - `lib/api/defer-recalc.p61.test.ts`
+  - `check-in/CheckInPage.test.tsx`
+  - `gantt/GanttPage.pins.test.tsx`
+  - `priority-board/PriorityBoardPage.test.tsx`
+  - `projects/ProjectsPage.test.tsx`
+  - `project-workspace/ProjectWorkspacePage.edit.test.tsx`
+  - `workflow-settings/WorkflowSettingsPage.p33.test.tsx`
+  - `workflow-settings/api/workflow-settings-api.test.ts`
+  - `priority-move/priority-move.test.tsx`
+  - `priority-move/priority-preview-dialog.test.tsx`
+  - `registration/components/project-form.test.tsx`
+- **Results:**
+  - vitest: 2582 passed, 1 failed (307 files). The one failure is `app.test.tsx` "navigates to … Timeline" (Zoom slider). It was a known baseline failure (P61-F entry) and is unrelated.
+  - `tsc --noEmit -p .` and `tsc -b`: 0.
+  - eslint on the touched layout/store files: 0 errors.
+- **Open:**
+  - ADR 0069 should get an amendment: the switch was removed and manual-only is now the rule (orchestrator).
+  - Optional cleanup: remove the dead auto branches, `MOVE_COPY.deferred`, and the store's per-user state.

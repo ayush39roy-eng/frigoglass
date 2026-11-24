@@ -25,8 +25,6 @@ import { usePlanFreshness } from '@/components/shared/plan-freshness-banner';
 import { PlanRecalculateButton } from '@/components/shared/plan-recalc';
 import { isPlanSurfacePath } from '@/lib/plan-surfaces';
 
-import { AutoRecalcSwitch } from './auto-recalc-switch';
-
 /**
  * TopNav — Boltshift spec §4: "minimal. Left: blue circular logo chip (gradient) +
  * wordmark. Right: grouped pill holding icon buttons + avatar/name stack. No
@@ -43,8 +41,7 @@ export function AppHeader(): React.JSX.Element {
         <div className="flex min-w-0 items-center gap-1 rounded-pill border-[1.5px] border-border bg-shell p-1">
           <HubFilterSelect />
           <Divider />
-          {/* P61 (ADR 0069): per-user Auto-recalculate, visible at every width. */}
-          <AutoRecalcSwitch />
+          {/* Recalculation is manual (owner 2026-11-24): the Recalculate button is the only trigger. */}
           <HeaderRecalculate />
           <span className="hidden items-center gap-1 lg:flex">
             <Divider />

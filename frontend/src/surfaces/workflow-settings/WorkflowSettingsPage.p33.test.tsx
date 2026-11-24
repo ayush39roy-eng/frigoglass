@@ -408,7 +408,9 @@ describe('P33-T17 — apply dialog', () => {
     await waitFor(() => expect(sends('/workflow-templates/apply')[0]).toMatchObject({ selection: { mode: 'selected', project_ids: ['p-3'] } }));
     const panel = await screen.findByTestId('template-apply-panel');
     expect(within(panel).getByTestId('template-apply-not-applied')).toHaveTextContent('Gamma chiller started this step meanwhile — not changed');
-    expect(panel).toHaveTextContent('updates automatically after the current recalculation');
+    // Manual recalculation (2026-11-24): a deferred apply ran nothing; no follow-up is promised.
+    expect(panel).toHaveTextContent('Press Recalculate once you are done editing to update the timeline.');
+    expect(panel).not.toHaveTextContent('updates automatically');
   });
 
   it('shows the own-effort section, the never reasons and every step flag as a note', async () => {

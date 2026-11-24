@@ -267,16 +267,16 @@ describe('Priority move preview dialog (ADR 0026)', () => {
     expect(onSettled).toHaveBeenCalledWith('rejected');
   });
 
-  it('deferred on confirm: closes the dialog and shows the existing deferred message', async () => {
+  it('deferred on confirm: closes the dialog and shows the manual-recalculation message', async () => {
     api.moveProjectPriority.mockResolvedValue(applied({ recalc_status: 'deferred', schedule_run_id: null }));
     const user = userEvent.setup();
     const { onSettled } = renderHarness();
     const dialog = await openPreview(user);
     await user.click(within(dialog).getByRole('button', { name: 'Yes, apply' }));
     expect(await screen.findByTestId('priority-move-notice')).toHaveTextContent(
-      'Saved — the timeline updates automatically after the current recalculation',
+      'Press Recalculate once you are done editing to update the timeline.',
     );
-    expect(followUp.start).toHaveBeenCalledTimes(1);
+    expect(followUp.start).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(onSettled).toHaveBeenCalledWith('accepted');
   });

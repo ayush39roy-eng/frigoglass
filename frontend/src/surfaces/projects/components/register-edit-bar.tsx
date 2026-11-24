@@ -39,7 +39,7 @@ export function RegisterEditBar({
       <span className="text-xs font-semibold text-text" aria-live="polite" data-testid="register-edit-count">
         {countText}
       </span>
-      <span className="text-2xs text-text-muted">Saving recalculates the timeline once for all changed projects.</span>
+      <span className="text-2xs text-text-muted">Saving does not recalculate; press Recalculate when you are done.</span>
       {error || tooMany ? (
         <p role="alert" className="basis-full text-2xs text-danger" data-testid="register-edit-error">
           {error ?? tooMany}

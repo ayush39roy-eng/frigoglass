@@ -471,7 +471,7 @@ describe('PriorityBoardPage — a drop is the P11 priority move', () => {
     await waitFor(() => expect(client.apiGet.mock.calls.filter(([p]) => p === '/priority-board').length).toBeGreaterThan(1));
   });
 
-  it('deferred: the shared flow says the timeline updates after the current recalculation', async () => {
+  it('deferred (manual recalculation): the shared flow says to press Recalculate', async () => {
     move.moveProjectPriority.mockResolvedValue(
       response({ recalc_status: 'deferred', schedule_run_id: null, baseline_run_id: null, task_id: null }),
     );
@@ -482,7 +482,7 @@ describe('PriorityBoardPage — a drop is the P11 priority move', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Move to P3?' });
     await clickYes(user, dialog);
     const notice = await screen.findByTestId('priority-move-notice');
-    expect(notice).toHaveTextContent(/timeline updates automatically after the current recalculation/);
+    expect(notice).toHaveTextContent('Press Recalculate once you are done editing to update the timeline.');
     expect(sse.streamSolverProgress).not.toHaveBeenCalled();
   });
 
