@@ -176,6 +176,32 @@ describe('Progress panel — stages', () => {
     expect(within(row).getByTestId('stage-errors-PDD-B')).toHaveTextContent('cannot be before the actual start');
   });
 
+  it('P62-F1: actual weeks are typed as week + year and still sent as the absolute plan week', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const row = await screen.findByTestId('stage-PDD-B');
+    // Planned weeks carry their year too.
+    expect(row).toHaveTextContent("Planned W33 '26–W34 '26");
+    const start = within(row).getByLabelText(/^Actual start week — /);
+    expect(start).toHaveValue(22);
+    const year = within(row).getByRole('combobox', { name: /^Year for actual start week — / });
+    expect(year).toHaveValue('2026');
+    expect(within(row).getByTestId('stage-PDD-B-start-resolved')).toHaveTextContent("W22 '26");
+
+    await user.selectOptions(year, '2027');
+    expect(within(row).getByTestId('stage-PDD-B-start-resolved')).toHaveTextContent("W22 '27");
+    expect(start).toHaveValue(22);
+
+    await user.clear(start);
+    await user.type(start, '60');
+    expect(within(row).getByTestId('stage-errors-PDD-B')).toHaveTextContent('Week must be a whole number from 1 to 52.');
+    await user.clear(start);
+    await user.type(start, '5');
+    await user.click(within(row).getByRole('button', { name: /Save progress/ }));
+    // Absolute week from 2026 W1: 2027 W5 = 52 + 5 (ADR 0063); the wire format is unchanged.
+    expect(api.patchStage).toHaveBeenCalledWith('', 'PDD-B', { actual_start_week: 57, base: { actual_start_week: 22 } });
+  });
+
   it('a 409 RUN_IN_PROGRESS reads "A recalculation is already running"', async () => {
     const user = userEvent.setup();
     api.recalculate.mockRejectedValue(new ApiError(409, 'busy', 'run queued', 'RUN_IN_PROGRESS'));

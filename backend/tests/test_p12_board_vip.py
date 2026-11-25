@@ -44,6 +44,7 @@ from tests.p12_helpers import (
     set_progress,
     stepped_project,
 )
+from tests.p62_audit import NOT_MIGRATION_AUDIT
 
 
 @pytest.fixture(autouse=True)
@@ -452,5 +453,9 @@ async def test_gantt_project_rows_carry_vip_and_tracking(db_session):
     assert r.status_code == 200, r.text
     [row] = r.json()["rows"]
     assert (row["is_vip"], row["tracking_status"]) == (True, "live")
-    count = (await db_session.execute(select(func.count()).select_from(AuditLogEntry))).scalar_one()
-    assert count == 0  # reads never audit
+    count = (
+        await db_session.execute(
+            select(func.count()).select_from(AuditLogEntry).where(NOT_MIGRATION_AUDIT)
+        )
+    ).scalar_one()
+    assert count == 0  # reads never audit (P62: p71a's own rows aside)

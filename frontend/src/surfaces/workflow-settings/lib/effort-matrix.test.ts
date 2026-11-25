@@ -22,7 +22,7 @@ describe('P52-T01 effort-matrix helpers', () => {
   it('matrixTotals sums all, design-kind and lab-kind weeks', () => {
     const kinds: Record<string, 'design' | 'lab' | 'elapsed'> = { a: 'design', b: 'lab', c: 'elapsed' };
     const weeks: Record<string, number> = { a: 3, b: 4, c: 5 };
-    expect(matrixTotals(['a', 'b', 'c'], (id) => weeks[id]!, (id) => kinds[id]!)).toEqual({ total: 12, design: 3, lab: 4 });
+    expect(matrixTotals(['a', 'b', 'c'], (id) => weeks[id]!, (id) => kinds[id]!)).toEqual({ total: 12, design: 3, lab: 4, labLength: 4 });
   });
 
   it('heatStyle: none for 0, green for few weeks, red for the most', () => {

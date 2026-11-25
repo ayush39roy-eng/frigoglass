@@ -260,7 +260,11 @@ def _perturbed_step_timing(
     P33 (R33-5, contract F2): a per-project `lead_weeks` is a duration and is
     perturbed the same way (R10 floor). Gaps are never sampled: `overlap_weeks`
     and `wait_weeks` are copied unchanged. A row whose values do not change is
-    returned as the same object."""
+    returned as the same object.
+
+    ADR 0071 (R62-5): `lab_hold_weeks` is never sampled; it is carried
+    unchanged and the scheduler clamps it to the sampled length, `h =
+    min(hold, d)`."""
 
     return tuple(
         replace(

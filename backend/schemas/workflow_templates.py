@@ -38,20 +38,33 @@ _LooseUuid = Annotated[uuid.UUID, Field(strict=False)]
 # --- Part D: timeline preview --------------------------------------------------------
 
 
+#: P62 (contract P62 §4.1): the wire value that sets a step's room weeks to
+#: NULL ("Full", the whole length).
+LAB_HOLD_FULL = "full"
+
+
 class TemplateStepOverride(BaseModel):
-    """One overridden step: its length and / or its signed gap. A missing
-    field keeps the saved template value."""
+    """One overridden step: its length, its signed gap and / or (P62, ADR
+    0071) its room weeks. A missing field keeps the saved template value.
+
+    `lab_hold_weeks`: an integer (room weeks, `0..weeks` where `weeks` is
+    this override's if given, else the saved one; otherwise 422
+    `LAB_HOLD_OUT_OF_RANGE`) or `"full"` (NULL). A non-null value on a
+    non-lab step is 422 `LAB_HOLD_NOT_LAB`; `"full"` there is a no-op. The
+    range and kind checks need the saved template, so they run in
+    `services.template_editor.resolve_entry`, not here."""
 
     model_config = _STRICT
 
     step_id: str = Field(min_length=1, max_length=10)
     weeks: int | None = Field(default=None, ge=WEEKS_MIN, le=WEEKS_MAX)
     gap_weeks: int | None = Field(default=None, ge=GAP_MIN, le=GAP_MAX)
+    lab_hold_weeks: int | Literal["full"] | None = None
 
     @model_validator(mode="after")
     def _one_value(self) -> TemplateStepOverride:
-        if self.weeks is None and self.gap_weeks is None:
-            raise ValueError("a step must carry weeks and/or gap_weeks")
+        if self.weeks is None and self.gap_weeks is None and self.lab_hold_weeks is None:
+            raise ValueError("a step must carry weeks, gap_weeks and/or lab_hold_weeks")
         return self
 
 
@@ -148,6 +161,15 @@ StepFlag = Literal[
     # P35 (R35-8): the step is excluded for this project; the copy is still
     # written (re-include gets it), but it has no effect while excluded.
     "excluded_no_effect",
+    # P62 (ADR 0071, contract P62 §4.1 / §4.2): the room weeks were clamped
+    # to a shortened length (I65).
+    "room_weeks_clamped",
+    # P62 (R62-8): the room weeks flip NULL <-> value on an own-lab-figure
+    # project, so its lab split is re-derived (R62-1).
+    "lab_split_rederived",
+    # P62 (R62-12): a length change on a `partialRoom` step of an
+    # own-lab-figure project; it IS applied.
+    "partial_room_length_applied",
 ]
 
 
@@ -160,6 +182,10 @@ class ApplyPreviewStep(BaseModel):
     eff_after: int
     gap_before: int
     gap_after: int
+    #: P62 (contract P62 §4.2): the copy's room weeks before / after
+    #: (`plan_lab_hold_weeks`, null = Full; always null on a non-lab step).
+    hold_before: int | None
+    hold_after: int | None
     flags: list[StepFlag]
 
 

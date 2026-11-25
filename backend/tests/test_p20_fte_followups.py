@@ -360,6 +360,8 @@ GANTT_STEP_ROW_FIELDS = {
     # P40 (ADR 0054, docs/API_CONTRACT_P40.md §2): manual step pins.
     "manual_start_week", "manual_end_week", "pinned", "manual_overlap",
     "current_length_weeks", "pin_editable", "pin_block_reason",
+    # P62 (ADR 0071, docs/API_CONTRACT_P62.md §5): room weeks.
+    "lab_hold_weeks", "plan_lab_hold_weeks", "room_start_week", "room_end_week",
 }
 
 

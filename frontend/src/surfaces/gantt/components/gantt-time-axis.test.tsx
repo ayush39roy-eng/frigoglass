@@ -15,7 +15,7 @@ describe('GanttWeekAxis "now" line (P37)', () => {
     seedSession({ current_week: 47, weeks_left_in_year: 5 });
     const scale = makeWeekScale('weeks');
     const { container } = render(<GanttWeekAxis scale={scale} />);
-    expect(screen.getByText('W47 now')).toBeInTheDocument();
+    expect(screen.getByText('W47 \'26 now')).toBeInTheDocument();
     const x = String(weekToX(47, scale));
     expect(container.querySelector(`line[x1="${x}"][x2="${x}"]`)).not.toBeNull();
   });
@@ -77,8 +77,8 @@ describe('P53 (R53-6): plan year 2027 on the one week line', () => {
     seedSession({ current_week: 57, weeks_left_in_year: 47, plan_year: 2027, plan_year_start_week: 53, plan_year_end_week: 104 });
     const scale = makeWeekScale(16, 104, 53);
     render(<GanttWeekAxis scale={scale} />);
-    expect(screen.getByText('W5 now')).toBeInTheDocument();
-    expect(screen.getByTestId('gantt-year-end-label')).toHaveTextContent('W52 year-end');
+    expect(screen.getByText('W5 \'27 now')).toBeInTheDocument();
+    expect(screen.getByTestId('gantt-year-end-label')).toHaveTextContent('W52 \'27 year-end');
   });
 
   it('year bands are labelled from the base year, with years after the plan year shaded', () => {

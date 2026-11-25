@@ -227,7 +227,7 @@ describe('P40-T03c step Start / End weeks', () => {
     await user.clear(start);
     await user.type(start, '20');
     expect(start).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByTestId('step-pin-error')).toHaveTextContent('Pick weeks between W31 and W52.');
+    expect(screen.getByTestId('step-pin-error')).toHaveTextContent('Pick weeks between W31 \'26 and W52 \'26.');
     expect(screen.getByTestId('step-pin-edit-save')).toBeDisabled();
   });
 

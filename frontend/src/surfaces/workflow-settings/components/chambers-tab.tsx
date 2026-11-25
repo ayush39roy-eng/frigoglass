@@ -8,6 +8,7 @@ import { formatDecimal } from '@/lib/format';
 import type { ChamberSetting, ChamberSettingUpdateRequest, WorkflowSetting, WorkflowSettingsSaveResult } from '../api/types';
 import { labKindSteps } from '../lib/effort-matrix';
 import { impliedHolidayWeeks, previewEfficientLabWeeks, previewWorkingWeeksPerChamber } from '../lib/preview';
+import { ChamberStagesGrid } from './chamber-stages';
 import { saveErrorMessage } from './save-error';
 
 /**
@@ -64,8 +65,8 @@ export function ChambersTab({ workflows = [], chambers, canWrite, onSave, saving
               </ul>
             )}
             <p className="text-2xs text-text-subtle">
-              Derived from each step&apos;s Resource (Lab). Which chamber may book which of these is set per chamber on
-              Capacity Planning.
+              Derived from each step&apos;s Resource (Lab). Which chamber may book which of these is ticked per chamber
+              below (the same setting as on Capacity Planning).
             </p>
           </div>
         ) : null}
@@ -96,6 +97,8 @@ export function ChambersTab({ workflows = [], chambers, canWrite, onSave, saving
           Working weeks = 52 − region holidays − maintenance − breakdown − calibration; efficient lab weeks =
           working weeks × efficiency × platforms. Saved figures come from the server; edited rows show a preview.
         </p>
+        {/* P62-F2: per-chamber tick boxes for the lab-kind steps (`allowed_stages`). */}
+        <ChamberStagesGrid labSteps={labSteps} />
       </CardContent>
     </Card>
   );

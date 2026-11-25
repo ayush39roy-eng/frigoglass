@@ -7,7 +7,7 @@ import type { WorkflowId, WorkflowStepKind } from '@/types/enums';
 
 import type { WorkflowSetting } from '../../api/types';
 import type { EffortMatrixState } from '../../hooks/use-effort-matrix';
-import { cellWeeks, heatStyle, matrixTotals, parseWeeks, RESOURCE_LABEL, RESOURCE_OPTIONS } from '../../lib/effort-matrix';
+import { cellHold, cellWeeks, heatStyle, matrixTotals, parseWeeks, RESOURCE_LABEL, RESOURCE_OPTIONS } from '../../lib/effort-matrix';
 import { WEEKS_MAX } from '../../lib/template-drafts';
 
 /**
@@ -162,6 +162,7 @@ export function MatrixGrid({
               stepIds,
               (id) => weeksOf(category, id),
               (id) => state.kindOf(wf, id),
+              (id) => cellHold(catDrafts, saved, id),
             );
             return (
               <tr key={category} data-testid={`matrix-row-${wf}-${category}`}>
@@ -171,10 +172,12 @@ export function MatrixGrid({
                 {steps.map((s, col) => {
                   const weeks = weeksOf(category, s.step_id);
                   const savedWeeks = saved[s.step_id]?.weeks ?? 0;
+                  // P62 (ADR 0071): a lab step that books its room for part of its length.
+                  const hold = state.kindOf(wf, s.step_id) === 'lab' && weeks > 0 ? cellHold(catDrafts, saved, s.step_id) : null;
                   return (
                     <td
                       key={s.step_id}
-                      className="border border-border p-0 text-center"
+                      className="relative border border-border p-0 text-center"
                       style={heatStyle(weeks, max)}
                       data-numeric=""
                       data-testid={`cell-${wf}-${category}-${s.step_id}`}
@@ -195,6 +198,16 @@ export function MatrixGrid({
                       ) : (
                         <span className={cn('block px-1 py-1', weeks === 0 && 'text-text-subtle')}>{weeks}</span>
                       )}
+                      {hold !== null ? (
+                        <span
+                          className="pointer-events-none absolute bottom-0 right-0.5 text-[0.5625rem] font-semibold leading-3 text-success-subtle-fg"
+                          title={`Room booked for the last ${String(Math.min(hold, weeks))} of ${String(weeks)} weeks`}
+                          data-testid={`room-${wf}-${category}-${s.step_id}`}
+                        >
+                          <span aria-hidden="true">{`room ${String(Math.min(hold, weeks))}`}</span>
+                          <span className="sr-only">{`Room booked for the last ${String(Math.min(hold, weeks))} of ${String(weeks)} weeks`}</span>
+                        </span>
+                      ) : null}
                     </td>
                   );
                 })}
@@ -206,8 +219,15 @@ export function MatrixGrid({
                     <span className="rounded-sm bg-primary px-1 text-[0.625rem] font-semibold text-primary-fg" data-testid="total-design">
                       D: {formatInteger(totals.design)} w
                     </span>
-                    <span className="rounded-sm bg-success px-1 text-[0.625rem] font-semibold text-success-fg" data-testid="total-lab">
+                    <span
+                      className="rounded-sm bg-success px-1 text-[0.625rem] font-semibold text-success-fg"
+                      data-testid="total-lab"
+                      title={`Lab room weeks (chamber booked) ${formatInteger(totals.lab)} w · lab length ${formatInteger(totals.labLength)} w`}
+                    >
                       L: {formatInteger(totals.lab)} w
+                      {totals.labLength !== totals.lab ? (
+                        <span className="sr-only">{` of room booked; lab length ${formatInteger(totals.labLength)} w`}</span>
+                      ) : null}
                     </span>
                   </span>
                 </td>

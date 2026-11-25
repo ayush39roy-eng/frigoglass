@@ -83,17 +83,17 @@ describe('CompletionProfileCard', () => {
     // (W14's Thursday is 2 April).
     const weeks = screen.getByRole('list', { name: 'Within-year projects completed per week in March' });
     expect(within(weeks).getAllByRole('button').map((b) => b.textContent)).toEqual([
-      'W10: 1',
-      'W11: 1',
-      'W12: 0',
-      'W13: 0',
+      'W10 \'26: 1',
+      'W11 \'26: 1',
+      'W12 \'26: 0',
+      'W13 \'26: 0',
     ]);
     const projects = screen.getByRole('list', { name: 'Projects completing in March' });
     expect(within(projects).getByRole('link', { name: 'Project w1' })).toHaveAttribute('href', '/projects/w1');
     expect(within(projects).getByRole('link', { name: 'Project w3' })).toBeInTheDocument();
 
-    await user.click(within(weeks).getByRole('button', { name: 'W11: 1' }));
-    const narrowed = screen.getByRole('list', { name: 'Projects completing in W11' });
+    await user.click(within(weeks).getByRole('button', { name: 'W11 \'26: 1' }));
+    const narrowed = screen.getByRole('list', { name: 'Projects completing in W11 \'26' });
     expect(within(narrowed).getAllByRole('listitem')).toHaveLength(1);
     expect(within(narrowed).getByRole('link', { name: 'Project w3' })).toBeInTheDocument();
 

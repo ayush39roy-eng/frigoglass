@@ -10,10 +10,12 @@ import type { CategoryTimeline, TemplateStepOverride } from '../api/types';
 import {
   draftOverrides,
   nudge as nudgeDraft,
+  nudgeHold as nudgeHoldDraft,
   pruneDrafts,
   resetStep as resetDraftStep,
   type CategoryDrafts,
   type DraftField,
+  type HoldAction,
   type SavedCell,
 } from '../lib/template-drafts';
 
@@ -72,6 +74,13 @@ export function useTemplateEditor({
     },
     [saved],
   );
+  /** P62: a room-weeks click on a lab step whose length in force is `weeks`. */
+  const hold = React.useCallback(
+    (stepId: string, action: HoldAction, weeks: number) => {
+      setDrafts((prev) => nudgeHoldDraft(prev, saved, stepId, action, weeks));
+    },
+    [saved],
+  );
   const resetStep = React.useCallback((stepId: string) => setDrafts((prev) => resetDraftStep(prev, stepId)), []);
   const discard = React.useCallback(() => setDrafts({}), []);
 
@@ -84,6 +93,7 @@ export function useTemplateEditor({
     /** The newest preview request failed (the last good timeline stays drawn). */
     error,
     nudge,
+    hold,
     resetStep,
     discard,
   };

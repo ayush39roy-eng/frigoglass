@@ -56,7 +56,7 @@ describe('WithinYearKpis', () => {
     // Spillover past W52 = served spillover_count 4 + served left_out_count 2.
     const spill = screen.getByRole('group', { name: 'Spillover (past W52)' });
     expect(within(spill).getByText('6')).toBeInTheDocument();
-    expect(spill).toHaveTextContent('Not done by W52 → 2027 · 2 not yet placed');
+    expect(spill).toHaveTextContent('Not done by W52 \'26 → 2027 · 2 not yet placed');
     // No separate "left out / beyond the 78-week horizon" tile any more.
     expect(screen.queryByRole('group', { name: 'Left out' })).not.toBeInTheDocument();
     expect(screen.queryByText(/78-week/)).not.toBeInTheDocument();

@@ -131,6 +131,7 @@ from services.hub_scope import (
     needs_own_assignments,
     project_row_scope,
 )
+from services.lab_hold import run_row_held_weeks, run_row_lab_weeks
 from services.outcome_buckets import outcome_bucket
 from services.plan_clock import PlanClock, get_plan_clock
 from services.priority_applicability import (
@@ -223,7 +224,8 @@ def _kind_weeks(
     steps: Sequence[ScheduleRunProjectStep], kinds: dict[str, WorkflowStepKind]
 ) -> tuple[int | None, int | None, int | None]:
     """(design, lab, total) booked effective weeks over non-skipped run steps;
-    all `None` when the project has no step in the active run."""
+    all `None` when the project has no step in the active run. ADR 0071
+    (I66): `lab` is Σ room weeks `h`; `total` stays Σ lengths."""
 
     if not steps:
         return None, None, None
@@ -236,7 +238,8 @@ def _kind_weeks(
         if kind == WorkflowStepKind.DESIGN:
             design += step.duration_weeks
         elif kind == WorkflowStepKind.LAB:
-            lab += step.duration_weeks
+            # ADR 0071 I66: Σ h (NULL = duration_weeks).
+            lab += run_row_lab_weeks(step.duration_weeks, step.lab_hold_weeks)
     return design, lab, total
 
 
@@ -615,6 +618,25 @@ async def get_gantt(
         for step in sorted(planned_steps.get(project.id, []), key=lambda s: s.sequence_order):
             template = templates.get(step.step_template_id)
             actual = actual_steps.get((project.id, step.step_template_id))
+            run_kind = run_kinds.get(step.step_template_id, WorkflowStepKind.DESIGN)
+            # ADR 0071 (contract P62 §5): the booked room weeks of a lab row.
+            # P62-R02: the held weeks come from the row's booked span
+            # (`run_row_held_weeks`, the utilisation matrix's helper), not
+            # from `duration_weeks`: an In Progress tail, a Done actual span
+            # or a pin window can book a span of another length, and a NULL
+            # (full) hold holds every week of it.
+            held: int | None
+            room_start: int | None = None
+            room_end: int | None = None
+            if run_kind != WorkflowStepKind.LAB:
+                held = None
+            elif step.skipped:
+                held = 0
+            else:
+                room = run_row_held_weeks(step.start_week, step.end_week, step.lab_hold_weeks)
+                held = len(room)
+                if room:
+                    room_start, room_end = room.start, room.stop - 1
             step_rows.append(
                 GanttStepRow(
                     step_id=step.step_template_id,
@@ -652,6 +674,10 @@ async def get_gantt(
                     own_effort=(
                         _kind_of(templates, step.step_template_id).value in project_own_kinds
                     ),
+                    lab_hold_weeks=held,
+                    plan_lab_hold_weeks=actual.plan_lab_hold_weeks if actual else None,
+                    room_start_week=room_start,
+                    room_end_week=room_end,
                     predecessor_ids=sorted(template.predecessor_ids or []) if template else [],
                     span_fte=_served_span_fte(
                         step,
@@ -703,6 +729,7 @@ async def get_gantt(
                         plan_weeks=live.plan_weeks,
                         gap_weeks=live.plan_gap_weeks,
                         own_effort=kind.value in project_own_kinds,
+                        plan_lab_hold_weeks=live.plan_lab_hold_weeks,
                         predecessor_ids=(
                             sorted(template.predecessor_ids or []) if template else []
                         ),

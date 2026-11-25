@@ -28,6 +28,8 @@ from services.rate_limit import TokenBucketLimiter
 from services.workflow_previews import load_workflow_in_force
 from tests.auth_helpers import clear_current_principal_override
 from tests.p12_helpers import act_as, client_for
+from tests.p62_audit import NOT_MIGRATION_AUDIT
+from tests.p62_audit import P71A_TEMPLATE_VERSION as V0  # noqa: N814
 
 PREVIEW = "/workflow-templates/timeline-preview"
 TIMELINES = "/workflow-settings/category-timelines"
@@ -80,8 +82,9 @@ async def test_category_timelines_carry_the_c2_fields_and_the_note(
         oem = (await client.get(TIMELINES, params={"workflow": "OEM"})).json()
     assert [(c["category"], c["workflow_id"], c["rank"], c["template_version"], c["label"])
             for c in pdd + oem] == [
-        ("A+", "PDD", 1, 1, "A+"), ("A", "PDD", 2, 1, "A"), ("B", "PDD", 3, 1, "B"),
-        ("C", "PDD", 4, 1, "C"), ("A-OEM", "OEM", 5, 1, "A-OEM"), ("B-OEM", "OEM", 6, 1, "B-OEM"),
+        # P62: migration p71a's template change put A+ / A / B / C at V0.
+        ("A+", "PDD", 1, V0, "A+"), ("A", "PDD", 2, V0, "A"), ("B", "PDD", 3, V0, "B"),
+        ("C", "PDD", 4, V0, "C"), ("A-OEM", "OEM", 5, 1, "A-OEM"), ("B-OEM", "OEM", 6, 1, "B-OEM"),
         ("C-OEM", "OEM", 7, 1, "C-OEM"),
     ]  # fmt: skip
     for c in pdd + oem:
@@ -182,7 +185,9 @@ async def test_preview_with_overrides_is_template_timeline(db_session: AsyncSess
     # Stateless: the saved template is unchanged, no audit row.
     a_saved = {s["code"]: s for s in after[1]["steps"]}
     assert (a_saved["PDD-E"]["duration_weeks"], a_saved["PDD-E"]["gap_weeks"]) == (6, 0)
-    assert (await db_session.execute(select(AuditLogEntry))).scalars().all() == []
+    assert (
+        await db_session.execute(select(AuditLogEntry).where(NOT_MIGRATION_AUDIT))
+    ).scalars().all() == []
 
 
 async def test_preview_flags_a_gap_on_a_zero_length_step_and_lab_overlap(

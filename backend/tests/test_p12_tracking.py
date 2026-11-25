@@ -48,6 +48,8 @@ def _live(
         duration_override_weeks=None,
         effort_weeks=effort,
         excluded=excluded,
+        # P62 (ADR 0071): the room-weeks copy (None = Full).
+        plan_lab_hold_weeks=None,
     )
 
 

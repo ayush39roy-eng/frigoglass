@@ -47,6 +47,15 @@ export function StepBarGraphic({
       ? { startWeek: s.actual_start_week, endWeek: s.actual_end_week }
       : null;
   const runsPast = !s.skipped && (isPastScaleEnd(planned?.endWeek, scale) || isPastScaleEnd(actual?.endWeek, scale));
+  // P62 (ADR 0071): the served held weeks of a lab step (inclusive), or none booked.
+  const room =
+    s.kind !== 'lab' || s.skipped || planned === null
+      ? undefined
+      : s.room_start_week != null && s.room_end_week != null
+        ? { startWeek: s.room_start_week, endWeek: s.room_end_week }
+        : s.lab_hold_weeks === 0
+          ? ('none' as const)
+          : undefined;
   return (
     <>
       <GanttBarGroup
@@ -63,6 +72,7 @@ export function StepBarGraphic({
         kind={s.kind}
         skipped={s.skipped}
         color={stepColor(s.step_id, s.sequence_order)}
+        room={room}
       />
       {/* P40-T03c: the run placed this step on its typed weeks (served flag). */}
       {s.pinned && !s.skipped ? (
@@ -105,8 +115,13 @@ export function StepLeftCell({
 }): React.JSX.Element {
   const { step_name: name, kind, skipped, sequence_order: sequenceOrder } = step;
   // An elapsed step books nobody (ADR 0007) — there is no resource to name.
+  // P62 (ADR 0071): a lab step whose run booked no room names that instead of a chamber.
   const resource =
-    kind === 'lab' ? step.assigned_chamber_code : kind === 'design' ? step.assigned_engineer_name : null;
+    kind === 'lab'
+      ? (step.assigned_chamber_code ?? (!skipped && step.lab_hold_weeks === 0 ? 'no room' : null))
+      : kind === 'design'
+        ? step.assigned_engineer_name
+        : null;
   const gap = gapChipText(step.gap_weeks);
   const flags = narrow && !skipped ? stepStatusLabels(step) : [];
   const color = stepColor(step.step_id, sequenceOrder);

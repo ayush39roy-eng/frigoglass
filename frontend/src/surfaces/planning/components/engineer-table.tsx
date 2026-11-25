@@ -15,7 +15,7 @@ import { NotInCapacityRosterBadge } from '@/components/shared/capacity-roster-ma
 import { SuperAdminOnly } from '@/components/shared/super-admin-only';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
 import { useIsSuperAdmin } from '@/lib/auth/super-admin';
-import { formatFactor, formatInteger } from '@/lib/format';
+import { formatFactor, formatInteger, formatWeek } from '@/lib/format';
 import { HUB_NAMES, type LabRegion } from '@/types/enums';
 
 import type { EngineerRead } from '../api/types';
@@ -92,7 +92,7 @@ export function EngineerTable({ rows, canEdit, canChangeStatus, onEdit, onDeacti
               </span>
               {isInactive(row) && row.deactivated_week != null ? (
                 <span className="ml-12 block text-2xs text-text-muted" data-testid="inactive-since">
-                  Since W{formatInteger(row.deactivated_week)}
+                  Since {formatWeek(row.deactivated_week)}
                   {reasonLabel(row.deactivation_reason) ? ` · ${reasonLabel(row.deactivation_reason) ?? ''}` : ''}
                 </span>
               ) : null}

@@ -46,6 +46,10 @@ export interface LeadTimeSetting {
   gap_weeks: number;
   /** P33 C1: the immutable R2 split weight — read-only, never sent. */
   effort_weight_weeks: number;
+  /** P62 (ADR 0071, API_CONTRACT_P62 §3.1): room weeks — how many of the
+   *  step's LAST weeks book a chamber. null = Full (the whole length); always
+   *  null on a non-lab step. */
+  lab_hold_weeks: number | null;
 }
 
 export interface HubCalendarSetting {
@@ -161,6 +165,12 @@ export interface TimelineStep {
   flags: TemplateFlag[];
   /** P33 C2: the DAG in force. Empty only on a workflow's first step. */
   predecessor_ids: string[];
+  /** P62 (API_CONTRACT_P62 §3.2): the template room weeks (null = Full; null on non-lab steps). */
+  lab_hold_weeks: number | null;
+  /** P62: the weeks that book a chamber (`h`), served; 0 on non-lab steps. */
+  room_weeks: number;
+  /** P62: first held week, same 0-based convention as `start_week`; null when `room_weeks` is 0. */
+  room_start_week: number | null;
 }
 
 /** P33 C2 / F3 step flags (`scheduling.template_timeline`). */
@@ -178,19 +188,28 @@ export interface CategoryTimeline {
   note: string;
   total_weeks: number;
   design_weeks: number;
+  /** P62 (ADR 0071 I66): Σ room weeks over lab steps — the lab LOAD. */
   lab_weeks: number;
+  /** P62: Σ lab step lengths — the lab LENGTH (calendar), for the bar legend. */
+  lab_length_weeks: number;
   steps: TimelineStep[];
 }
 
 // --- P33 (API_CONTRACT_P33 Parts B2, D, E; ADR 0045–0047). Every week and count
 // below is computed server-side; the browser only sends edits and draws replies.
 
-/** One overridden step: its length and / or signed gap (contract D / E1). */
+/** One overridden step: its length, signed gap and / or room weeks (contract D / E1; P62 §4.1). */
 export interface TemplateStepOverride {
   step_id: string;
   weeks?: number | null;
   gap_weeks?: number | null;
+  /** P62: room weeks `0..weeks`, or `'full'` (NULL, the whole length). Omitted (or null) = keep. */
+  lab_hold_weeks?: number | 'full' | null;
 }
+
+/** P62 (API_CONTRACT_P62 §7): the 422 codes of a room-weeks override. */
+export const LAB_HOLD_NOT_LAB = 'LAB_HOLD_NOT_LAB';
+export const LAB_HOLD_OUT_OF_RANGE = 'LAB_HOLD_OUT_OF_RANGE';
 
 /** `POST /workflow-templates/timeline-preview` (contract D). */
 export interface TimelinePreviewRequest {
@@ -240,7 +259,15 @@ export type ApplyStepFlag =
   | 'skipped_now'
   | 'gap_ignored_skipped'
   | 'cert_off_no_effect'
-  | 'own_effort_length_not_applied';
+  | 'own_effort_length_not_applied'
+  /** P35 (R35-8): the step is excluded for this project. */
+  | 'excluded_no_effect'
+  /** P62 §4.1: the room weeks were cut to a shortened length (I65). */
+  | 'room_weeks_clamped'
+  /** P62 R62-8: room weeks flip Full ↔ value on an own-lab-figure project; its lab split is re-derived. */
+  | 'lab_split_rederived'
+  /** P62 R62-12: a length change on a room-weeks step of an own-lab-figure project — applied. */
+  | 'partial_room_length_applied';
 
 /** One changed step of one project: served `eff` and gap, before and after. */
 export interface ApplyPreviewStep {
@@ -249,6 +276,9 @@ export interface ApplyPreviewStep {
   eff_after: number;
   gap_before: number;
   gap_after: number;
+  /** P62 §4.2: the copy's room weeks (`plan_lab_hold_weeks`, null = Full; null on non-lab steps). */
+  hold_before: number | null;
+  hold_after: number | null;
   flags: ApplyStepFlag[];
 }
 

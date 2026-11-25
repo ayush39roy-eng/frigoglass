@@ -165,7 +165,7 @@ describe('ExecKpiStrip (P28, ADR 0039 §3 + addenda)', () => {
     // Row anatomy: link target, hub, end week ("—" when null), outcome chip.
     expect(within(dialog).getByRole('link', { name: 'Within One' })).toHaveAttribute('href', '/projects/w1');
     expect(within(dialog).getAllByText('—').length).toBeGreaterThan(0);
-    expect(within(dialog).getByText('W44')).toBeInTheDocument();
+    expect(within(dialog).getByText('W44 \'26')).toBeInTheDocument();
     await user.keyboard('{Escape}');
     // Focus returns to the opening tile (Radix restores it async on close).
     await waitFor(() => { expect(screen.getByTestId('exec-kpi-scheduled-tile')).toHaveFocus(); });

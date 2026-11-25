@@ -28,7 +28,7 @@ import type {
   ApplySelection,
 } from '../../api/types';
 import type { ApplyFlow } from '../../hooks/use-template-apply';
-import { signedWeeks } from '../../lib/template-drafts';
+import { holdText, signedWeeks } from '../../lib/template-drafts';
 import { APPLY_FLAG_NOTE, NEVER_REASON, projects, TEMPLATE_COPY } from '../../lib/template-copy';
 import { ProjectRows } from './project-rows';
 
@@ -385,7 +385,7 @@ function ProjectLine({
   );
 }
 
-/** "PDD-E 4w → 5w · gap 0w → −2w" plus the R33-11 flag notes, from served fields. */
+/** "PDD-E 4w → 5w · gap 0w → −2w · room Full → 1w" plus the R33-11 / P62 flag notes, from served fields. */
 function StepChanges({ steps }: { steps: ApplyPreviewStep[] }): React.JSX.Element {
   return (
     <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-2xs text-text-muted" data-numeric="" data-testid="apply-step-changes">
@@ -400,6 +400,11 @@ function StepChanges({ steps }: { steps: ApplyPreviewStep[] }): React.JSX.Elemen
           {s.gap_before !== s.gap_after ? (
             <span>
               gap {signedWeeks(s.gap_before)}w → {signedWeeks(s.gap_after)}w
+            </span>
+          ) : null}
+          {s.hold_before !== s.hold_after ? (
+            <span data-testid="apply-step-room">
+              room weeks {holdText(s.hold_before)} → {holdText(s.hold_after)}
             </span>
           ) : null}
           {s.flags.map((f) => (

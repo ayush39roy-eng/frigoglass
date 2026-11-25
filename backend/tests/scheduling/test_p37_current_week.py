@@ -156,6 +156,10 @@ def test_canonical_hash_and_greedy_output_byte_identical_to_pre_p37() -> None:
     for project in raw["projects"]:
         assert project.pop("step_pins") == ()
         assert project.pop("actual_end_week") is None  # P53 (R53-2b): omitted at None
+        for row in project["step_timing"]:
+            assert row.pop("lab_hold_weeks") is None  # P62 (ADR 0071): omitted at None
+    for lt in raw["lead_times"]:
+        assert lt.pop("lab_hold_weeks") is None  # P62 (ADR 0071): omitted at None
     assert _digest(raw) == "d3542beb18c2f126d99a7a05188b0bbd9b049eb3cb2bc50e0d527cab68172d4f"
     assert (
         _digest(canonical_schedule_output_asdict(run_greedy_sgs(si)))

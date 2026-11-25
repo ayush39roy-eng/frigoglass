@@ -85,6 +85,15 @@ class LeadTime:
     category: str  # "A+","A","B","C","A-OEM","B-OEM","C-OEM"
     step_id: str
     weeks: int  # >= 0; 0 means "step is skipped for this category"
+    # ADR 0071 (P62, R62-0 / R62-9): the template's room weeks
+    # (`workflow_lead_times.lab_hold_weeks`), None = "Full" (the whole
+    # length). Read ONLY where a project is built from its category template
+    # inside the engine (What-if added projects, plan-import file projects:
+    # `workflow.template_lab_hold_rows`); a live project carries its own copy
+    # in `StepTimingInput.lab_hold_weeks` and the scheduler never falls back
+    # to this value. Omitted from the canonical / hashed input at None, so
+    # every pre-P62 hash is unchanged.
+    lab_hold_weeks: int | None = None
 
 
 # (step_id, code, name, kind) — DOMAIN_RULES.md "PDD workflow" table, verbatim.
@@ -307,6 +316,20 @@ class StepTimingInput:
     Both are omitted from the canonical / hashed form at their defaults (0 /
     None), so every pre-P33 hash, golden file and stored run is
     byte-identical.
+
+    P62 (ADR 0071, R62-0 / R62-5; API_CONTRACT_P62 §2 "StepInput"):
+
+    - `lab_hold_weeks` (0..104 or None): the project's room weeks for a
+      `lab` step (`project_workflow_steps.plan_lab_hold_weeks`). None =
+      "Full": the chamber is held for every booked week (the pre-P62
+      rule). A value makes the step `partialRoom`: on a booked interval of
+      `n` weeks the chamber is held for the last `h = min(hold, n)` weeks
+      only, `h = 0` books no chamber; the step still spans `n` weeks.
+      `partialRoom` also changes the skip predicate (R62-2: never skipped by
+      certification off; `workflow.step_effective_weeks`). Read only on a
+      `lab`-kind step; ignored on any other kind ("stored but not read").
+      Never sampled by Monte Carlo. Omitted from the canonical / hashed form
+      at None, so every pre-P62 hash and golden file is byte-identical.
     """
 
     step_id: str
@@ -315,6 +338,7 @@ class StepTimingInput:
     overlap_weeks: int = 0  # ADR 0043: 0..104, 0 = no overlap
     wait_weeks: int = 0  # P33 (ADR 0046 §4, R33-4): 0..104, 0 = no wait
     lead_weeks: int | None = None  # P33 (R33-1): 0..104, None = the input's lead-time table
+    lab_hold_weeks: int | None = None  # P62 (ADR 0071): 0..104, None = full length
 
 
 @dataclass(frozen=True)
@@ -471,6 +495,18 @@ class StepSchedule:
     # form at that default (`workflow.canonical_schedule_output_asdict`).
     pinned: bool = False
     manual_overlap: bool = False
+    # ADR 0071 (P62, R62-0 / I64; API_CONTRACT_P62 §2): the room weeks this
+    # row booked, `h = min(hold, n)` over the row's booked interval of `n`
+    # weeks (the step, an In Progress tail, a Done span or a pin window). The
+    # held weeks are always the row's last `h` weeks, `end_week - h + 1 ..
+    # end_week`. Set only on a lab row whose step has a hold
+    # (`StepTimingInput.lab_hold_weeks` not None, i.e. `partialRoom`); `None`
+    # on every other row and on a full-hold lab row, which means "every
+    # booked week", exactly as a pre-P62 row (`workflow.row_lab_load_weeks`).
+    # `h = 0` <=> `assigned_chamber_id is None` on such a row. Omitted from
+    # every serialised / hashed form at None
+    # (`workflow.canonical_schedule_output_asdict`).
+    lab_hold_weeks: int | None = None
 
 
 @dataclass(frozen=True)

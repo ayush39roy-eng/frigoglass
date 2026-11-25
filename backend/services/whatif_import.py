@@ -66,6 +66,7 @@ from scheduling.workflow import (
     STATUS_DONE,
     STATUS_IN_PROGRESS,
     Workflow,
+    build_lab_hold_table,
     build_lead_time_table,
     build_workflows,
     effective_lead_weeks,
@@ -453,11 +454,20 @@ def plan_current_steps(ctx: WhatIfContext) -> dict[str, str | None]:
                     kind=wf.steps_by_id[sid].kind,
                     certification_testing_required=p.certification_testing_required,
                     override_weeks=timing.get(sid),
+                    # ADR 0071 (R62-2): the project's room weeks.
+                    lab_hold_weeks=_hold_of(rows.get(sid)),
                 )
             ),
             None,
         )
     return out
+
+
+def _hold_of(row: Any) -> int | None:
+    """ADR 0071: a live project's room weeks on one step (its
+    `StepTimingInput.lab_hold_weeks`; None = Full / no row)."""
+
+    return None if row is None else row.lab_hold_weeks
 
 
 async def matchable_projects(
@@ -870,6 +880,7 @@ def applicable_edits(
     si = ctx.baseline.schedule
     workflows = build_workflows(si.workflow_steps)
     table = build_lead_time_table(si.lead_times)
+    hold_table = build_lab_hold_table(si.lead_times)  # ADR 0071 R62-9
     merge = body.mode == "merge"
     replaced = (
         {p.replaces_project_id for p in projects if p.replaces_project_id} if merge else set()
@@ -891,6 +902,8 @@ def applicable_edits(
                 kind=st.kind,
                 certification_testing_required=fp.certification_testing_required,
                 override_weeks=weeks.get(sid),
+                # ADR 0071 R62-9: a file project takes the template's hold.
+                lab_hold_weeks=hold_table.get((wf_id, fp.category, sid)),
             )
         )
         schedulable = fp.status in dc.SCHEDULABLE_STATUS_ORDER
@@ -922,6 +935,7 @@ def applicable_edits(
                     kind=st.kind,
                     certification_testing_required=p.certification_testing_required,
                     override_weeks=timing.get(sid),
+                    lab_hold_weeks=_hold_of(rows.get(sid)),
                 )
             )
             started = frozenset(

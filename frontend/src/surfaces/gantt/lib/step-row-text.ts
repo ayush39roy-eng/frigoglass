@@ -3,7 +3,7 @@
  * P32-R02 so the step-row components can share it). Served fields only.
  */
 
-import { formatPlanWeek } from '@/lib/format';
+import { formatPlanWeek, formatWeek } from '@/lib/format';
 
 import type { GanttStepRow } from '../api/types';
 import { durationSourceSuffix } from './step-duration-source';
@@ -34,5 +34,23 @@ export function stepBarTitle(
     parts.push(`${workWeeksPhrase(s.kind, s.duration_weeks, s.span_fte ?? null)}${durationSourceSuffix(s)}`);
   }
   if (actual) parts.push(`actual ${fmt(actual.startWeek)}–${fmt(actual.endWeek)}`);
+  const room = roomPhrase(s);
+  if (room !== null) parts.push(room);
   return parts.join(' · ');
+}
+
+/**
+ * P62 (ADR 0071, API_CONTRACT_P62 §5): which weeks of a lab step book the
+ * chamber — "Room booked W73 '27" / "Room booked W72 '27–W73 '27", or "no room"
+ * when the run booked none (`lab_hold_weeks` 0). Served fields only; null on a
+ * non-lab, skipped or unplaced row.
+ */
+export function roomPhrase(s: GanttStepRow): string | null {
+  if (s.kind !== 'lab' || s.skipped) return null;
+  if (s.room_start_week !== null && s.room_end_week !== null) {
+    return s.room_start_week === s.room_end_week
+      ? `Room booked ${formatWeek(s.room_start_week)}`
+      : `Room booked ${formatWeek(s.room_start_week)}–${formatWeek(s.room_end_week)}`;
+  }
+  return s.lab_hold_weeks === 0 ? 'no room' : null;
 }

@@ -138,7 +138,7 @@ describe('P48 saved scenarios on the upload step', () => {
     await user.click(await within(panel).findByRole('button', { name: 'Open Saved base' }));
 
     const banner = await screen.findByTestId('import-view-banner');
-    expect(banner).toHaveTextContent('Saved scenario — simulated W40 against plan v14');
+    expect(banner).toHaveTextContent('Saved scenario — simulated W40 \'26 against plan v14');
     expect(screen.getByTestId('import-results')).toBeInTheDocument();
     expect(screen.queryByTestId('import-upload')).toBeNull();
     // No workbook: no Scenario bar (pick / save / export current), no variant builder, no review.
@@ -198,7 +198,7 @@ describe('P48 saved scenarios on the upload step', () => {
     // Opening one from the Compare tab's library shows it read-only; Back to upload works.
     const library = screen.getByTestId('import-library');
     await user.click(await within(library).findByRole('button', { name: 'Open October plan' }));
-    expect(await screen.findByTestId('import-view-banner')).toHaveTextContent('Saved scenario — simulated W42 against plan v12');
+    expect(await screen.findByTestId('import-view-banner')).toHaveTextContent('Saved scenario — simulated W42 \'26 against plan v12');
     await user.click(screen.getByRole('button', { name: 'Back to upload' }));
     expect(await screen.findByTestId('import-upload-library')).toBeInTheDocument();
   });
@@ -314,7 +314,7 @@ describe('P48-R01 saved scenarios from the upload step with a parsed, unsimulate
     const panel = await uploadPanel();
     await user.click(await within(panel).findByRole('button', { name: 'Open Saved base' }));
 
-    expect(await screen.findByTestId('import-view-banner')).toHaveTextContent('Saved scenario — simulated W40 against plan v14');
+    expect(await screen.findByTestId('import-view-banner')).toHaveTextContent('Saved scenario — simulated W40 \'26 against plan v14');
     expect(screen.getByTestId('import-results')).toBeInTheDocument();
     expect(screen.queryByTestId('import-review')).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();

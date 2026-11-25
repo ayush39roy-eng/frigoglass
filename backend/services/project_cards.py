@@ -30,6 +30,7 @@ from models.priority import PriorityScore
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
+from scheduling import booked_hold_weeks
 from services.progress import project_progress_pct
 from services.schedule_readiness import served_outcome_label
 from services.tracking import TrackingStatus, due_stages_for, status_from_due_stages
@@ -72,7 +73,8 @@ class ProjectCard:
     #: P35 (D35-1): Σ of each step's effective duration of that kind as if the
     #: project had no effort figure of its own (`row_calculated_weeks`): the
     #: "calculated" design / lab time beside the figures. From the same live
-    #: rows as the progress weights, so no extra query.
+    #: rows as the progress weights, so no extra query. P62 (ADR 0071): the
+    #: lab sum counts room weeks, `min(plan_lab_hold_weeks, eff)`.
     design_weeks_calculated: int = 0
     lab_weeks_calculated: int = 0
     #: P42 (ADR 0056 R42-4): the active run's stored flags; null when the
@@ -188,9 +190,12 @@ async def build_project_cards(
                 row, kind, project.certification_testing_required, own_effort=own_effort
             )
             if kind in calculated:
-                calculated[kind] += row_calculated_weeks(
-                    row, kind, project.certification_testing_required
-                )
+                weeks = row_calculated_weeks(row, kind, project.certification_testing_required)
+                if kind == WorkflowStepKind.LAB:
+                    # ADR 0071 (I66, contract P62 §6): lab time = room weeks
+                    # `min(hold, eff)` (NULL = eff).
+                    weeks = booked_hold_weeks(row.plan_lab_hold_weeks, weeks)
+                calculated[kind] += weeks
             weighted.append(
                 (
                     row.percent_complete,

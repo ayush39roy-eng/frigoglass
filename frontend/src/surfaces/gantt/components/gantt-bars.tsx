@@ -34,6 +34,12 @@ import { stepHatchId, stepTint, type StepColor } from '../lib/step-colors';
  * with a step-colour outline for an elapsed step, a dashed outline for a
  * frozen project. Without one, the original planned-blue / actual-amber.
  *
+ * P62 (ADR 0071): with a `room`, a lab step's planned bar is drawn light (a
+ * tint of the step colour, outlined) for the weeks it only occupies on the
+ * path, and solid for the served room weeks (`room_start_week ..
+ * room_end_week`) — the last weeks, which book a chamber. `room: 'none'` = the
+ * run booked no room (light only).
+ *
  * Every x / width here is `barGeometry(...)` / `delayConnectorGeometry(...)` of
  * server week numbers mapped through the week→pixel `scale`. No position is ever
  * computed by summing `duration_weeks`.
@@ -118,6 +124,8 @@ export interface GanttBarGroupProps {
   /** P40-T01: the step's colour (`stepColor(step_id)`); omitted = the
    *  original planned / actual palette. */
   color?: StepColor | undefined;
+  /** P62: a lab step's served room weeks (inclusive), or 'none' (h = 0). Omitted = not a lab split. */
+  room?: { startWeek: number; endWeek: number } | 'none' | undefined;
 }
 
 export function GanttBarGroup({
@@ -134,12 +142,16 @@ export function GanttBarGroup({
   kind,
   skipped = false,
   color,
+  room,
 }: GanttBarGroupProps): React.JSX.Element | null {
   if (skipped) return null;
   const elapsed = kind === 'elapsed';
   const plannedGeom = planned ? barGeometry(planned.startWeek, planned.endWeek, scale) : null;
   const actualGeom = actual ? barGeometry(actual.startWeek, actual.endWeek, scale) : null;
   const connector = delayConnectorGeometry(plannedEndWeek, delayedEndWeek, scale);
+  // P62: a lab bar split into "in the lab" (light) and "room booked" (solid).
+  const roomSplit = room !== undefined && !elapsed;
+  const roomGeom = room !== undefined && room !== 'none' ? barGeometry(room.startWeek, room.endWeek, scale) : null;
 
   if (!plannedGeom && !actualGeom) return null;
 
@@ -167,11 +179,14 @@ export function GanttBarGroup({
           data-bar={elapsed ? 'elapsed' : 'planned'}
           data-step-slot={color?.slot}
           className="gantt-bar-grow"
+          data-room-split={roomSplit ? (room === 'none' ? 'none' : 'held') : undefined}
           fill={
             color
               ? elapsed
                 ? stepTint(color, 0.16)
-                : color.fill
+                : roomSplit
+                  ? stepTint(color, 0.22)
+                  : color.fill
               : elapsed
                 ? 'hsl(var(--color-gantt-planned) / 0.12)'
                 : frozen
@@ -180,8 +195,10 @@ export function GanttBarGroup({
           }
           stroke={
             color
-              ? elapsed
-                ? color.fill
+              ? elapsed || roomSplit
+                ? frozen
+                  ? 'hsl(var(--color-text))'
+                  : color.fill
                 : frozen
                   ? 'hsl(var(--color-text))'
                   : 'none'
@@ -191,8 +208,21 @@ export function GanttBarGroup({
                   ? 'hsl(var(--color-gantt-planned))'
                   : 'none'
           }
-          strokeWidth={elapsed || frozen ? 1.5 : 0}
+          strokeWidth={elapsed || frozen ? 1.5 : roomSplit ? 1 : 0}
           strokeDasharray={frozen ? '3 2' : undefined}
+        />
+      ) : null}
+      {plannedGeom && roomGeom ? (
+        <rect
+          x={roomGeom.x}
+          y={plannedY}
+          width={roomGeom.width}
+          height={barH}
+          rx={radius}
+          data-bar="room"
+          className="gantt-bar-grow"
+          fill={color ? color.fill : `url(#${GANTT_PLANNED_GRADIENT_ID})`}
+          pointerEvents="none"
         />
       ) : null}
       {actualGeom ? (

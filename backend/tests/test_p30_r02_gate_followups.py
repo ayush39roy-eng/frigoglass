@@ -42,6 +42,7 @@ from models.workflow import ProjectWorkflowStep, WorkflowLeadTime
 from tests.auth_helpers import clear_current_principal_override
 from tests.factories import make_engineer, make_hub, make_schedule_run
 from tests.p12_helpers import CW, act_as, client_for, live_step, plan_step, stepped_project
+from tests.p62_audit import P71A_TEMPLATE_VERSION as V0  # noqa: N814
 from tests.test_p13_region_filter import (
     REGIONS,
     _client,
@@ -208,7 +209,7 @@ async def _lead_weeks(db, step_id: str) -> int:
 _FIGURE_200 = {"PDD-A": 20, "PDD-D": 20, "PDD-E": 80, "PDD-J": 20, "PDD-K": 40, "PDD-M": 20}
 #: P33-T10: a template edit goes through the apply (the lead-times PUT is 410).
 _E_TO_10 = {
-    "changes": [{"workflow_id": "PDD", "category": "B", "base_version": 1,
+    "changes": [{"workflow_id": "PDD", "category": "B", "base_version": V0,
                  "steps": [{"step_id": "PDD-E", "weeks": 10}]}],
     "selection": {"mode": "all_not_reached"},
 }

@@ -255,7 +255,7 @@ describe('HubTypeSection drill-down (P17-R08)', () => {
     expect(within(r.dialog).getByText('Project a')).toBeInTheDocument();
     expect(within(r.dialog).queryByText('Project d')).not.toBeInTheDocument(); // blocked
     expect(within(r.dialog).queryByText('Project c')).not.toBeInTheDocument(); // spillover
-    expect(within(r.dialog).getAllByText('W40').length).toBe(2);
+    expect(within(r.dialog).getAllByText('W40 \'26').length).toBe(2);
     expect(within(r.dialog).getAllByText('Within year').length).toBe(2);
   });
 

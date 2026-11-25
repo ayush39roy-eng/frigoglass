@@ -40,6 +40,7 @@ from models.schedule import ScheduleRun, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep
 from services.active_run import step_kinds_for_run
 from services.capacity_supply import round2
+from services.lab_hold import held_weeks_from
 from services.priority_applicability import priority_applicable
 from services.run_step_effort import effort_from, spread_effort, weekly_effort_for_rows
 
@@ -157,7 +158,9 @@ async def remaining_run_load_by_project(
     stretched and keep the elapsed count, except a pinned lab row (P40, ADR
     0054 R40-3 / F6), whose window may differ from its effort: its
     `duration_weeks` is spread evenly over the window and the part from
-    `current_week` on counts.
+    `current_week` on counts. ADR 0071: a lab row with room weeks
+    (`lab_hold_weeks` not NULL) counts only its held weeks (the last `h`)
+    at or after `current_week`.
 
     Projects not in the run (no stored step) are absent from the result.
     """
@@ -207,6 +210,11 @@ async def remaining_run_load_by_project(
         kind = kinds.get(r.step_template_id)
         if kind == WorkflowStepKind.DESIGN:
             design[pid] += effort_from(effort.get(r.id, {}), run.current_week)
+        elif kind == WorkflowStepKind.LAB and r.lab_hold_weeks is not None:
+            # ADR 0071 (R62-0 / R62-10): a row with room weeks books its last
+            # `h` weeks (a pin's too); count those at or after current_week.
+            weeks = held_weeks_from(r.start_week, r.end_week, r.lab_hold_weeks, run.current_week)
+            lab[pid] += weeks * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
         elif kind == WorkflowStepKind.LAB and r.pinned:
             weekly = spread_effort(r.start_week, r.end_week, r.duration_weeks)
             lab[pid] += effort_from(weekly, run.current_week) * (

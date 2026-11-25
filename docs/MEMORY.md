@@ -46903,3 +46903,539 @@ Fixes from "[2026-11-23] QA — urgent end-to-end What-if planner test". Not com
   - Run retention (`services/run_retention.py`, owner chose "Prune, keep last 20"). Step rows are kept only for the latest 20 completed runs, the active run and plan-week-rollover runs. Run rows and outcomes are never deleted. Each completed run prunes up to 10 old runs; Super Admin `POST /schedule-runs/prune-old-steps?dry_run=` (max_runs ≤ 200) clears the backlog one run per transaction.
 - **Owner will upgrade** the Render Postgres to Basic-1GB. That is the actual permanent fix for memory; the code changes reduce load.
 - Tests: `tests/test_run_retention.py` and `tests/test_db_activity_diagnostics.py`. 800 related tests pass; the only failure is the pre-existing `test_migrations` table-count test.
+
+## [2026-11-25] P62 planning — Lab hold weeks (ADR 0071, PROPOSED) + hosted India chamber change — rpd-orchestrator: DONE (planning only, no code, not committed)
+- **Hosted chamber change (owner-approved 2026-11-25, done by the caller, not code):** PDD-J / PDD-L added to `allowed_stages` of IN-CH1, IN-CH2 and IN-CH3 (audited chamber PATCH), then a Recalculate was dispatched. Recorded here; not part of P62 code work. Before it, run v319: India J/L could book only IN-CH4 (max 1), ~107 India J/L bookings queued one at a time; 26-00391 "Extra shelf for Coke Feasibility" (C, P2, leader Nikhil) had J at week 132 (2028), finish 134, Nikhil idle weeks 72–132.
+- **Discrepancy to resolve (not resolved here):** MEMORY 2026-11-23 "P58 hosted fix" says IN-CH2/IN-CH3 got PDD-J/PDD-L and IN-CH4 was left PDD-F only; the 2026-11-25 screenshot says India J/L could book only IN-CH4. Some later chamber edit is unaccounted for. P62-T06 should read the chamber audit trail (`chamber.update`) from 2026-11-23 to 2026-11-25.
+- **Owner ruling (verbatim):** "FOR PR. Pr and pilot are in lab but they only use logic for 1 week not for all and like C type didnt even use so do accordingly coz the lab time for both these steps is not equal to there timing". The room week is the LAST week of the step. That is the owner's approval for the J/L hold 1 / C hold 0 defaults on existing hosted rows (template and project copies), and for nothing else.
+- **Did:**
+  - `docs/ADR/0071-lab-hold-weeks.md` (Proposed): nullable `lab_hold_weeks` (NULL = full length, byte-identical); per-project copy via the P33 apply; last-h-weeks booking, one chamber; tails / Done / pins / frozen / MC; CP-SAT occupancy interval; run-row column; readers list (§8); I64–I66; migration `p71a`; Questions 1–10.
+  - DOMAIN_RULES: note under the PDD step table (kinds are the seed, stale vs hosted J/L = lab) and an appended "Lab hold weeks — PROPOSED, not binding" section.
+  - IMPLEMENTATION_PLAN "## P62": T01–T07 TODO; P62-F1 (week labels show the year) and P62-F2 (Chambers tab lab-step tick boxes) IN PROGRESS (already delegated by the caller).
+- **Found while planning (for the auditor / owner):**
+  - Since the 2026-11-22 kind edit, an own lab figure (the client's F + H pivot, P51-T03) is split over F, H, J and L by weight, and the design figure no longer covers J (R6 lists a step-kind edit as a re-derivation trigger). Q1.
+  - Since then `certification_testing_required = false` also skips Pr. Pr and Pilot (every lab step is skipped). Q2.
+  - Pr. Pr no longer books the leader (was design). Owner may not be aware.
+  - P51-T03 (lab chamber stages J/L, "on hold: decide later") is effectively decided by the 2026-11-22 Super Admin edit; not re-marked here.
+- **Deviations:** none. No OPEN_QUESTIONS entries yet; P62-T02 adds them after the ruling.
+- **Gate:** N/A (planning). Next: P62-T01 workflow-auditor.
+
+## [2026-11-25] P62-T01 — workflow-auditor ruling on ADR 0071 "Lab hold weeks" (Q1–Q10, I64–I66): **PASS with amendments**; Q1 and Q2 need owner confirmation
+- **Read:** DOMAIN_RULES (step tables, Lead times / R2–R7, §G, PROPOSED "Lab hold weeks"), ADR 0071, IMPLEMENTATION_PLAN P62, MEMORY (P58 hosted fix, ADR 0070, P62 planning); `scheduling/greedy.py` (lab branch ~1145–1167, frozen `eligible[0]`, `no_chamber` exit), `cp_sat.py` (optional interval per eligible chamber, `AddCumulative`, `_book_solved_placements` books every row week), `effort_split.py` (`apportion_effort`: S′ = kind ∧ weight > 0 ∧ ¬excluded; cert-off → `certification_off`), `api/routers/workflow_settings.py` (a step-kind edit calls `rederive_all_projects`, trigger `step_kind_edit`, no started-share guard).
+- **Hosted (read-only, GET /gantt offset 0/100/200/300, run v320, CURRENT_WEEK 48, 376 projects; scripts in scratchpad `73db1d8c…/scratchpad/p62/`):**
+  - PDD-J / PDD-L are `lab` on all 171 PDD projects; OEM-J design / OEM-L elapsed (so ADR §2 OEM defaults do not apply on hosted).
+  - **R6 did fire on 2026-11-22:** the lab figure is spread over J/L. 80 active own-lab-figure projects; 76 (all PDD) carry J/L shares, 98 of 448 figure weeks sit on J/L. **35 of them have J or L given 0 by the split and therefore skipped** (Pr. Pr / Pilot erased from the plan; B 28, A 4, C 3). E.g. "10-facing subzero model" (A, figure 4): F 1, H 2, J 0, L 1.
+  - **Certification off:** 60 active projects (PD-India 51, PD-Romania 9; B 36, C 24) have every lab step skipped incl. J/L, 96 calendar weeks of Pr. Pr / Pilot removed. Before 2026-11-22 J (design) and L (elapsed) were never cert-gated.
+  - Of the 80 own-lab projects: 51 no started lab step; 23 have H Done/In Progress; 5 have J/L started; none frozen.
+  - 26-00391 now H 70, J 73 (IN-CH3, 1 week), L skipped (C), finish 75 (was 134 in v319): the IN-CH1..3 J/L change already fixed it.
+  - v320 J/L chamber bookings: IN-CH1 56, IN-CH4 32, IN-CH2 13, IN-CH3 6, RO 32, GR 6.
+- **Rulings (exact rule text for P62-T02):**
+  - **R62-0 (base rule, PASS as proposed):** `hold(p,s) = plan_lab_hold_weeks(p,s) ?? eff(p,s)`; `h = min(hold, n)` on a booked interval of `n` weeks; the chamber is held for the **last `h` weeks** of the interval only; the step still occupies all `n` weeks on the path. Defaults: PDD-J / PDD-L hold 1 for A+, A, B; 0 for C; OEM-J/L only if `lab` at migration time; everything else NULL. *Changes existing hosted schedules (on Recalculate); golden files byte-identical (fixtures use a 2-step workflow, all holds NULL); new goldens required.*
+  - **Q1 → R62-1 (AMENDED; owner must confirm; recommended default (b)).** Define `partialRoom(p,s) ⟺ kind(s) = lab ∧ plan_lab_hold_weeks(p,s) IS NOT NULL`. A `partialRoom` step is **outside the lab S′** (like a held-back step): no lab-figure share, `effort_weeks` NULL, `eff = user_override ?? plan_weeks`. The lab figure is split over the remaining lab steps (F, H) as the client computes it. The ADR's predicate ("non-NULL hold **below its weight**") is rejected: J has weight 1 and hold 1 in A+/A/B and L weight 1 hold 1 in B, so it would keep them in the split and leave the 0-share skips in place. The change is an R6 re-derivation (trigger `lab_hold_default`, audit `project.effort_rederived`, stale, no run), same scope and rules as the 2026-11-22 step-kind re-derivation that created the current shares: every non-frozen project with a figure, R3 raises, ADR 0070 hold-back still applies, **no `started_share` refusal** (it restores the shares those started steps had before 11-22). The UI must say "Room weeks set: length from the template, not the lab figure". Implement as a separable code path so it can be dropped if the owner declines. *Changes hosted schedules (76 projects; 35 regain Pr. Pr / Pilot); goldens unchanged.* Not reversed: J's old design share stays with the other design steps (J is no longer design; 161 own-design projects); Pr. Pr no longer books the leader — owner-awareness item for T02.
+  - **Q2 → R62-2 (AMENDED; owner must confirm; recommended default: J/L not skipped).** The cert-off skip becomes `eff(p,s) = 0 if kind(s) = lab ∧ ¬p.certification_testing_required ∧ ¬partialRoom(p,s)`; R7's `certification_off` applies to the full-room lab steps only. That restores pre-2026-11-22 behaviour for J/L (manufacturing steps, not testing). Same predicate as R62-1; separate code path. *Changes hosted schedules (60 active projects regain 96 J/L weeks, finishes later, within-year may fall — measure at T06); goldens unchanged.*
+  - **Q3 → R62-3 PASS:** NULL = full length (follows length edits); an explicit integer equal to the length is stored as given, not normalised to NULL (it is `partialRoom`).
+  - **Q4 → R62-4 PASS + extension:** `h = 0` ⟹ no chamber needed or booked, `chamber_id` NULL, I4 vacuous; the zero-eligible-chamber exits (greedy `no_chamber`, CP-SAT "zero eligible chamber → greedy LEFT_OUT", What-if / plan import P58-A "lab step without a chamber") fire only when `h > 0`. *Changes hosted schedules (C/J stops booking a room).*
+  - **Q5 → R62-5 PASS:** one chamber, last `h` weeks, contiguous; greedy finds the earliest `w` ≥ floor with one eligible chamber (chamber_id order) free in `[w+n−h, w+n)`; CP-SAT keeps `[s, s+n)` and adds a fixed-size-`h` optional occupancy interval at `s+n−h` per eligible chamber, exactly one present; the cumulative runs over occupancy intervals only. Frozen: `eligible[0]` over the last `h` weeks; `h = 0` books nothing. Add `cp_sat._book_solved_placements` (and any prebooked / `consume_from` path) to the ADR §8 reader list: it must book hold weeks only.
+  - **Q6 → R62-6 PASS:** progress weights (I12) stay on `eff`.
+  - **Q7 → R62-7 PASS:** backfill project copies for every project incl. reached / frozen / Cancelled / Commercialized (fewer held weeks never adds a conflict; frozen stays a no-op for re-derivation, I10). Under R62-1 the backfill is what makes J/L `partialRoom`, so the R62-1 re-derivation runs in the same migration transaction after the backfill.
+  - **Q8 → R62-8 PASS:** apply writes `plan_lab_hold_weeks` whatever ownEffort, on `¬never` pairs. A hold change that flips NULL ↔ non-NULL on an own-lab-figure pair triggers the R62-1 re-derivation for that project (same `started_share` treatment as R62-1).
+  - **Q9 → R62-9 PASS:** What-if added projects and plan-import file projects take the hold from their category template; R62-1/R62-2 apply to them identically (I58 parity).
+  - **Q10 → R62-10 PASS:** chamber supply unchanged; booked % = Σ h / supply. **Amendment:** the BUG-2 windowing (What-if before-load, full-year / remaining) counts the actual held weeks inside the window, not a pro-rata share of `n`.
+  - **Started / pinned / Done / MC (§6): PASS as proposed.**
+- **Invariants (final text):**
+  - **I64:** every non-skipped `lab` row with `h = min(hold, n) > 0` occupies exactly one chamber in exactly its last `h` booked weeks and no chamber in any other week; I2 counts occupancy weeks only; `h = 0` ⟺ `chamber_id` NULL; a row with `h = 0` is never the cause of `no_chamber` / LEFT_OUT.
+  - **I65:** `0 ≤ lab_hold_weeks ≤ weeks` (template), `0 ≤ plan_lab_hold_weeks ≤ plan_weeks` (copy), run row `lab_hold_weeks ≤ duration_weeks`; non-lab template rows NULL via the API (422 `LAB_HOLD_NOT_LAB`).
+  - **I66:** booked lab load per region = Σ `h` over the active run's non-skipped lab rows (NULL = `duration_weeks`) = served `lab_load_booked_weeks` = Σ Gantt `lab_weeks`; I25's lab half uses `min(hold, eff)` / `min(hold, rem)`; I9: no surface recomputes lab load from step length.
+  - **I67 (new, if R62-1/R62-2 are confirmed):** a `partialRoom` step has `effort_weeks` NULL and is never skipped by the cert-off predicate; with every hold NULL, splits and skips are byte-identical to today.
+- **Verdict:** ADR 0071 PASS with the amendments above. P62-T03/T04 may build R62-0, 3–10 now. R62-1 and R62-2 are blocking owner questions for T02 (OPEN_QUESTIONS); build them as separable paths and do not ship them before the owner answers. If the owner declines, the status quo stays (J/L in the lab split; cert-off skips J/L) and the 35 + 60 affected projects are listed to him at T06.
+- No code or docs other than this entry touched.
+
+## [2026-11-25] P62-T01 accepted — rpd-orchestrator: DONE (review only, not committed)
+- Reviewed the workflow-auditor ruling "[2026-11-25] P62-T01" (PASS with amendments, R62-0…R62-10, I64–I66 tightened, I67 proposed) against DOMAIN_RULES and the locked stack. No stack substitution and no invariant conflict. Accepted.
+- The ruling's two blocking owner questions (R62-1 lab split, R62-2 cert-off) were answered by the owner on 2026-11-25; they are folded at P62-T02.
+- IMPLEMENTATION_PLAN P62-T01 → DONE.
+
+## [2026-11-25] P62-T02 — fold ruling + owner answers into ADR 0071 / DOMAIN_RULES / contract — rpd-orchestrator: DONE (docs only, no code, not committed; no git index changes)
+- **Owner answers 2026-11-25 (verbatim):**
+  - Q1: "Only PoC + Certification". J/L leave the own lab-figure split (auditor `partialRoom`), confirmed.
+  - Q2: "c doesnt have else have".
+  - Leader: "Room only".
+  - Room week: the LAST week.
+- **Interpretation recorded (orchestrator reading, ADR 0071 + OQ #125):**
+  - Category C has no Pr. Pr / Pilot: C/PDD-J `weeks` 1 → 0 (C/PDD-L is already 0), both with hold 0. They are therefore `partialRoom` and skipped. This supersedes the proposal's "C hold 0".
+  - Every other category always has J/L; cert-off skips only F/H.
+- **Did:**
+  - `docs/ADR/0071-lab-hold-weeks.md`: Status → Accepted. New section "Ruling (binding) — R62-0 … R62-13":
+    - R62-0…R62-10 as ruled;
+    - R62-11 C has no Pr. Pr / Pilot;
+    - R62-12 a length change on a `partialRoom` step reaches `plan_weeks` whatever ownEffort says (found while folding: without it, a C project with its own lab figure keeps J at 1);
+    - R62-13 room only.
+
+    §2, §5 and Questions are marked superseded / answered.
+  - DOMAIN_RULES:
+    - PDD-J / PDD-L kind → lab in the step table, and the stale note is replaced;
+    - Lead times: C/J = 0 note, and the skip predicate gains `¬partialRoom`;
+    - cert-off bullet, R2 (lab S′ = F + H, example PDD/A lab 4 → F 2, H 2), R7 and §B notes;
+    - Booking rules lab / skipped bullets;
+    - I4 / I7 pointers;
+    - the PROPOSED section is replaced by the binding "Lab hold weeks" section (values, definitions, R62-0…R62-13, readers, I64–I67).
+  - `docs/API_CONTRACT_P62.md`:
+    - migration p71a data steps 1–5 (order: template defaults incl. C/J length, hold backfill all, C/J length to ¬never copies, R62-1 re-derivation, stale / no run);
+    - engine `StepInput.lab_hold_weeks` and the run-row column;
+    - `GET /workflow-settings` `lab_hold_weeks`;
+    - C2 steps `lab_hold_weeks` / `room_weeks` / `room_start_week`, and category `lab_weeks` = Σ h plus `lab_length_weeks`;
+    - override `lab_hold_weeks: int | "full"` with 422 `LAB_HOLD_NOT_LAB` / `LAB_HOLD_OUT_OF_RANGE`, and the clamp flag;
+    - apply-preview `hold_before/after` and flags `room_weeks_clamped` / `lab_split_rederived` / `partial_room_length_applied`;
+    - Gantt step `lab_hold_weeks` / `plan_lab_hold_weeks` / `room_start_week` / `room_end_week`, and project `lab_weeks` = Σ h;
+    - the reader table; the frontend notes.
+  - OPEN_QUESTIONS #122 (unexplained 23–25 Nov India chamber edit), #123 (OEM-J/L), #124 (close P51-T03), #125 (room-weeks / rule coupling + Q2 reading). All non-blocking.
+  - IMPLEMENTATION_PLAN P62: header → Accepted; T01 and T02 DONE; T03 / T04 task text updated to R62-1/2/11/12 and the contract.
+- **Consistency check:** I64–I67 hold with R62-11:
+  - C/J/L are skipped, so they fall outside I64 / I66;
+  - weeks 0 / hold 0 satisfies I65;
+  - I67 says `partialRoom` steps are skipped only by `plan_weeks` 0, never by cert-off.
+- **Hosted effect (T06 measures):**
+  - 76 own-lab projects re-split; 35 regain J/L;
+  - of the 60 cert-off projects, 36 B regain J/L and 24 C do not;
+  - not-reached C J removed (26-00391 J wk 73 goes);
+  - J/L hold 1 room week.
+- **Deviations:** none from the ruling. R62-11 / R62-12 are additions needed by the owner's Q2 answer and R62-1, and are recorded in the ADR. The contract was written at T02 (the plan had it at T04); T04 implements it and records any shape change.
+- **Blocks T03 / T04:** none. T04 needs T03's `StepInput` types.
+- **Gate:** N/A. Next: P62-T03 algorithm-engineer.
+
+## [2026-11-25] P62-F1 + P62-F2 — Every week carries its year; per-chamber lab-step tick boxes on Workflow Settings → Chambers — frontend-builder: DONE (not committed)
+
+- **P62-F1 (owner: "which year week 40 we are talking about, add a years also"):**
+  - **One formatter:** `formatWeek` (`frontend/src/lib/format.ts`) now always names the year, `W40 '26`, also inside the plan year (before: bare `W40` in the plan year, `W5 '27` outside it). The year comes from the served week line (`/me.week_base_year`, falling back to the served `plan_year`), never the browser clock. Only before `/me` resolves does a plan-year week read `W40`. `formatPlanWeek`, `formatYearWeek` and `WeekText` all go through it, so every surface that already used them (Progress card Planned / Expected / Will be completed / Now / Year-end, check-in, register, Gantt tooltips and markers, dashboard, executive, What-if banners, priority-move panels, plan-week notices) picks the year up with no per-surface change.
+  - **Bare labels fixed:**
+    - Gantt "now" pill (`W48 '26 now`, pill widened 52 → 68 px);
+    - Gantt legend "Week 47 — now" (it printed the raw ABSOLUTE week, wrong from 2027);
+    - Workflow Settings "Planning week …" line;
+    - engineer "Since W47" and the deactivation dialog week.
+  - **Typed weeks:** new `frontend/src/components/shared/week-year-input.tsx`.
+    - `WeekYearInput` is a week-of-year number (1–52) plus a year `<select>` (served base year .. plan year + 1, wider if the value's year is later), with the resolved `W40 '26` under the field. It replaces the bare number inputs for Actual start / Actual end on the Project Workspace Progress card (`stage-row.tsx`).
+    - **The wire is unchanged:** the input converts to and from the absolute plan week (`yearStart(year) + week − 1`; 2027 W5 = 57, ADR 0063).
+    - An out-of-range week (0, 53, 1.5) is emitted as `NaN`, so `validateStage` refuses it with "Week must be a whole number from 1 to 52." It is never silently turned into another year's week.
+    - The year select's accessible name is "Year for actual start week — <step>".
+  - `ResolvedWeekHint` ("= W40 '26") sits under the two inputs that still take an absolute plan week: Registration "Expected completion (week)" and the Gantt freeze dialog "Actual start week".
+  - **Not changed (reported, not swept):**
+    - Category labels with a literal `W52` ("Spillover (past W52)", "Past W52", "Queued — after W52", "by W52", "No finishes by W52"). They are module constants naming the plan-year end, not a served week.
+    - Axis tick numbers under a year header row (Gantt, import Gantt, heatmap columns): compact by design.
+    - The Gantt step-pin S/E boxes (36 px, confined to the plan year; their error text now names the year).
+    - Workflow-template relative weeks (category timeline "W{origin+t}").
+- **P62-F2 (owner: "in workflow template there should be option to check or uncheck this"):**
+  - New `frontend/src/surfaces/workflow-settings/components/chamber-stages.tsx` (`ChamberStagesGrid`), rendered at the bottom of the Chambers tab. It is a table with one row per chamber and one tick box per lab-kind step (`labKindSteps(workflows)`). Accessible names follow the pattern "IN-CH4 accepts Pre-Production (Pr. Pr)"; the workflow is prefixed only when two lab steps share a name.
+  - **Data and save:** `GET /chambers` (same key `queryKeys.chambers()` and `fetchChambers` as Capacity Planning, P47 edit freshness: no refetch while a row is in Edit). Edit → tick → Save sends `PATCH /chambers/{id}` `{allowed_stages, base: {allowed_stages: <as read>}}` through `sendEditWithBase` + `useUpdateChamber` (the Capacity Planning mutation, which invalidates the chambers / planning / capacity keys). Workflow-settings is invalidated too. A 409 opens the shared conflict dialog. Cancel restores the served ticks. The order sent is the shown lab-step order, then any served id the grid does not show (kept, not dropped). No backend change.
+  - **Writers:** `capacity_planning.write`, the PATCH's own permission (Hub Planner, Admin, Super Admin). Everyone else sees disabled ticks and "Read-only for your role". The query only runs with `capacity_planning.read`; without it the grid is hidden.
+  - **After a save:** a `role="status"` notice reads "IN-CH4 saved — the plan is not recalculated…", with the shared header `PlanRecalculateButton` for Admin / Super Admin (ADR 0069, manual recalculation). The tab's intro copy now says the steps are ticked per chamber below.
+  - **Note for backend / orchestrator:** `PATCH /chambers/{id}` does not mark projects stale, so the served freshness banner does not count a chamber change. The local notice covers it; "Recalculate" works with nothing stale.
+- **Tests:**
+  - New `chamber-stages.test.tsx` (5): served ticks are read-only until Edit; tick + Save sends allowed_stages + base and shows the notice; Cancel; an unshown id is kept; the reader is read-only; axe clean while editing.
+  - New Progress-card test in `ProjectWorkspacePage.test.tsx`: Planned shows `W33 '26–W34 '26`; year 2026 → 2027; 60 refused; week 5 in 2027 sends `actual_start_week: 57` with `base: {actual_start_week: 22}`.
+  - About 30 assertions in 18 existing test files updated from `W47` to `W47 '26`.
+- **Results:**
+  - `npx tsc -b` clean.
+  - eslint clean on every touched or new file.
+  - Full vitest: 2588 passed, 1 failed. The failure is `src/app/app.test.tsx` "navigates to the Project Execution Timeline surface", and it is pre-existing and unrelated: the Zoom slider moved inside the data-loaded card in P40-T01, and that test's fetch is stubbed to reject.
+- **Files:**
+  - `frontend/src/lib/format.ts`
+  - `frontend/src/components/shared/week-year-input.tsx` (new)
+  - `frontend/src/surfaces/project-workspace/components/stage-row.tsx`
+  - `frontend/src/surfaces/project-workspace/lib/stage-validation.ts`
+  - `frontend/src/surfaces/gantt/components/{gantt-time-axis,gantt-legend,freeze-dialog}.tsx`
+  - `frontend/src/surfaces/registration/components/project-form.tsx`
+  - `frontend/src/surfaces/planning/components/{engineer-table,deactivate-engineer-dialog}.tsx`
+  - `frontend/src/surfaces/workflow-settings/components/{workflow-templates-section,chambers-tab,chamber-stages (new)}.tsx`
+  - the test files above.
+- **Gate:** covered by P62-T07.
+
+## [2026-11-25] P62-T03 — engine: lab hold weeks (ADR 0071 R62-0…R62-13, I64–I67) in `backend/scheduling/` — algorithm-engineer: DONE (not committed; no git index changes)
+- **Read:** DOMAIN_RULES "Lab hold weeks" (+ Lead times / R62 notes), MEMORY P62 planning / T01 / T01 accepted / T02, IMPLEMENTATION_PLAN P62-T03, ADR 0071, API_CONTRACT_P62 §2.
+- **Built (scheduling only):**
+  - `types.py`: `StepTimingInput.lab_hold_weeks` (the contract's "StepInput"; no class of that name exists), `LeadTime.lab_hold_weeks` (template room weeks, read ONLY to build What-if / plan-import projects from their template), `StepSchedule.lab_hold_weeks` (booked `h`; None on non-lab and full-hold rows). All three omitted from canonical input / output at None.
+  - `workflow.py`: `is_partial_room`; `certification_off_skips` (R62-2) and `partial_room_zero_length_skips` (R62-11) as separate functions composed by `step_effective_weeks` / `is_step_skipped` (new kw `lab_hold_weeks=None`); `merged_step_override(..., kind=, lab_hold_weeks=)` drops effort on partialRoom steps (I67); `booked_hold_weeks`, `hold_window`, `row_lab_hold_weeks`, `row_held_weeks`, `row_lab_load_weeks`, `build_lab_hold_table`, `template_lab_hold_rows`; `StepPlan.lab_hold_weeks` (lab steps only); validation 0..104.
+  - `greedy.py`: Not Started search = earliest w with an eligible chamber (chamber_id order) free in `[w+n−h, w+n)`; frozen `eligible[0]` over held weeks; `_book_anchored` (tail / Done / pin) holds the last `h` of its interval, consumed from CURRENT_WEEK; `h = 0` books nothing, chamber None, never `no_chamber`.
+  - `cp_sat.py`: `0<h<n` → optional fixed-size-`h` occupancy interval at `end−h` per eligible chamber, cumulative on those only; `h=0` → no chamber literal, not sent to greedy for a missing chamber; `h=n` = the pre-P62 model; `_book_solved_placements` books held weeks only.
+  - `invariants.py`: `effective_weeks` (I1/I2) restricted to held weeks; I4 vacuous at `h=0`; I5 input predicate with R62-2; I7 = Σ h (I66, NULL = duration_weeks); I45 lab pin at `h=0`; new `_check_i64_lab_occupancy` (I64 + run-row I65 `0≤h≤n`) and `_check_i67_partial_room`.
+  - `effort_split.py`: R62-1 in one function `outside_lab_split` (used by `in_effort_split` / `apportion_effort`); `EffortStepInput.lab_hold_weeks`.
+  - `demand.py`: `LiveStepRow.lab_hold_weeks`; I25 lab half `min(hold, eff)` / `min(hold, rem)` (`live_step_lab_load_weeks`); I26 checks partialRoom steps even with cert off (must be NULL).
+  - `whatif.py`: added projects get `template_lab_hold_rows` (R62-9); `_plan_loads` lab = Σ h; BUG-2 windowing counts held weeks inside the window for a row with a hold. `plan_import.py`: file projects take template holds, matched plan projects keep theirs, skip predicate with hold, capacity lab weeks = held weeks. `template_timeline.py`: `lab_holds=` kw, `TemplateStep.room_weeks / room_start_week / lab_hold_weeks`, `lab_weeks` = Σ h, `lab_length_weeks`. Monte Carlo: unchanged code (hold carried by `replace`, never sampled; engine clamps `min(hold, d)`), docstring note.
+- **Tests:** `pytest -c pytest-scheduling.ini`: **1006 passed** (966 pre-existing + 40 new in `tests/scheduling/test_p62_lab_hold.py`), scheduling coverage 95.47 %. New tests: last-week hold, held-window search, contention, frozen, `h=0` (walk, tail, pin, CP-SAT), In Progress tail, Done, pin, CP-SAT = greedy on a fixture with a unique optimum, CP-SAT tail walk sees held weeks only, 14-step goldens (B J/L hold 1; A+ L 70–72 holds 72; C J/L skipped even with override), R62-2 cert-off + separability, R62-1 split (PDD/A lab 4 → F 2, H 2; B lab 10 → H 10), I25/I26, What-if / plan-import template holds, template timeline, canonical forms, I64/I65/I67 negatives.
+- **Byte-identity proof:** a pytest plugin fingerprinted (sha256) the canonical input and output of every `ScheduleInput` / `ScheduleOutput` built in the suite, before and after: **727 tests, 8298 fingerprints, 0 changed**. Five existing tests (`test_p32_overlap`, `test_p33_gaps`, `test_p36_band_rank`, `test_p37_current_week`, `test_p40_step_pins`) were edited only to strip the new None fields from a raw `asdict` / field-order list (as P40/P53 did); their pinned digests are unchanged.
+- **ruff / mypy:** ruff clean; mypy (strict, explicit files) shows no finding on the touched files that HEAD does not already have.
+- **Deviations / notes for T04:**
+  1. Contract "StepInput" = `StepTimingInput`.
+  2. `StepSchedule.lab_hold_weeks` is None on a **full-hold** lab row (contract: "h on lab rows"), so all-NULL runs stay byte-identical and NULL keeps meaning "every booked week" (I66 reads NULL as `duration_weeks`). Store it as-is in `schedule_run_project_steps.lab_hold_weeks`.
+  3. Live builder: pass `plan_lab_hold_weeks` per project in `StepTimingInput.lab_hold_weeks` (lab steps), `duration_override_weeks = merged_step_override(user, effort, kind=, lab_hold_weeks=)`; the engine never falls back to `LeadTime.lab_hold_weeks` for a live project. What-if / plan-import baselines must fill `LeadTime.lab_hold_weeks` from `workflow_lead_times.lab_hold_weeks`.
+  4. I65 corner: `h = min(hold, n)` can exceed `duration_weeks` when a tail / Done span / pin is longer than `eff` and `hold > eff` (only if a user override < hold). The proposed CHECK `lab_hold_weeks <= duration_weeks` could then reject a run row; T04 should bound it by the booked span or clamp. The engine asserts `0 ≤ h ≤ n`.
+  5. R62-11 is data in the engine (C/PDD-J 0); `partial_room_zero_length_skips` is a named guard (implied by the lead-0 rule) so I67 is checkable and R62-11 is separable from R62-2.
+  6. `PlanImportStep` (served shape) not extended with the hold; rows carry it via the outcome if T04 wants to serve it.
+- IMPLEMENTATION_PLAN not edited (the orchestrator marks T03). **Gate:** N/A. Next: P62-T04 backend-builder.
+
+## [2026-11-25] P62-T04 — backend: lab hold weeks (ADR 0071 R62-0…R62-13, I64–I67; `docs/API_CONTRACT_P62.md`) — backend-builder: DONE (not committed; no git index changes; migration NOT run against hosted)
+- **Read:** DOMAIN_RULES "Lab hold weeks" + I64–I67, ADR 0071 (Ruling R62-0…R62-13), `docs/API_CONTRACT_P62.md`, MEMORY P62-T01 / T02 / T03, IMPLEMENTATION_PLAN P62-T04. `alembic heads` = `p70a_effort_weight_revive` (single head) before chaining.
+- **Built:**
+  - **Models / migration `p71a_lab_hold_weeks`** (revises p70a): `workflow_lead_times.lab_hold_weeks`, `project_workflow_steps.plan_lab_hold_weeks`, `schedule_run_project_steps.lab_hold_weeks` (all `int NULL`) + I65 CHECKs; data steps 1–5 of the contract in one transaction, each a named function (`step1_template_defaults` + `step1_r62_11_c_no_pr_pr_template`, `step2_backfill_hold_copies`, `step3_r62_11_c_no_pr_pr_copies`, `step4_r62_1_rederive`, `step5_mark_stale`; `run_data_steps`). Idempotent: writes only NULL holds / `weeks = 1` / `plan_weeks = 1` / a split that differs. Audits: `workflow_template.applied` per category (reason `p62_lab_hold_defaults`, `p62_c_no_pr_pr` listed for C; one `template_changes` row), `project.lab_hold_backfilled`, `project.template_applied` (`weeks [1, 0]`), `project.effort_rederived` (trigger `lab_hold_default`); actor NULL, `notes` = "ADR 0071: lab hold weeks (migration p71a_lab_hold_weeks)". No run dispatched. Downgrade drops the columns only (C/J and splits not restored; documented).
+  - **One predicate:** `services.workflow_durations.live_step_effective_weeks / live_step_skipped / display_duration_weeks / run_input_lead_and_override` take `lab_hold_weeks` (+ `kind`) and call the engine's `certification_off_skips`, `is_partial_room`, `merged_step_override`; every service row helper (`workspace.row_is_skipped / row_effective_weeks / row_calculated_weeks`, register, cards, tracking, pins, check-in via them, ask-agent, Gantt) passes `row.plan_lab_hold_weeks`. `register_steps.in_force_kinds / is_applicable` follow R62-1 / R62-2.
+  - **Live builder:** `StepTimingInput.lab_hold_weeks = plan_lab_hold_weeks` on lab steps; partialRoom → `lead_weeks = plan_weeks`, override = `merged_step_override(None, effort, kind, hold)` = None; `LeadTime.lab_hold_weeks` from the template on lab steps (What-if / plan-import baselines); run rows store `StepSchedule.lab_hold_weeks` as-is. All-NULL input hashes unchanged.
+  - **Effort (R62-1):** `EffortStepInput.lab_hold_weeks` everywhere (`effort_inputs`, `validate_effort_split`, `derive_for(hold_overrides=)`, `held_out` skips partialRoom steps); triggers `lab_hold_default` / `lab_hold_change`.
+  - **Copies:** `template_copy.copy_template(holds=)` copies the hold with the length (registration, category / workflow change) and clamps it to `plan_weeks` (I65); OR-5 recopy clamps only; "+ Add category" copies `lab_hold_weeks`.
+  - **Template API:** `GET /workflow-settings` `lead_times[].lab_hold_weeks` (null on non-lab rows); C2 steps `lab_hold_weeks / room_weeks / room_start_week`, category `lab_weeks` = Σ h, `lab_length_weeks`; B-equivalent lab = Σ h. Override `lab_hold_weeks: int | "full"`; 422 `LAB_HOLD_NOT_LAB` / `LAB_HOLD_OUT_OF_RANGE` (coded, in `template_editor.resolve_hold`); clamp on a lowered length; NO_CHANGE over all three values.
+  - **Apply (P33, third change kind):** hold written on ¬never pairs whatever ownEffort (R62-8); R62-12 partialRoom length applied on own-effort pairs (`partial_room_length_applied`); NULL↔value flip on an own-lab-figure project re-derives in the same transaction (`lab_split_rederived`, trigger `lab_hold_change`, no `started_share` refusal); `room_weeks_clamped`; `hold_before / hold_after`; audits carry `lab_hold_weeks [before, after]` (template summary per step; `project.template_applied` `after_state.lab_hold_weeks`); hold-only apply = stale + `recalc_status: not_needed`, nothing dispatched.
+  - **Readers (I66, grep-confirmed):** `/capacity/hubs` + `/hub-load` booked lab = Σ h; `/capacity/utilization-matrix` chamber weeks = held weeks only; `/planning/resource-load` chamber load = Σ h; Priority board remaining lab (`capacity_priority.remaining_run_load_by_project`, held weeks ≥ run week); project cards / register "calculated lab time" = Σ min(hold, eff); demand via `LiveStepRow.lab_hold_weeks` (engine I25); What-if / plan import via the engine (baseline holds) + service-side skip predicate in `whatif_import` / `whatif_import_register`; Gantt `lab_weeks` = Σ h; `/workflow-settings/b-equivalent`. Shared helpers in new `services/lab_hold.py` (`run_row_lab_weeks` = engine `row_lab_load_weeks` on stored rows, `run_row_held_weeks` = `hold_window`, `held_weeks_from`, `room_week_range`). Not changed: progress weights (I12), supply, design load, `/chambers` (serves supply only), class-breakdown (counts).
+  - **Gantt:** `GanttStepRow.lab_hold_weeks` (booked h; NULL run value served as `duration_weeks`; 0 on a skipped lab row; null on non-lab / unplaced), `plan_lab_hold_weeks`, `room_start_week` / `room_end_week` (inclusive, `planned_end_week − h + 1 .. planned_end_week`, null when h = 0).
+  - **Exports:** Gantt data sheet and What-if Gantt data sheet gain "Room weeks" (`lab_hold_weeks`, global header label); capacity export follows the served figures; register "Lab time" fallback counts room weeks; the Matrix export has no lab-weeks column (D/L is the category timeline), none added.
+  - **`PATCH /chambers/{id}`:** a change of `allowed_stages`, `max_concurrent` or `lab_region` marks every schedulable project stale (`mark_all_schedulable_stale`, as the Workflow Settings PUTs); a label-only change does not. No run.
+- **Contract deviations (semantics unchanged):**
+  1. Run-row CHECK is `0 <= lab_hold_weeks <= end_week − start_week + 1` (booked span), not `<= duration_weeks` (T03 note 4: tails / Done spans / pins).
+  2. `ApplyPreviewStep.hold_before / hold_after` are null on non-lab steps (a stored hold there is not read), like `GET /workflow-settings`; `room_weeks_clamped` is flagged on lab steps only (a non-lab stored hold is clamped silently to keep I65).
+  3. "Own lab figure" for R62-8 = the project has a lab figure or a lab share; a flip whose re-split changes nothing is written without `lab_split_rederived`.
+  4. Migration step 4: a project whose re-split R7 would reject (> 104 weeks on a step) is left unchanged (listed in the step result, no audit) rather than failing the deploy.
+  5. Migration defaults only for categories A+/A/B/C (and OEM A/B/C-OEM if lab); a custom category (e.g. one added by "+ Add category") gets none: the owner approval covers exactly these rows.
+- **Fresh-DB effect (test DB included):** the template is seeded by migration `5c9e…`, so p71a's data steps run on every new database: A+/A/B/C `template_version` 2, C/PDD-J 0 weeks, J/L holds stored (not read while J/L are design/elapsed, the workbook seed), 4 audit rows + 1 `template_changes` row. Existing tests adjusted to that (new `tests/p62_audit.py`: `P71A_TEMPLATE_VERSION`, `NOT_MIGRATION_AUDIT`, `NOT_MIGRATION_CHANGE`): test_p33_t10 / p70 / p35_t05 / p33_t09 / p13_slice_a / workflow_settings_api / p30 (×2) / p33_categories_table / p9_data_model (C/J 0 per the DOMAIN_RULES note) / p18 (×3, C = 5 design weeks) / p32 import (floor moved J→K) / p58 (B instead of C, R62-4) / p53 checksum (final checksum at p70a) / p54 / p12 (×2) / audit_log_api / seed_reset; `test_openapi_frontend_contract._PENDING_FRONTEND_FIELDS` lists the 13 P62 fields for T05. `domain_constants.LEAD_TIME_SEED` / the seed scripts are unchanged (still the workbook C/J = 1; only `duration_weeks`, which no `eff` reader uses, comes from it).
+- **Tests:** new `tests/test_p62_lab_hold_backend.py` (19: template defaults, builder round trip + run rows, NULL-hold = pre-P62 input, run-input mapping, R62-1/R62-2/I67 predicate, cert-off keeps J/L, lab split over F/H only, readers (hub-load / Gantt / utilisation / resource-load = 14 on A+), helper parity with the engine, Priority board, settings + timelines, override validation, hold-only apply, clamp, R62-12, registration / category-change copy, chamber PATCH stale, OpenAPI) and `tests/test_p62_migration.py` (own container: seeded DB → p70a → hosted pre-P62 shape → p71a; row checksums of every other table / column unchanged; steps 1–5 asserted; second pass writes nothing; I65 CHECKs; down / up).
+- **Results:** full backend suite (`pytest tests --ignore=tests/scheduling`, no coverage): **3194 passed, 2 failed**, both pre-existing and not P62: `test_migrations::test_migration_up_down_up_down_cycle` (table count 44 vs 38, recorded earlier) and `test_p20_fte_followups::test_gantt_step_row_contract` (the field set lacks P40-R02's `pin_lapsed` / `pin_clearable`; the P62 fields were added there, the pin drift is left to its owner). The first run, before the existing tests were adjusted, had 65 failures, all from the fresh-DB effect / new fields above. New P62 tests: 19 + 1 pass. Scheduling suite (`pytest -c pytest-scheduling.ini`): 1006 passed, coverage 95.47 % (unchanged; nothing under `backend/scheduling/` edited).
+- **ruff:** clean on every touched / new file except two pre-existing long lines (`services/whatif_import.py:354`, `tests/test_openapi_frontend_contract.py:1204`). **mypy:** no finding in any touched / new file (the 69 reported are in untouched modules: cp_sat, models/types, priorities, dashboard, …).
+- **For T05 (frontend) — fields to mirror (remove from `_PENDING_FRONTEND_FIELDS`):** `LeadTimeSetting.lab_hold_weeks: number | null`; `TimelineStep.lab_hold_weeks: number | null`, `room_weeks: number`, `room_start_week: number | null`; `CategoryTimeline.lab_length_weeks: number` (also on `TimelinePreviewResponse` and `ApplyPreviewCategory.timeline`); `TemplateStepOverride.lab_hold_weeks?: number | 'full'`; `ApplyPreviewStep.hold_before: number | null`, `hold_after: number | null`; `StepFlag` += `'room_weeks_clamped' | 'lab_split_rederived' | 'partial_room_length_applied'`; `GanttStepRow.lab_hold_weeks`, `plan_lab_hold_weeks`, `room_start_week`, `room_end_week` (all `number | null`); error codes `LAB_HOLD_NOT_LAB`, `LAB_HOLD_OUT_OF_RANGE`; export column "Room weeks".
+- **Not done / for the orchestrator:** migration not run on hosted (P62-T06 audits it on a disposable copy). IMPLEMENTATION_PLAN row left to the orchestrator. **Gate:** P62-T07.
+
+## [2026-11-25] P62-T06 — audited run, ADR 0071 "Lab hold weeks", disposable DB rebuilt from hosted GETs — workflow-auditor: **PASS** (advisories for the owner / orchestrator; no code, not committed)
+- **Method:** option (b), rebuilt from hosted GETs (read-only GETs only, nothing written to hosted). Throwaway DB `rpd_p62audit` in `rpd-pg-dev`:
+  - `alembic upgrade p70a`, then `seed_demo_data --dataset client_2026 --reset` (HEAD `f6fe77a` code in a scratch worktree) as the skeleton.
+  - Overlaid from hosted `/hubs`, `/engineers?status=all`, `/chambers`, `/workflow-settings`, `/projects`, `/gantt` (run v321, week 48):
+    - step kinds, the 98 lead times, category versions, horizon 5 y, and the chambers' `allowed_stages` / `max_concurrent` / efficiency;
+    - 26 engineers (3 inactive);
+    - 376 projects (330 ids match the seed; 46 inserted; financial fields dropped at download);
+    - every step of the 189 scheduled projects: `plan_weeks`, gap, `effort_weeks`, status, %, actual weeks, pins, and 1 inferred exclusion.
+  - Before = HEAD (pre-P62) code, greedy at week 48. After = working tree, `alembic upgrade p71a_lab_hold_weeks`, then greedy at week 48. Surfaces were read from each code's own API on the copy.
+- **Fidelity:** the before run equals hosted v321 on 375/375 projected finishes, and the Dashboard headline and delivery-by-year match exactly.
+- **Limits:**
+  - Hosted does not serve `duration_override_weeks`, `start_not_before`, `remaining_weeks_override` or `overlap_weeks`. They were taken as NULL, and the result still matched v321.
+  - The 187 non-scheduled projects (Commercialized / Cancelled / On Hold / P4) carry SEED step rows, so their full-year lab demand and their migration audits are not representative.
+  - CP-SAT was not run.
+- **Migration p71a on the copy:**
+  - 4 `workflow_template.applied`, 333 `project.lab_hold_backfilled`, 39 `project.template_applied` (C/J 1→0), 229 `project.effort_rederived`, 345 projects stale, no run.
+  - On the 189 hosted-sourced projects: exactly **76** re-derived, lab steps only (F 13, H 51, J 76, L 63 values changed). Design shares were unchanged and there was no OR-5 recopy.
+  - The other 153 re-derivations, and the F 0→3 / H 6→4 OR-5 recopies, fell only on seed-sourced non-scheduled rows (an artefact of the copy).
+  - Expect `effort_rederived` on hosted non-scheduled projects too (scope = every non-frozen project with a figure).
+- **Figures (before → after):**
+  - **Within-year:** 105 → **103**. Spillover 170 → 172; left_out 1 (no_leader) → 1.
+  - **Delivery by year:**
+
+    | | 2026 | 2027 | 2028 | 2029 | Not placed |
+    |---|---|---|---|---|---|
+    | Before | 105 | 134 | 33 | 3 | 1 |
+    | After | 103 | 135 | 33 | 4 | 1 |
+
+    P1 by end of 2026: 17 → 16.
+  - **Movers:** 3 left 2026, all B with cert off that got J/L back (R62-2): Shekel 750 (W52 → W54), Aluminium Profiles New Supplier (W51 → W59), Omnisense 750 v2 (W50 → W53). 1 entered 2026: Plastic Fan casing (C, P1), W55 → W48, because it lost J (R62-11). Of the placed projects, 90 finish later, 30 earlier and 69 the same.
+  - **India chamber occupancy (slot-weeks from W48):** 443 → **580**.
+
+    | Chamber | Slot-weeks | Weeks at max | Last busy week |
+    |---|---|---|---|
+    | IN-CH1 (max 1) | 90 → 100 | 86 → 97 | 183 → 180 |
+    | IN-CH2 (max 4) | 142 → 205 | 19 → 35 | 120 → 151 |
+    | IN-CH3 (max 2) | 176 → 210 | 57 → 74 | 180 → 177 |
+    | IN-CH4 (max 1, J/L only) | 35 → 65 | 34 → 65 | 122 → 151 |
+
+    13-week buckets from W48, before: 121 / 74 / 45 / 48 / 66 / 25 / 12 / 19 / 18 / 10 / 5. After: 119 / 104 / 86 / 59 / 79 / 48 / 21 / 24 / 20 / 19 / 1.
+  - **Booked lab load (Σ h):**
+
+    | Region | Before | After |
+    |---|---|---|
+    | India | 516 | 681 |
+    | Romania | 139 | 162 |
+    | Greece | 85 | 79 |
+
+    Engineer load is unchanged (903).
+  - **26-00391 "Extra shelf for Coke Feasibility"** (C, P2, PD-India, lab figure 2):
+    - Before (= hosted v321): H W70 (IN-CH3), J W73 (IN-CH3), finish W75.
+    - After: J is skipped (C has no Pr. Pr). The whole figure now sits on H (2 weeks, room 75–76 on IN-CH3, waiting for an India H room), and the finish is **W79**, 4 weeks later. Rule-consistent (R62-1 + R62-11), but the owner should be told that this project does not get earlier.
+  - **J/L back (R62-1 / R62-2):** **75 projects**, 131 step rows.
+    - R62-1 (own-lab 0-share skips): 33 projects (A 4, B 28, C 1); the planning estimate was 35.
+    - R62-2 (cert off): 42 projects (B 36, which matches the planning estimate, plus C 6).
+    - The 7 C projects are reached C projects (N or K started, or J Done) that keep J at 1 week with h = 0 and no room, per R62-11 / I67.
+  - **C lost J (R62-11):** 10 projects whose J was placed before and is skipped now:
+    - Alternate Supplier-Blueline for LED;
+    - Extra Adjustable top shelf;
+    - 26-00391;
+    - New model introduction SC-550 and SC-650;
+    - Plastic Fan casing ×2;
+    - Plus-900 rotoshelf;
+    - S-60 testing;
+    - Vianet POS.
+
+    30 scheduled C projects had J 1 → 0 on their copy. 16 reached C projects keep J (correct).
+- **Invariants on the after run** (engine `validate_invariants` plus independent re-derivation from DB rows):
+  - **I2 PASS:** no cell above `max_concurrent` from W48 on, except W48 cells made only of anchored In Progress / Done rows (IN-CH1 4, IN-CH2 6, IN-CH3 12). The same cells exist in the before run, so this is pre-existing.
+  - **I4 PASS:** 0 stage or region mismatches.
+  - **I7 / I66 PASS:** served `lab_load_booked_weeks` = Σ h = Σ Gantt `lab_weeks` = `/planning/resource-load` chamber total (740 → 922). `/capacity/utilization-matrix` India `week_counts` equal my independent held-week occupancy (0 diffs, both runs).
+  - **I25 PASS:** the engine `check_i25_demand` against served values gives 0 violations. My independent Σ min(hold, eff) equals the served full-year lab demand: India 654 → 1028, Romania 589 → 471. The non-scheduled part of that delta is a copy artefact; the hosted-sourced part is India 516 → 681, Romania 139 → 162, Greece 44 → 38.
+  - **I64 PASS:** for every lab row, stored h = min(plan hold, booked span). h = 0 ⟺ chamber NULL. No h > 0 row without a chamber, and no `no_chamber` left_out.
+  - **I65 PASS:** 0 out-of-domain rows in all three tables (including the run row ≤ `duration_weeks`), and no hold on a non-lab row.
+  - **I67 PASS:** every non-frozen partialRoom step has `effort_weeks` NULL. Cert-off never skips a partialRoom step. Every C J/L still placed is reached.
+  - **Other violation (only one):** I37b (P1 rank 119 sits on an In Queue project outside the schedulable input). Identical before and after; hosted data, not P62.
+- **Advisories:**
+  - (a) **OQ #122 resolved from the hosted audit trail.** On 2026-11-23 07:18–07:19 UTC, the same actor (id 939a2983…) that made the 04:59 P58 fix set IN-CH4 to J/L only (F removed) and removed J/L from IN-CH2 / IN-CH3. The 2026-11-25 07:37 PATCH re-added J/L to IN-CH1..3. Hosted IN-CH4 is still `['PDD-J','PDD-L']`.
+  - (b) **Pre-existing, not P62:** IN-CH2 W48 carries 6 anchored rows on max 4 with no `chamber_overlap` flag (same before and after).
+  - (c) **Tell the owner before the hosted deploy:**
+    - within-year −2;
+    - India room load +32 %;
+    - 26-00391 finishes later, not earlier.
+- **Cleanup:**
+  - Throwaway DB dropped, scratch worktree removed, uvicorn :8047 / :8048 stopped, Redis db 13 was empty.
+  - Raw hosted dumps (with names) deleted from the scratchpad.
+  - Main `rpd` DB untouched (p70a, 15 runs, same latest run). Hosted: GETs only.
+- **Verdict:** P62-T06 **PASS**. IMPLEMENTATION_PLAN row left to the orchestrator. **Gate:** P62-T07.
+
+## [2026-11-25] P62-T05 — frontend: room weeks (ADR 0071 "Lab hold weeks", `docs/API_CONTRACT_P62.md` §3–§5, §8) — frontend-builder: DONE (not committed; no git index changes)
+- **Read:** DOMAIN_RULES "Lab hold weeks", ADR 0071, `docs/API_CONTRACT_P62.md`, IMPLEMENTATION_PLAN P62-T05, MEMORY P62-T04 and P62-F1 + P62-F2.
+- **Mirrored (all 13 `_PENDING_FRONTEND_FIELDS` entries removed; the list is `{}` again):**
+  - `LeadTimeSetting.lab_hold_weeks`;
+  - `TimelineStep.lab_hold_weeks / room_weeks / room_start_week`;
+  - `CategoryTimeline.lab_length_weeks` (inherited by `TimelinePreviewResponse`);
+  - `TemplateStepOverride.lab_hold_weeks?: number | 'full' | null`. `null` is admitted only because the backend field is nullable (contract test nullability check); the UI never sends null.
+  - `ApplyPreviewStep.hold_before / hold_after`;
+  - `ApplyStepFlag` += `room_weeks_clamped`, `lab_split_rederived`, `partial_room_length_applied`, plus the missing P35 `excluded_no_effect` (its badge was blank before);
+  - `GanttStepRow.lab_hold_weeks / plan_lab_hold_weeks / room_start_week / room_end_week`;
+  - error codes `LAB_HOLD_NOT_LAB` / `LAB_HOLD_OUT_OF_RANGE` → plain copy in `applyErrorMessage`.
+- **Room control (Admin + Super Admin, `workflow_templates.write`):**
+  - A "Room" column sits next to Length in the template timeline editor. It is used in both places that editor appears: the Timelines tab (`useTemplateEditor`) and the Effort-matrix timelines (`useEffortMatrix`, the same drafts as the grid).
+  - It shows on served `resource_kind === 'lab'` steps only and has − / value / + / "Full" (`aria-pressed`). The range is 0..the length in force; "Full" = null.
+  - From Full, − gives length − 1, and + is disabled. Drafts follow the P33 rule (a value equal to the saved one drops out). `draftOverrides` sends `"full"` for null.
+  - Lowering a length cuts a DRAFTED room value to the new length, so the request never earns `LAB_HOLD_OUT_OF_RANGE`. A SAVED value above the new length is left for the server to clamp (`room_weeks_clamped`), and is displayed at the length.
+  - Saves go through the one apply (E2 → E3). The summary line reads "A+ · PDD-J room weeks 1w → Full". The apply dialog shows "room weeks Full → 1w" from `hold_before / hold_after`, and the new flags in plain words.
+  - Help text (contract §8) appears under a lab step with a value. When a saved value is drafted back to Full, a note says Full brings back the lab-figure share and the certification skip (OQ #125).
+- **Matrix grid:**
+  - A lab cell with a room value shows a small "room n" hint (sr-only text "Room booked for the last n of m weeks").
+  - The "L: n w" total now counts room weeks (`min(room ?? length, length)` over lab-kind steps), with the lab length in its title and sr-only text.
+  - **Deviation:** contract §8 says "the L total is the served `lab_weeks`". The matrix totals were already template display sums over the drafts (P52, labelled as such), and a served value cannot reflect unsaved drafts. So L uses the same template sum the server serves as C2 `lab_weeks`, and equals it when nothing is drafted. The info note now explains L = room weeks. If the orchestrator wants it strictly served, use the C2 / preview `lab_weeks` and drop the draft reflection.
+- **Bars:**
+  - **Template timeline:** the lab bar is light (`bg-success/5`) with the served room weeks solid (`bg-success/30`), positioned from `room_start_week` / `room_weeks`. The segment is hidden while the bar is an optimistic guess.
+  - 0 room weeks shows "· no room" in the bar. The description says "room booked for the last N weeks, from Wx" or "no room booked". Template weeks stay relative (`W{n}`, F1 rule).
+  - The header pill reads "Lab room {lab_weeks}w", with "· lab length {lab_length_weeks}w" when the two differ.
+  - The legend now has "Lab — room booked (chamber)" and "Lab — no room booked" in place of the single Lab chip.
+  - **Gantt** (`StepBarGraphic` → `GanttBarGroup` `room` prop): on a placed lab row with `room_start/end_week`, the planned bar becomes a light tint of the step colour with a step-colour outline, and a solid `rect[data-bar="room"]` covers the held weeks. With `lab_hold_weeks === 0` the bar is light only (`data-room-split="none"`).
+  - The Gantt tooltip adds "Room booked W32 '26" or "W20 '27–W21 '27" (shared `formatWeek`), or "no room". The left cell shows "no room" where the chamber code would be.
+  - The Gantt legend has "Lab step: solid = room booked (chamber), light = in the lab, no room booked". The row "LW" title says lab room weeks.
+  - Non-lab rows are unchanged.
+- **Capacity / chamber / planning views:** no change. They render served fields only (I9, I66).
+- **Tests:**
+  - New `template-drafts.p62.test.ts` (8);
+  - new `category-timeline.p62.test.tsx` (5, axe);
+  - new `apply-dialog.p62.test.tsx` (2, axe);
+  - new `WorkflowSettingsPage.p62.test.tsx` (2: the matrix hint and L total; Room − / Full on a timeline → the apply-preview body `{PDD-F: 5, PDD-J: 'full'}` and the summary lines; axe);
+  - new `gantt-room-weeks.p62.test.tsx` (5: the room rect at the bar's end, tooltip with the year, h = 0, non-lab unchanged, legend axe).
+  - Updated fixtures and tests: `category-timeline.test.tsx` ("Lab room 2w"), `template-drafts.test.ts`, `effort-matrix.test.ts`, the workflow-settings and gantt `test-fixtures.ts`.
+- **Results:**
+  - `npx tsc -b` clean.
+  - eslint clean on every touched or new file.
+  - Workflow-settings + gantt vitest: 39 files, 405 passed.
+  - Full vitest: 2610 passed, 1 failed. The failure is the pre-existing `app.test.tsx` "navigates to the Project Execution Timeline surface on nav click".
+  - `pytest tests/test_openapi_frontend_contract.py`: 272 passed.
+- **Files:**
+  - `frontend/src/surfaces/workflow-settings/{api/types.ts, test-fixtures.ts, lib/template-drafts.ts, lib/effort-matrix.ts, lib/template-copy.ts, hooks/use-template-editor.ts, hooks/use-effort-matrix.ts, components/category-timeline.tsx, components/effort-matrix/{effort-matrix-tab,matrix-grid}.tsx, components/template-apply/apply-dialog.tsx}`
+  - `frontend/src/surfaces/gantt/{api/types.ts, test-fixtures.ts, lib/step-row-text.ts, components/{gantt-bars,gantt-step-row,gantt-legend,gantt-row-meta}.tsx}`
+  - `backend/tests/test_openapi_frontend_contract.py` (pending list emptied)
+  - the tests above.
+- IMPLEMENTATION_PLAN row left to the orchestrator. **Gate:** P62-T07.
+
+## [2026-11-25] P62-T07 gate — security-auditor: **PASS** (OWASP ASVS L2; read-only review, no code changed, not committed)
+- **Read:** DOMAIN_RULES (Lab hold weeks), MEMORY P62 planning / T01 / T02 / F1+F2 / T03 / T04 / T05 / T06, IMPLEMENTATION_PLAN P62, ADR 0071, `docs/API_CONTRACT_P62.md`. Reviewed: `git diff` of the P62 routers (`chambers`, `workflow_templates`, `workflow_settings`, `gantt`, `capacity`, `planning`), schemas (`workflow_templates`, `workflow_settings`, `gantt`), `services/template_editor.py`, exports (`export_builder`, `whatif_export`, `xlsx_writer`); new `alembic/versions/p71a_lab_hold_weeks.py`, `services/lab_hold.py`, `frontend/src/components/shared/week-year-input.tsx`, `frontend/src/surfaces/workflow-settings/components/chamber-stages.tsx`.
+- **Negative probes run (scratch file outside the repo, run against the test DB, 15/15 pass):**
+  - apply-preview + apply carrying `lab_hold_weeks` as Hub Planner / Engineer / Portfolio Manager / Executive Viewer / Auditor → 403, template hold unchanged;
+  - `lab_hold_weeks` = -1, 999, `true`, `"FULL"`, `"1"`, 1.5, object → 422 (strict schema / `LAB_HOLD_OUT_OF_RANGE`); hold on a design step → 422 `LAB_HOLD_NOT_LAB`;
+  - `PATCH /chambers/{id}` `allowed_stages`: an out-of-region Hub Planner → 403/404, Engineer / Executive Viewer / Auditor / Portfolio Manager → 403, a stale `base` → 409, an unknown stage id (SQL-ish string) → 422; in every rejected case 0 projects were marked stale (the stale write happens only after scope, base and validation checks);
+  - `/gantt` as Engineer / Executive Viewer / Hub Planner / Admin: no `tcogs` / `gross_margin` / `selling_price` / `customer_name` key in the body.
+  - Existing suites also re-run: `test_p62_lab_hold_backend`, `test_p33_t10_template_apply` (RBAC matrix), `test_p47_r01_security`, `test_hub_scope`, `test_rbac_enforcement`, `test_audit_log_api` → 146 passed.
+- **Findings:**
+
+  | # | Severity | Area | Finding |
+  |---|---|---|---|
+  | S62-1 | Low | `PATCH /chambers/{id}` (availability) | The new `mark_all_schedulable_stale` is a bulk `UPDATE projects` issued while the chamber row is `FOR UPDATE`-locked (with `base`). The PATCH does not take the band-rank lock first, unlike template apply after the run-307 deadlock, so it can deadlock with a persisting run's `clear_stale_for_run`. Postgres aborts one side, so nothing is corrupted, but the user sees a 500/retry. Recommend: take `lock_band_ranks` first, or mark stale via a short separate statement. Not gate-blocking. |
+  | S62-2 | Info | `PATCH /chambers/{id}` (scope side effect) | A region-scoped Hub Planner's chamber edit marks schedulable projects in every hub stale. The stale flag is a plan-wide, non-sensitive boolean; the response carries no count or cross-hub data. This is consistent with the global plan and the Workflow Settings PUTs. No leak. |
+  | S62-3 | Info | migration `p71a_lab_hold_weeks` | Constant `sa.text` with bound parameters only (expanding bindparam for the status list); no interpolation. It writes only the owner-approved rows (A+/A/B/C PDD-J/L holds, OEM only where lab, C/PDD-J 1→0) and is idempotent. Audit rows are INSERT-only (actor NULL, `notes` = ADR 0071, the same pattern as p27a/p29a/p30a/p33c/p42a); no UPDATE/DELETE on `audit_log_entries`. It reads no financial field (design/lab effort figures only). Not yet run on hosted (T06 used a disposable copy). |
+  | S62-4 | Info | template editor / apply | RBAC is unchanged (`require_workflow_templates_write` = Admin + Super Admin on timeline-preview / apply-preview / apply). `lab_hold_weeks` is validated by the strict schema plus `resolve_hold`. Lock order: band-rank → categories → projects in id order, as in P33. `assert isinstance` in `resolve_hold` is redundant under strict pydantic (stripped under `-O`, harmless). Audit `after_state.lab_hold_weeks` holds integers only. |
+  | S62-5 | Info | Gantt / exports | New fields are integers (`lab_hold_weeks`, `plan_lab_hold_weeks`, `room_start/end_week`, export column "Room weeks"). There are no financial fields and no new engineer-level data; existing row scoping is unchanged. |
+  | S62-6 | Info | frontend | `ChamberStagesGrid` is gated by `capacity_planning.read/write` (UI only; the server enforces scope). It saves through the shared `sendEditWithBase` / `useUpdateChamber` (same client as the CSRF path) and handles 409 with the conflict dialog. `WeekYearInput` renders text only and emits NaN for invalid weeks. No `dangerouslySetInnerHTML` / `innerHTML` / `eval` in any touched or new file. |
+  | S62-7 | Info | dependencies / secrets | No change to `package.json` / lockfiles / `pyproject` / Dockerfiles / proxy config, so no new dependency and no CSP/TLS change. No secrets, and no new logging of PII or financial fields in the diff. |
+  | S62-8 | Info | tests | P62 has no P62-specific negative RBAC test for a hold-carrying apply, or for "rejected chamber PATCH leaves nothing stale". Both are covered by this review's probes and the existing P33/P47 matrices. Recommend adding them when next touched. |
+
+- **Verdict:** P62 security leg **PASS**: 0 Critical, 0 High, 0 Medium, 1 Low, 7 Info. S62-1 is recommended, not blocking. The IMPLEMENTATION_PLAN row is left to the orchestrator.
+
+## [2026-11-25] P62-T07 gate — workflow-auditor: **FAIL** (one reconciliation defect, I64 / I9: Gantt room weeks on full-hold anchored lab rows; everything else PASS; read-only, no code, not committed)
+- **Read:** DOMAIN_RULES "Lab hold weeks" (R62-0…R62-13, I64–I67) and P33 §C; MEMORY P62 planning / T01 / T02 / F1+F2 / T03 / T04 / T06 / T05; `docs/API_CONTRACT_P62.md` §1, §5; the migration `p71a_lab_hold_weeks.py` (all of it); `scheduling/{workflow,greedy,cp_sat,effort_split,whatif,template_timeline}.py` diffs; `services/{lab_hold,workflow_durations,workspace,project_effort,capacity_priority}.py`; the readers in `api/routers/{capacity,planning,gantt,chambers}.py`; frontend `lib/format.ts`, `lib/week-line.ts`, `components/shared/week-year-input.tsx`, `workflow-settings/lib/effort-matrix.ts`, `gantt/components/gantt-step-row.tsx`, `gantt/lib/step-row-text.ts`.
+- **Independent re-derivation** (scratchpad `p62t07/check.py`, expectations derived by hand from R62-0/4/5): 3 cat-A projects, a 3-week L, one chamber with max 1, CW 31.
+  - Hold 1: L 32–34 / 33–35 / 34–36, rooms 34 / 35 / 36, one room per week.
+  - Full (None) and hold 3 = n: 32–34 / 35–37 / 38–40 (the pre-P62 model).
+  - h = 0 with no eligible chamber: placed 32–34, chamber NULL, hold 0.
+  - h = 1 with no chamber: LEFT_OUT.
+  - Greedy = CP-SAT on all five up to the order of equal-P1 ties, which is the same in the full case, so it predates P62. `validate_invariants` is clean on both.
+- **PASS items:**
+  - **Skip predicate, one chain.** The engine's `is_partial_room` / `certification_off_skips` (R62-2) / `partial_room_zero_length_skips` (R62-11) are composed by `step_effective_weeks` / `is_step_skipped`. The services' `live_step_effective_weeks` / `live_step_skipped` → `workspace.row_is_skipped` call the engine functions. Every caller passes the hold: register, cards, tracking, pins, ask-agent, Gantt, the stage PATCH, What-if import ×3, the import register, plan_import, demand, and invariants I5. No caller was found without it.
+  - **I66 load readers count h:** `/capacity` booked lab (`run_row_lab_weeks`), `/capacity/utilization-matrix` (`run_row_held_weeks`), `/planning/resource-load`, the Priority board (`held_weeks_from`), Gantt project `lab_weeks`, cards / register (`booked_hold_weeks`), demand (engine I25), What-if `_plan_loads` and BUG-2 windowing (held weeks in the window), C2 `lab_weeks`, and exports ("Room weeks").
+    - No load reader recomputes lab load from the length. `chambers.py` and `engineer_status.py` serve supply and status only.
+  - **Separability:**
+    - R62-2 is one term (`¬partialRoom` in `certification_off_skips`).
+    - R62-11 is data (migration step1/step3 functions) plus `partial_room_zero_length_skips`.
+    - R62-1 is in `effort_split.outside_lab_split` and migration `step4_r62_1_rederive`.
+    - Advisory A3 below.
+  - **Migration = owner-approved rows only:**
+    - Step 1: J/L hold 1 for A+/A/B and 0 for C, C/J weeks 1 → 0, OEM only if lab, `template_version` +1, audits.
+    - Step 2: backfills holds where NULL on every project.
+    - Step 3: C/J `plan_weeks` 1 → 0 on ¬never pairs (frozen / Cancelled / Commercialized / reached excluded), whatever ownEffort says.
+    - Step 4: the R6 scope, identical to `rederive_all_projects` (non-frozen with a figure or a stored effort value); hold-back via `held_out`; no started_share refusal; OR-5 recopy as in `rederive_project_effort`.
+    - Step 5: stale, no run.
+    - Bound SQL only, no financial field. Idempotent. `test_p62_migration` checksums every other table and column.
+  - **Documented deviations accepted:**
+    - (1) Run-row CHECK bounded by the booked span. h = min(hold, n) ≤ span always, and in practice h ≤ hold ≤ plan_weeks = eff = duration_weeks, because the user override is retired by CHECK; T06 found 0 rows above duration. *Orchestrator: fold the I65 run-row wording into DOMAIN_RULES to read "≤ booked span (end − start + 1)".*
+    - (2) Step 4 leaves an R7-rejected project unchanged rather than failing the deploy. This is narrower than approved, so it is safe; list `rejected_projects` to the owner at deploy.
+    - (3) Defaults only for A+/A/B/C, which is exactly the approval.
+    - (4) Chamber PATCH marks every schedulable project stale on an `allowed_stages` / `max_concurrent` / `lab_region` change. These are exactly the `ChamberInput` fields that gate booking; `efficiency` does not gate (ADR 0008). No run.
+  - **CP-SAT / greedy parity:**
+    - CP-SAT keeps `[s, s+n)` with the unconditional `end == start + duration`.
+    - For 0<h<n it adds one optional fixed-size-h interval at `end−h` per eligible chamber, `Σassign == present`, cumulative over occupancy only.
+    - For h=0 it adds no chamber literal, and `_needs_greedy` fires only for h>0.
+    - `_book_solved_placements` books `hold_window`.
+    - Anchored and prebooked rows share greedy `_book_anchored`.
+  - **Matrix "L" total:** `matrixTotals` uses `min(hold ?? length, length)` over lab-kind steps. This is the same formula as the server's C2 `lab_weeks` (`template_timeline`), so the two are equal with no draft. It is a template display sum over editable cells, like the existing D total, not a schedule-run number. Accepted.
+  - **P62-F1:**
+    - `formatWeek` = `W{weekOfYear} '{yy}` with year = `week_base_year + floor((w−1)/52)` (ADR 0063, never re-based). Correct at 52/53/104/105/364/365 and after rollover (base 2026, plan 2027: 105 → W1 '28).
+    - `WeekYearInput` sends `yearStart(year, base) + n − 1`; out-of-range input gives NaN, which is refused.
+    - No wire change: the only API-type diffs are the T05 P62 fields.
+- **FAIL — P62-R01 (I64 / I9, served `GanttStepRow.room_start_week / room_end_week / lab_hold_weeks` on full-hold lab rows):**
+  - `api/routers/gantt.py` ~621–628 computes `held = run_row_lab_weeks(duration_weeks, NULL)` = `duration_weeks`, then `room_week_range(end_week, held)`.
+  - For a full-hold (NULL) lab row, I64 gives h = n = the booked span. Whenever the span ≠ `duration_weeks`, the served room is too short: an In Progress tail, a Done actual span, or a pin window on PoC / Certification (F/H). Reproduced on the engine (scratchpad `p62t07/span.py`):
+    - Done L 22..30 has `duration_weeks` 3 and hold None. Gantt serves room 28–30 and draws weeks 22–27 as "in the lab, no room booked", with the tooltip "Room booked W28–W30". `/capacity/utilization-matrix` (`run_row_held_weeks`) counts the chamber on 22–30.
+    - In Progress L from 25 is placed 25–32 with duration 3. The served room is 30–32, while the engine holds the chamber for the whole tail.
+  - Two surfaces disagree on the same run row (I9), and the P62-new field misstates occupancy (I64). The frontend draws it (`gantt-step-row.tsx` 51–58, `step-row-text.ts` 50–55), so the defect is user-visible on most In Progress / Done F/H rows.
+  - **Remediation (backend, small):**
+    - Derive `room_start_week` / `room_end_week` from `services.lab_hold.run_row_held_weeks(start_week, end_week, lab_hold_weeks)`, the helper the utilisation matrix uses. For NULL that is the whole `start..end`.
+    - Serve step `lab_hold_weeks` as the length of that range (the booked h of contract §5).
+    - Keep `GanttProjectRow.lab_weeks` = Σ `run_row_lab_weeks` (I66 defines NULL = `duration_weeks`).
+    - Add a test with a Done and an In Progress full-hold lab row whose span ≠ duration, asserting that the Gantt room range = the utilisation-matrix weeks.
+    - No migration, engine or frontend change is needed.
+- **Advisories (non-blocking):**
+  - A1: Migration step 3 only rewrites C/J copies where `plan_weeks = 1`. A not-reached C project whose J copy is not 1 keeps Pr. Pr, so it can only under-apply. At the hosted deploy, list not-reached C projects with J `plan_weeks` ≠ 0 after p71a.
+  - A2: Step 4 re-derives any project whose stored split differs from a fresh one, not only because of `partialRoom`. On hosted-sourced rows T06 saw exactly 76 projects, lab-only. At deploy, check that every `project.effort_rederived` (trigger `lab_hold_default`) touches lab steps only; any design-side change is beyond the approval. The migration also imports live service / engine code, so its result follows future changes to `held_out` / `derive_project_effort`.
+  - A3: R62-1 is not "one place" as the `outside_lab_split` docstring claims. It also lives in `live_step_effective_weeks` (partialRoom → plan_weeks), `run_input_lead_and_override` (own_effort off), `merged_step_override` (effort dropped) and `held_out` (partialRoom not a member). These are all keyed on `is_partial_room`, which R62-2 also uses. Since the owner confirmed R62-1, this is moot for shipping, but the docstring overstates revertibility; correct it.
+  - A4: Chamber POST / DELETE still do not mark the plan stale (predates P62).
+- **Tests run:**
+  - `pytest -c pytest-scheduling.ini` (no cov): 1006 passed.
+  - `pytest tests/test_p62_lab_hold_backend.py tests/test_p62_migration.py`: 20 passed.
+  - vitest (format, format-week, week-line, gantt room weeks, WorkflowSettingsPage.p62, template-drafts.p62, effort-matrix, category-timeline.p62): 8 files, 44 passed.
+- **Verdict:** P62-T07 workflow leg **FAIL**, blocking on P62-R01 only. Re-review is limited to the Gantt fix and its test; every other item above stands as PASS.
+
+## [2026-11-25] P62-R01 — chamber edits take the band-rank lock first (security S62-1, S62-8; backend-builder; not committed)
+- **Read:** DOMAIN_RULES (Lab hold weeks), MEMORY P62-T07 security gate (S62-1, S62-8) and the "run 307 deadlock" coordinator add-on, IMPLEMENTATION_PLAN P62.
+- **`PATCH /chambers/{id}`** (`backend/api/routers/chambers.py`):
+  - Order is now: plain scoped read (404) → `allowed_stages` validation (422) → lab-region scope (403) → `lock_band_ranks(db)` **only when the PATCH changes a plan input** (`_changes_plan_inputs`: `allowed_stages` / `max_concurrent` / `lab_region` differ from the row as read, the same fields as `_plan_inputs`) → with a `base`, the chamber `FOR UPDATE` re-read → `check_base` (409) → write → `mark_all_schedulable_stale`. Same order as template apply.
+  - A label-only, downtime or same-value edit takes no band-rank lock and marks nothing stale.
+  - Lock busy: the helper's 503 `BAND_RANK_BUSY` (`Retry-After` 5), nothing written, as for every band-rank-locked write.
+  - Residual: the plan-change decision uses the unlocked read. If another writer changes the plan inputs between that read and the write, this PATCH can still mark stale without the band lock. That writer has already marked everything stale itself, so the window is tiny and no worse than before.
+- **`PUT /workflow-settings/chambers/{id}`** (`backend/api/routers/workflow_settings.py`): every successful PUT marks stale (`_finish_put`), so it always takes `lock_band_ranks` after the 403, the scoped lookup (404) and the null check (422), before the `FOR UPDATE` re-read (with `base`) and the flush.
+- **Not changed (same deadlock class, outside this task):** `PUT /workflow-settings/steps/{id}` (locks step templates and, with `add_to_chambers`, chambers `FOR UPDATE`) and `PUT /workflow-settings/hub-calendars/{id}` (calendar `FOR UPDATE`) also call `mark_all_schedulable_stale` without the band-rank lock first. Recommend the same treatment.
+- **Tests:** new `backend/tests/test_p62_r01_chamber_lock.py` (5).
+  - Lock order from recorded statements: `pg_advisory_xact_lock` < chamber `FOR UPDATE` < `UPDATE chambers` < `UPDATE projects` for a PATCH with base and for the settings PUT; without a base, before `UPDATE chambers`. No advisory lock for label-only or same-value PATCHes.
+  - Band lock held elsewhere: plan PATCH and settings PUT → 503 `BAND_RANK_BUSY`, nothing written; a label PATCH still goes through.
+  - Rejected edits leave 0 stale: 403 (Engineer / Executive Viewer / Auditor / Portfolio Manager; Hub Planner moving out of region), 404 (out-of-region Hub Planner; unknown id), 409 (stale base), 422 (unknown / design stage, null, out of range), on both endpoints.
+  - S62-8: preview and apply carrying `lab_hold_weeks` as Hub Planner / Engineer / Portfolio Manager / Executive Viewer / Auditor → 403; template hold unchanged.
+- **Runs:** every test file touching `/chambers`, `/gantt` or `/workflow-settings`, plus `test_p70_effort_weight_revive` and `test_p36_band_rank_api`: 1325 passed, 1 failed. The failure is pre-existing: `test_p20_fte_followups::test_gantt_step_row_contract` (`pin_lapsed` / `pin_clearable`, recorded earlier). ruff is clean on the touched files. mypy shows no errors in the touched files; the errors it reports are pre-existing ones in imported modules.
+
+## [2026-11-25] P62-R02 — Gantt room weeks follow the booked span (workflow-auditor P62-T07 FAIL, which the auditor called "P62-R01"; backend-builder; not committed)
+- **Fix** (`backend/api/routers/gantt.py`, step rows): `room_start_week` / `room_end_week` now come from `services.lab_hold.run_row_held_weeks(start_week, end_week, lab_hold_weeks)`, the utilisation matrix's helper. A NULL (full) hold gives the whole booked span. Step `lab_hold_weeks` is served as the length of that range. A skipped lab row → 0 / nulls; a non-lab row → null.
+  - Previously `room_week_range(end_week, run_row_lab_weeks(duration_weeks, None))`, which was wrong when span ≠ duration (In Progress tail, Done actual span, pin window).
+  - `GanttProjectRow.lab_weeks` is unchanged (Σ `run_row_lab_weeks`, I66).
+  - `room_week_range` is no longer used by any router (only by its unit test).
+  - Field comment in `backend/schemas/gantt.py` updated; the schema shape is unchanged.
+  - No migration, engine or frontend change.
+- **Behaviour change visible to T05:** on a full-hold row whose span ≠ duration, the served step `lab_hold_weeks` is now the span length, not `duration_weeks`.
+- **Test:** new `backend/tests/test_p62_r02_gantt_room.py`. After a real run it sets three rows:
+  - Done Pilot 22..30, duration 3, NULL hold → room 22–30, h 9;
+  - In Progress PoC tail 31..32, duration 6 → room 31–32, h 2;
+  - Pr. Pr with hold 1 over a pin window 40..44 → 44–44.
+  It asserts that the multiset of Gantt room weeks equals the utilisation matrix's `week_counts` for the chamber.
+- **A3 (not done, out of my area):** the `outside_lab_split` docstring in `backend/scheduling/effort_split.py` claims R62-1 lives "in one place". It also lives in `live_step_effective_weeks`, `run_input_lead_and_override`, `merged_step_override` and `held_out`. This is for algorithm-engineer to correct.
+- **Runs:** see P62-R01 (same run; all P62 and Gantt tests pass); ruff clean.
+
+## [2026-11-25] P62-T07 gate — workflow-auditor re-review: **PASS** (scope: the P62-R02 Gantt room-weeks fix and the P62-R01 lock-order side effects only; read-only, no code changed, not committed)
+- **Read:** DOMAIN_RULES "Lab hold weeks" (R62-0, I64–I66, I9); MEMORY "P62-T07 gate — workflow-auditor" (FAIL), "P62-R01", "P62-R02"; IMPLEMENTATION_PLAN P62 rows R01 / R02 / T07; diffs of `api/routers/gantt.py`, `api/routers/chambers.py`, `api/routers/workflow_settings.py`; `services/lab_hold.py`, `scheduling/workflow.py::hold_window`; `api/routers/capacity.py` utilisation matrix; `tests/test_p62_r02_gantt_room.py`; frontend `gantt-step-row.tsx`, `step-row-text.ts`, `gantt-bars.tsx`.
+- **I64 / I9, Gantt = utilisation matrix:**
+  - The Gantt step room now comes from `run_row_held_weeks(start_week, end_week, lab_hold_weeks)`, the helper `/capacity/utilization-matrix` iterates per chamber row. Both call `scheduling.workflow.hold_window`, so there is one derivation for both surfaces.
+  - The Gantt and the matrix read the same active-run row (`planned_start/end_week` = `start_week/end_week`), so the room always lies inside the drawn bar.
+  - Skipped row: 0 and nulls; non-lab row: null; live rows with no run row: null.
+  - `GanttProjectRow.lab_weeks` is still Σ `run_row_lab_weeks` (I66 defines NULL = `duration_weeks`). No change, as the remediation asked.
+- **Independent re-run:** scratchpad `p62t07/span2.py` runs the engine and then applies the fixed derivation.
+  - In Progress L from 25: span 25–32, duration 3, hold NULL → room 25–32, h 8.
+  - Done L 22..30: duration 3 → room 22–30, h 9.
+  - Both match I64 (h = n = booked span) and the matrix's weeks. The pin case (hold 1 over 40..44 → 44) is covered by the new test.
+- **The new test is sound:**
+  - It covers a Done span, an In Progress tail and a partial hold over a pin window.
+  - It asserts that the multiset of Gantt room weeks equals the matrix `week_counts` for the chamber, and that `lab_hold_weeks` = the length of the range.
+- **Frontend with span-length `lab_hold_weeks`:**
+  - `gantt-step-row.tsx` (room overlay) and `step-row-text.ts` (tooltip) draw from `room_start/end_week`.
+  - `lab_hold_weeks` is only compared `=== 0` (the "no room" label). On a placed non-skipped row, 0 arises only from a booked h = 0, which is unchanged.
+  - No frontend code divides by it or compares it with `duration_weeks`, so the new value renders correctly.
+- **R01 lock order:**
+  - `chambers.py` PATCH and `workflow_settings.py` chamber PUT only reorder reads and locks: a plain read, then validation and scope, then `lock_band_ranks`, then a `FOR UPDATE` re-read with `populate_existing`, then the write.
+  - The values written, `_plan_inputs` (`allowed_stages` / `max_concurrent` / `lab_region` = the gating `ChamberInput` fields) and `mark_all_schedulable_stale` are unchanged. No run is dispatched and no `ChamberInput` / `ScheduleInput` builder was touched. No scheduling input changes.
+- **Runs:**
+  - `test_p62_r02_gantt_room` + `test_p62_r01_chamber_lock` + `test_p62_lab_hold_backend`: 25 passed.
+  - Every backend test file hitting `/gantt`: 669 passed, 1 failed. The failure is the pre-existing `test_p20_fte_followups::test_gantt_step_row_contract`; its only extra fields are `pin_clearable` / `pin_lapsed`, none of them P62.
+  - vitest `src/surfaces/gantt`: 21 files, 267 passed.
+- **Carry-over (non-blocking, unchanged):** advisories A1–A4 from the FAIL entry. Also R01's note that `PUT /workflow-settings/steps/{id}` and `/hub-calendars/{id}` mark stale without the band lock first (a security / concurrency item, not a scheduling input). `room_week_range` is now dead outside its unit test.
+- **Verdict:** P62-T07 workflow leg **PASS**. The FAIL blocking on the Gantt room weeks (the auditor's "P62-R01" = plan row P62-R02) is cleared.
+
+## [2026-11-25] P62-T07 gate — qa-inspector: **PASS** (ADR 0071 T03/T04/T05 + P62-F1 + P62-F2, and the in-flight P62-R01 / P62-R02 remediations; 2 new frontend test files; not committed; no git index changes)
+- **Read:** DOMAIN_RULES "Lab hold weeks" (R62-0…R62-13, I64–I67); MEMORY P62-F1+F2, T03, T04, T05, T06, the T07 security leg (PASS), the T07 workflow leg (FAIL on the Gantt room range), P62-R01 and P62-R02; IMPLEMENTATION_PLAN P62.
+- **Shared tree:** P62-R01 (`api/routers/chambers.py` 15:18, `workflow_settings.py` 15:26) and P62-R02 (`api/routers/gantt.py`, `schemas/gantt.py` 15:21) landed from another session WHILE my first backend run (from about 15:11) was going. That run (3194 passed / 2 failed, 96.34 %) mixed the two trees and did not collect the R01/R02 test files, so I discarded it. The backend figures below come from a re-run started at 15:37, with no `.py` file newer than its start. The scheduling run (15:11) and the final vitest run (15:37) postdate every `backend/scheduling/` and `frontend/src` change (checked by mtime).
+- **Coverage (thresholds: ≥85 % `backend/scheduling/`, ≥70 % elsewhere):**
+  - **Scheduling 95.47 %** (6597 stmts, 299 missed). P62-touched modules: types 100, demand 99, effort_split 99, cp_sat 98, workflow 98, plan_import 97, template_timeline 97, whatif 94, greedy 93, invariants 93, monte_carlo 92.
+  - **Backend 96.92 %** (22761 stmts, 700 missed). P62 / R01 / R02 files: `schemas/gantt.py` 100, `api/routers/gantt.py` 99, `chambers.py` 96, `workflow_settings.py` 98, `workflow_templates.py` 100, `capacity.py` 99, `planning.py` 99, `services/lab_hold.py` 94, `workflow_durations` 99, `template_editor` 98, `template_apply` 97, `template_copy` 100, `workspace` 96, `register_steps` 97, `project_effort` 99, `capacity_priority` 100, `demand_load` 100, `export_builder` 98, `whatif_import` 97, `whatif_import_register` 84 (lowest; above the bar).
+  - **Frontend 91.03 % lines** (88.94 % statements, 80.88 % branches, 88.89 % functions). P62 files: `week-year-input.tsx` 95.0, `lib/format.ts` 100, `chamber-stages.tsx` 91.1, `chambers-tab.tsx` 100, `category-timeline.tsx` 99.1, `template-drafts.ts` 99.0, `effort-matrix.ts` 98.2, `apply-dialog.tsx` 91.4, `matrix-grid.tsx` 100, `gantt-bars.tsx` 93.8, `gantt-step-row.tsx` 100, `step-row-text.ts` 100, `gantt-legend.tsx` 100, `use-template-editor.ts` 88.0, `use-effort-matrix.ts` 82.2, `freeze-dialog.tsx` 80.0, `deactivate-engineer-dialog.tsx` 83.5, `workflow-templates-section.tsx` 75.3, `stage-row.tsx` **71.4** (lowest, just above 70; worth more tests when next touched).
+- **Test results:**
+  - **Scheduling** (`pytest -c pytest-scheduling.ini`): **1006 passed, 0 failed** (966 pre-P62 + 40 in `test_p62_lab_hold.py`).
+  - **Backend** (`pytest tests --ignore=tests/scheduling`, testcontainers Postgres 17; the `rpd` dev DB was not used): **3200 passed, 2 failed**. That is T04's 3194 plus R01's 5 plus R02's 1. Both failures are the known pre-existing ones, not P62, and fail for the recorded reasons only:
+    - `test_migrations::test_migration_up_down_up_down_cycle`: table count 44 vs 38.
+    - `test_p20_fte_followups::test_gantt_step_row_contract`: the extra fields are only `pin_clearable` / `pin_lapsed` (P40-R02), with no P62 field in the diff.
+  - **Frontend:**
+    - `npx tsc -b` clean.
+    - `eslint .` 0 errors, 21 warnings, none in a P62 file (react-refresh / incompatible-library in routes, density-zone, audit-log-table, projects-table, etc.).
+    - Full vitest: **2626 passed, 1 failed** (315 files). The failure is the known pre-existing `app.test.tsx` "navigates to the Project Execution Timeline surface on nav click" (10 s timeout; stubbed fetch, P40-T01 slider move).
+    - A first vitest run made concurrently with the backend suite had 7 failures: that test, 5 × `ProjectWorkspacePage.edit-conflict` and 1 × `WorkflowSettingsPage` "empty predecessor set". All were 10 s timeouts or a find-by under CPU contention. Both files pass in isolation (24/24) and in the idle re-run. This is not a P62 defect.
+- **Golden files:** green and byte-identical.
+  - `test_golden_files.py`, `test_p9_golden.py`, `_fixtures.py` and `_whatif_fixtures.py` are unchanged vs HEAD (no diff).
+  - The 5 edited scheduling tests (`test_p32_overlap`, `test_p33_gaps`, `test_p36_band_rank`, `test_p37_current_week`, `test_p40_step_pins`) only strip the None `lab_hold_weeks` from raw dicts and field-order lists. No pinned digest changed.
+  - **Independent differential:** I extracted HEAD's `backend/` with `git archive` (read-only) and ran its scheduling suite (966 passed) and the working tree's, both with a fingerprint plugin. It took sha256 of `canonical_schedule_input_asdict` and `canonical_schedule_output_asdict` around every `run_greedy_sgs` / `run_cp_sat` call. Result: **507 shared tests, 814 engine calls, 0 changed digests** (30 golden tests / 49 calls among them). Only `test_p62_lab_hold.py` (27 calling tests) is new.
+- **Contract tests:** `test_openapi_frontend_contract.py` **272 passed**; `_PENDING_FRONTEND_FIELDS` is `{}`. The P62 shapes are compared "exact": `GanttStepRow` (lab_hold_weeks / plan_lab_hold_weeks / room_start_week / room_end_week), `LeadTimeSetting`, `TimelineStep`, `CategoryTimeline`, `TemplateStepOverride`, `ApplyPreviewStep` and `ChamberRead`. R02 changed only the served value, not the shape (`schemas/gantt.py` comment), so no contract change.
+- **Axe (unit-level axe-core in jsdom; `color-contrast` and `region` off as in `@/test/axe`). New QA tests count EVERY impact, not just serious / critical:**
+  - **Room control** (template timeline editor): with a saved value, a drafted Full and a 0-room step, and read-only. Plus the plain timeline list. **0 violations.**
+  - **Chamber tick grid:** in view, while editing, after a save (the status notice) and for a read-only role. **0 violations.**
+  - **`WeekYearInput`:** valid (2027 W5), empty, invalid (NaN) and disabled states. **0 violations.**
+  - **Gantt room segment** (`StepBarGraphic` + `StepLeftCell`): a held range across the year boundary (71–72), h = 0 ("no room") and a full room. **0 violations.**
+  - Totals: critical 0 / serious 0 / moderate 0 / minor 0.
+  - One `landmark-unique` (moderate) appeared on my first draft. It came from my harness rendering the same A+ timeline section twice, so I fixed the harness. It is not a product defect.
+  - The builders' own serious-filter axe checks also pass: category-timeline.p62, apply-dialog.p62, WorkflowSettingsPage.p62, gantt legend, chamber-stages.
+- **New tests (QA, frontend only, no feature code):**
+  - `frontend/src/components/shared/week-year-input.test.tsx` (9): 57 ↔ W5 2027; week 40 + year 2027 → 92; 0 / 53 / 1.5 → NaN, never wrapped; clear → null; fallback before `/me`; `ResolvedWeekHint`; all-impact axe.
+  - `frontend/src/surfaces/p62-gate-axe.test.tsx` (7): all-impact axe on the Room control, the chamber grid and the Gantt room segment, as above.
+  - Both pass tsc and eslint.
+- **Attribution:** no failure is attributable to P62. The workflow leg's FAIL (Gantt room range on full-hold rows) is that leg's to re-review. QA-side, `test_p62_r02_gantt_room.py` and `test_p62_r01_chamber_lock.py` pass in the 3200.
+- **Cleanup:** scratch files are only in the session scratchpad (HEAD extract, fingerprint plugin, logs, coverage data; `COVERAGE_FILE` was redirected there, so the tracked `backend/.coverage` was not written by these runs). No stash / reset / checkout, no index change, no commit.
+- **Verdict:** P62-T07 qa leg **PASS**. IMPLEMENTATION_PLAN row left to the orchestrator; the gate also needs the workflow leg's re-review of P62-R02.
+
+## [2026-11-25] P62-T07 gate — combined result: PASS (orchestrator)
+- **qa-inspector: PASS** (entry "P62-T07 gate — qa-inspector: PASS"):
+  - scheduling 1006/1006, coverage 95.47%;
+  - backend 3200 passed, with 2 known pre-existing failures (test_migrations up/down cycle; p20 gantt_step_row_contract pin fields);
+  - frontend tsc clean, vitest 2626 passed with 1 known app.test timeout, lines 91.03%;
+  - golden files byte-identical (0 of 814 solver digests changed); contract test 272 passed; axe 0 violations on the Room control, chamber tick grid, WeekYearInput and Gantt room segment.
+- **workflow-auditor: PASS after one remediation** (FAIL entry "P62-T07 gate — workflow-auditor", then "… re-review: PASS"):
+  - the FAIL was Gantt full-hold room weeks taken from duration_weeks instead of the booked span (I64/I9). Fixed in P62-R02 via `run_row_held_weeks`; Gantt now equals the utilisation matrix on Done, In Progress and pinned rows.
+  - Advisories A1–A4 stand: check C/J copies and `lab_hold_default` re-split audits at the hosted deploy; R62-1 docstring "one place" wrong; chamber POST/DELETE don't mark stale.
+- **security-auditor: PASS** (0 Critical/High/Medium, 1 Low, 7 Info). S62-1 (chamber PATCH stale marking without the band-rank lock) fixed in P62-R01; S62-8 tests added.
+  - Residual: `PUT /workflow-settings/steps/{id}` and `/hub-calendars/{id}` still mark stale without taking the band-rank lock first. Follow-up, not blocking.
+- **Hosted deploy notes:** migration p71a applies only the owner-approved 2026-11-25 data changes. After deploy:
+  - press Recalculate;
+  - expected effect (T06 copy): within-year 105→103, India room load +31%, 26-00391 finishes W79 (2027 W27).
+- Phase P62 CLOSED.

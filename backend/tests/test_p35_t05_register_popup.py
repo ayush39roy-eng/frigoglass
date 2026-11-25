@@ -782,7 +782,7 @@ async def test_register_steps_statement_count_is_constant(db_session):
 def test_apply_flags_excluded_pair_and_still_writes_the_copy() -> None:
     row = SimpleNamespace(
         step_template_id="PDD-E", plan_weeks=4, plan_gap_weeks=0, effort_weeks=None,
-        excluded=True,
+        excluded=True, plan_lab_hold_weeks=None,
     )
     delta = StepDelta(
         step_id="PDD-E", kind="design", weeks_before=4, weeks_after=5, gap_before=0,

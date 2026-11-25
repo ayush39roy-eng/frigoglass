@@ -86,6 +86,21 @@ class GanttStepRow(BaseModel):
     plan_weeks: int
     gap_weeks: int
     own_effort: bool
+    #: P62 (ADR 0071, contract P62 §5). `lab_hold_weeks`: the room weeks the
+    #: active run booked on a lab row, `h` (a run row with no value, i.e. a
+    #: full-hold row or one written before migration p71a, holds its whole
+    #: booked span and serves its length, `planned_end_week −
+    #: planned_start_week + 1`, P62-R02); null on non-lab rows and on rows
+    #: not in the run. `plan_lab_hold_weeks`: the project's copy (null =
+    #: Full). The held weeks are `room_start_week..room_end_week`, inclusive
+    #: like `planned_start_week` / `planned_end_week` (= `planned_end_week −
+    #: h + 1 .. planned_end_week`, `services.lab_hold.run_row_held_weeks`,
+    #: the utilisation matrix's weeks); both null when `h = 0` or the row is
+    #: skipped. `assigned_chamber_code` is null when `h = 0`.
+    lab_hold_weeks: int | None = None
+    plan_lab_hold_weeks: int | None = None
+    room_start_week: int | None = None
+    room_end_week: int | None = None
     #: ADR 0043: the step's precedence predecessors from the live workflow
     #: template (the DAG the next run will use), sorted. Empty for the
     #: workflow's first step.

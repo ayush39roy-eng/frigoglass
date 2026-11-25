@@ -3,8 +3,9 @@ import type { ProjectCategory, WorkflowId, WorkflowStepKind } from '@/types/enum
 import type { TemplateChangeEntry, TemplateChangeSet, WorkflowSetting } from '../api/types';
 import {
   changeEntry,
+  currentHold,
   currentValue,
-  signedWeeks,
+  draftSummaryLines,
   WEEKS_MAX,
   WEEKS_MIN,
   type CategoryDrafts,
@@ -55,10 +56,21 @@ export function setWeeks(
   const step: StepDraft = { ...drafts[stepId] };
   if (weeks === savedWeeks) delete step.weeks;
   else step.weeks = weeks;
+  // P62: a drafted room-weeks value above the new length is cut to it (as `nudge`).
+  const hold = step.lab_hold_weeks;
+  if (step.weeks !== undefined && hold !== undefined && hold !== null && hold > step.weeks) {
+    if (step.weeks === (saved[stepId]?.lab_hold_weeks ?? null)) delete step.lab_hold_weeks;
+    else step.lab_hold_weeks = step.weeks;
+  }
   const out: Record<string, StepDraft> = { ...drafts };
-  if (step.weeks === undefined && step.gap_weeks === undefined) delete out[stepId];
+  if (step.weeks === undefined && step.gap_weeks === undefined && step.lab_hold_weeks === undefined) delete out[stepId];
   else out[stepId] = step;
   return out;
+}
+
+/** P62: the room weeks in force for one cell (draft, else saved); null = Full. */
+export function cellHold(drafts: CategoryDrafts | undefined, saved: Readonly<Record<string, SavedCell>>, stepId: string): number | null {
+  return currentHold(drafts ?? {}, saved, stepId);
 }
 
 /** The length in force for one cell (draft, else saved). */
@@ -71,23 +83,34 @@ export interface MatrixTotals {
   total: number;
   /** Σ weeks over design-kind steps ("D: n w"). */
   design: number;
-  /** Σ weeks over lab-kind steps ("L: n w"). */
+  /** P62 (ADR 0071 I66): Σ ROOM weeks over lab-kind steps ("L: n w") — what books a chamber. */
   lab: number;
+  /** P62: Σ weeks (the length) over lab-kind steps — the lab calendar time. */
+  labLength: number;
 }
 
-/** The row's template totals, by the kinds in force (drafted kinds included). */
+/**
+ * The row's template totals, by the kinds in force (drafted kinds included).
+ * P62: a lab step adds its room weeks to L (`min(room ?? length, length)`, the
+ * template's own value, null = Full) and its length to `labLength`; the same
+ * template sum the server serves as C2 `lab_weeks` / `lab_length_weeks`.
+ */
 export function matrixTotals(
   stepIds: readonly string[],
   weeksOf: (stepId: string) => number,
   kindOf: (stepId: string) => WorkflowStepKind,
+  holdOf: (stepId: string) => number | null = () => null,
 ): MatrixTotals {
-  const out: MatrixTotals = { total: 0, design: 0, lab: 0 };
+  const out: MatrixTotals = { total: 0, design: 0, lab: 0, labLength: 0 };
   for (const id of stepIds) {
     const w = weeksOf(id);
     out.total += w;
     const kind = kindOf(id);
     if (kind === 'design') out.design += w;
-    else if (kind === 'lab') out.lab += w;
+    else if (kind === 'lab') {
+      out.lab += Math.min(holdOf(id) ?? w, w);
+      out.labLength += w;
+    }
   }
   return out;
 }
@@ -119,7 +142,7 @@ export function matrixChangeSet(
   return { changes };
 }
 
-/** "A · PDD-E length 6w → 7w" / "A · PDD-H gap 0w → −2w" lines for the apply dialog. */
+/** "A · PDD-E length 6w → 7w" / "A · PDD-H gap 0w → −2w" / room-weeks lines for the apply dialog. */
 export function matrixSummary(
   drafts: Readonly<Partial<Record<WorkflowId, WorkflowDrafts>>>,
   savedOf: (workflowId: WorkflowId, category: string) => Readonly<Record<string, SavedCell>>,
@@ -127,16 +150,7 @@ export function matrixSummary(
   const lines: string[] = [];
   for (const [workflowId, byCategory] of Object.entries(drafts) as [WorkflowId, WorkflowDrafts][]) {
     for (const category of Object.keys(byCategory).sort()) {
-      const catDrafts = byCategory[category] ?? {};
-      const saved = savedOf(workflowId, category);
-      for (const stepId of Object.keys(catDrafts).sort()) {
-        const d = catDrafts[stepId] ?? {};
-        const s = saved[stepId] ?? { weeks: 0, gap_weeks: 0 };
-        if (d.weeks !== undefined) lines.push(`${category} · ${stepId} length ${String(s.weeks)}w → ${String(d.weeks)}w`);
-        if (d.gap_weeks !== undefined) {
-          lines.push(`${category} · ${stepId} gap ${signedWeeks(s.gap_weeks)}w → ${signedWeeks(d.gap_weeks)}w`);
-        }
-      }
+      lines.push(...draftSummaryLines(category, byCategory[category] ?? {}, savedOf(workflowId, category)));
     }
   }
   return lines;

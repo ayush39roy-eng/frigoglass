@@ -109,11 +109,18 @@ nothing but occupies calendar weeks on the project's critical path.
 | PDD-G | CAPEX | Online CAPEX Approval | elapsed |
 | PDD-H | CERT | Certification Testing & Compliance | lab |
 | PDD-I | TF_1 | TF-1 | design |
-| PDD-J | PROD_PR | Pre-Production (Pr. Pr) | design |
+| PDD-J | PROD_PR | Pre-Production (Pr. Pr) | lab *(2026-11-22 hosted edit; room only, holds the room for its last week, ADR 0071; was `design`)* |
 | PDD-K | TF_2 | TF-2 | design |
-| PDD-L | PILOT | Pilot | elapsed |
+| PDD-L | PILOT | Pilot | lab *(2026-11-22 hosted edit; holds the room for its last week, ADR 0071; was `elapsed`)* |
 | PDD-M | TF_3 | TF-3 | design |
 | PDD-N | COMM | Commercialization | elapsed |
+
+*(2026-11-25, P62-T02, ADR 0071.)* PDD-J and PDD-L are `lab`. A Super Admin set them on hosted on
+2026-11-22 (MEMORY "P58 hosted fix"). The owner confirmed on 2026-11-25 that they book the **room
+only, never the leader**, and hold it for their **last week** only. The seed migration still writes
+`design` / `elapsed`. The settings in force decide a step's kind; this table records the intended
+state. Category C has no Pr. Pr and no Pilot (R62-11). Lab-figure split, certification-off and
+room weeks: see "Lab hold weeks" at the end.
 
 ### `OEM` workflow — hubs `OEM-HCK`, `OEM-Seitek`
 
@@ -156,6 +163,9 @@ duration_weeks = lead_time[workflow][category][step_id]      # integer weeks, ma
 | OEM / B-OEM | 1 | 1 | 1 | 0 | 0 | 2 | 2 | 6 | 0 | 1 | 0 | 0 | 0 | 0 | 14 |
 | OEM / C-OEM | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
 
+*(2026-11-25, P62 R62-11, ADR 0071.)* The table above is the workbook seed. Migration `p71a` sets
+**PDD / C / J = 0** (Σ 7): category C has no Pr. Pr (owner, 2026-11-25). C / L is already 0.
+
 - *(2026-10-23, ADR 0041 R4/R5)* **Effective duration and the one skip predicate.** For project `p`
   and step `s`, with `lead(p,s)` the table value above:
   ```
@@ -175,7 +185,13 @@ duration_weeks = lead_time[workflow][category][step_id]      # integer weeks, ma
   `timing_editable`, the project cards, tracking and the demand load. Everywhere a duration was
   used (booking, remaining duration, load, progress weights, the unconstrained finish),
   `duration_weeks` means `eff`.
+  *(2026-11-25, ADR 0071 R62-1/R62-2.)* The second line reads
+  `kind(s) = lab ∧ ¬certification_testing_required ∧ ¬partialRoom(p,s)`. A `partialRoom` lab step
+  (one with a room-weeks value, i.e. PDD-J / PDD-L) has `eff = user_override ?? plan_weeks` and no
+  effort share. See "Lab hold weeks".
 - `lab` steps are skipped when `project.certification_testing_required == false` (default `true`).
+  *(2026-11-25, R62-2: full-room lab steps only, i.e. PoC and Certification. Pr. Pr and Pilot are
+  never skipped by this flag.)*
   *(2026-10-23, ADR 0041 §3)* The client import sets the flag when column 18 is "Yes" **or** the
   project carries lab weeks (`lab_effort_weeks > 0`): the client's own lab pivot applies no
   certification filter (`docs/DATA_RECONCILIATION_2026.md` W9; the earlier citation of
@@ -227,13 +243,16 @@ Design Man Week") and `lab_effort_weeks` (column 21 "Lab Weeks- Process Derived"
   a design figure therefore keeps its design load (E) but its chain gains PDD-A's `plan_weeks` of
   calendar time (before, PDD-A was either one of the E weeks or skipped); a project without a figure
   keeps its calendar and loses PDD-A's weeks of design load. R3-raised PDD-A weeks leave the load.
+- *(2026-11-25, ADR 0071 R62-1, owner "Only PoC + Certification".)* The lab S′ excludes every
+  `partialRoom` step (PDD-J / PDD-L), so a lab figure is split over PoC and Certification only, as
+  the client computes it. Example: PDD/A lab 4 → F 2, H 2 (J, L take their template length).
 - **Recorded work is never erased (R3).** A step whose stage status is not Not Started gets
   `max(1, share)`; the total may then exceed `E` by the number of raised steps. The seed apportions
   before deriving progress, and derives progress on effective durations.
 - **Edge cases (R7).** No non-zero step of the kind (`T = 0`): not applied (no effort written). A
   split that would put a step above 104 weeks: rejected at write (422 `EFFORT_SPLIT_REJECTED`) and
   at import. Certification testing off: lab steps stay skipped, whatever `lab_effort_weeks` says
-  (no lab effort written). A blank or 0 figure: no effort written; the table applies (fallback).
+  (no lab effort written). *(2026-11-25, R62-2: the full-room lab steps only.)* A blank or 0 figure: no effort written; the table applies (fallback).
 - **Storage (R4).** The split lives in `project_workflow_steps.effort_weeks` (0..104, null = none),
   never in `duration_override_weeks`. Gantt "Reset timing" clears the user's values, so the step
   falls back to its effort value.
@@ -457,11 +476,13 @@ deterministic walk/tie-break order; it is not a dependency.
 - **Lab step**: a chamber in the project's lab region whose `allowed_stages` includes this step, with
   concurrent project count `< chamber.max_concurrent` (= platform count) for every week in the
   window. Consumption is **`1.0` platform-week per project-week** (ADR 0007; the prototype's `0.5`
-  is retired).
+  is retired). *(2026-11-25, ADR 0071 R62-0/R62-5.)* "The window" is the step's **last `h` weeks**
+  only (`h` = its room weeks, NULL = the full length), on one chamber. The earlier weeks book
+  nothing. `h = 0` books no chamber. See "Lab hold weeks".
 - **Elapsed step**: no resource is booked; the step occupies `[w, w + duration)` starting at its
   earliest feasible start. It never waits for capacity.
-- **Skipped step** (`eff == 0`: a 0-week lead time, a lab step when `certification_testing_required`
-  is false, or a step the effort split zeroed; ADR 0041 R5): occupies nothing;
+- **Skipped step** (`eff == 0`: a 0-week lead time, a full-room lab step when
+  `certification_testing_required` is false (R62-2), or a step the effort split zeroed; ADR 0041 R5): occupies nothing;
   `start = end = max(predecessor end)`.
 - **Frozen projects**: dates are locked at `actual_start`; capacity is consumed regardless of
   conflict. A double-booked engineer raises `ENG_CONFLICT`; an over-capacity chamber raises `OVERLAP`.
@@ -709,7 +730,8 @@ so no agent "fixes" them without approval and no agent copies them blindly.
   old `step[n].start >= step[n-1].end + 1`. *(2026-11-17, ADR 0054: every non-skipped,
   **non-pinned** step; a pinned step answers to I47. See "Manual step weeks".)*
 - **I4**: A lab step is only ever booked to a chamber in the project's lab region whose
-  `allowed_stages` contains that step.
+  `allowed_stages` contains that step. *(2026-11-25, ADR 0071: vacuous for a row with `h = 0`; see
+  I64.)*
 - **I5** *(revised)*: Every scheduled project has either a complete 14-step schedule (skipped steps
   present with `skipped = true` and zero duration) or `LEFT_OUT = true`.
 - **I6** *(rev. 2026-10-23, ADR 0041)*: **booked design load** per capacity hub (ADR 0042) = Σ
@@ -719,7 +741,8 @@ so no agent "fixes" them without approval and no agent copies them blindly.
   per-project design weeks. Each row's `duration_weeks` = `eff` of the run input.
 - **I7** *(rev. 2026-10-23, ADR 0041)*: **booked lab load** per lab region = Σ `duration_weeks` × 1.0
   of the non-skipped `lab` rows of the active run. It equals the served `lab_load_booked_weeks`, with
-  each region counted once.
+  each region counted once. *(2026-11-25, ADR 0071: superseded by I66, Σ `h` not Σ `duration_weeks`;
+  I2 counts occupancy weeks only, I64.)*
 - **I8**: Re-running the greedy scheduler on identical input produces byte-identical output
   (determinism).
 - **I9**: `within_year` count on the Dashboard equals the count of projects satisfying the
@@ -1338,6 +1361,14 @@ eff(p,s) = 0                      if kind(s) = lab and not p.certification_testi
 skipped(p,s) ⟺ eff(p,s) = 0
 ```
 
+- *(2026-11-25, ADR 0071 R62-1/R62-2/R62-12.)* Read the formula above with `partialRoom` steps
+  taken out:
+  - `ownEffort` and S′ ignore `partialRoom` steps;
+  - a `partialRoom` step has `eff = plan_weeks` (or the user override);
+  - the first line applies only to `¬partialRoom` steps;
+  - a length change on a `partialRoom` step reaches `plan_weeks` whatever ownEffort says.
+
+  See "Lab hold weeks".
 - **R2** (Per-project effort) splits `E` over the category's `effort_weight_weeks`, not over
   `weeks`. R3 and R7 are unchanged. A template edit therefore never reshapes a project's split.
 - **R6 triggers** are those of ADR 0041 **minus** "a lead-time edit on Workflow Settings". An apply
@@ -2127,3 +2158,161 @@ clock / closed year, ADR 0056 queued P3, ADR 0061 bounds, ADR 0024/0062 display)
   if k is past the end); global `band_rank` renumbered; other hubs' relative order unchanged. Scheduler
   still reads `band_rank` only.
 - Display: hub rank first everywhere; global rank on hover when no hub filter; hub rank only with a hub filter.
+
+## Lab hold weeks *(2026-11-25, ADR 0071 Accepted; ruling P62-T01 R62-0…R62-10 + owner answers R62-11…R62-13; folded at P62-T02)*
+
+Binding over "Booking rules" (lab step), "Lead times" (skip predicate, C/PDD-J), "Per-project
+effort" (R2 S′, R7), "Category templates" §A–§C and §G, the lab tails of "How progress feeds a
+schedule run", "Load basis" (lab half), "Manual step weeks" (lab pins), and I2 / I4 / I7 / I25
+where they differ. Until P62-T03/T04 land in code, a lab step books its chamber for every week of
+its length.
+
+**Owner, 2026-11-25 (verbatim):** "FOR PR. Pr and pilot are in lab but they only use logic for 1
+week not for all and like C type didnt even use so do accordingly coz the lab time for both these
+steps is not equal to there timing". Room week: the **last** week of the step. Q1: "Only PoC +
+Certification". Q2: "c doesnt have else have". Leader: "Room only".
+
+### Values
+
+- `workflow_lead_times.lab_hold_weeks`: integer `0..weeks`, **nullable; NULL = the full length**
+  (follows `weeks`). It applies only to `lab`-kind steps; on design / elapsed steps the API rejects
+  a non-null value (422 `LAB_HOLD_NOT_LAB`). A value kept through a kind change away from `lab` is
+  stored but not read. An explicit integer equal to the length is stored as given, never
+  normalised to NULL (R62-3).
+- `project_workflow_steps.plan_lab_hold_weeks`: the per-project copy (same domain, NULL = full).
+  It is copied at registration and on a category change, like `plan_weeks`, and otherwise reached
+  only through the P33 apply.
+- `schedule_run_project_steps.lab_hold_weeks`: the `h` the run booked. NULL on non-lab rows and on
+  rows written before ADR 0071; read as the full length, so stored runs keep their meaning.
+- **Defaults (migration `p71a`):**
+  - NULL everywhere, except PDD-J and PDD-L, which get **1** for A+, A and B and **0** for C.
+  - OEM-J/L get values only if `lab` at migration time (on hosted they are design / elapsed, so
+    NULL).
+  - **C/PDD-J `weeks` 1 → 0** (R62-11; C/PDD-L is already 0).
+  - Owner-approved 2026-11-25 for exactly these rows.
+
+### Definitions
+
+```
+partialRoom(p,s) ⟺ kind(s) = lab ∧ plan_lab_hold_weeks(p,s) IS NOT NULL
+hold(p,s)        = plan_lab_hold_weeks(p,s) ?? eff(p,s)
+h(p,s,n)         = min(hold(p,s), n)          # n = the step's booked interval in weeks
+
+eff(p,s) = 0                         if kind(s) = lab ∧ ¬p.certification_testing_required ∧ ¬partialRoom(p,s)
+         = user_override ?? plan_weeks(p,s)    if partialRoom(p,s)        # 0 ⇒ skipped; an override never revives 0
+         = effort_weeks(p,s) ?? 0     if ownEffort(p, kind(s))           # S′ excludes partialRoom steps
+         = plan_weeks(p,s)            otherwise
+```
+
+With the approved defaults, `partialRoom` = PDD-J and PDD-L in every PDD category, and nothing
+else. Setting a room-weeks value on PoC / Certification, or setting J / L to "Full", moves that
+step into or out of the lab split and the certification-off skip. The editor says so (OQ #125).
+
+### Rules
+
+- **R62-0 Booking.** The chamber is held for the **last `h` weeks** of the booked interval only, on
+  one chamber, contiguous. The earlier `n − h` weeks book nothing. The step still occupies all `n`
+  weeks on the project's path, and successors wait for its end.
+- **R62-1 Lab figure = PoC + Certification.**
+  - A `partialRoom` step is outside the lab S′: no share, `effort_weeks` NULL.
+  - `lab_effort_weeks` is split over the remaining lab steps (F, H) by `effort_weight_weeks`.
+  - Enforced by an R6 re-derivation:
+    - trigger `lab_hold_default` (in the p71a migration, after the backfill);
+    - scope: every non-frozen project with a figure;
+    - R3 raises and the ADR 0070 hold-back apply;
+    - there is **no `started_share` refusal**;
+    - audit `project.effort_rederived`, `schedule_stale`, no run.
+  - The design split is not re-widened to J.
+- **R62-2 Certification off** skips the full-room lab steps (PoC, Certification) only. Pr. Pr and
+  Pilot run whether or not certification testing is required. R7 `certification_off` covers
+  full-room lab steps only.
+- **R62-3 NULL = full** (above).
+- **R62-4 `h = 0`.**
+  - No chamber is needed or booked; `chamber_id` NULL; I4 is vacuous.
+  - The step still takes its `n` calendar weeks.
+  - The zero-eligible-chamber exits fire only when `h > 0`: greedy `no_chamber`, CP-SAT "zero
+    eligible chamber → greedy LEFT_OUT", and What-if / plan import P58-A.
+- **R62-5 Scheduler.**
+  - **Greedy:** the earliest `w` ≥ the floor with one eligible chamber (chamber_id order) free in
+    `[w+n−h, w+n)`.
+  - **CP-SAT:**
+    - the step interval `[s, s+n)` is kept;
+    - one optional, fixed-size-`h` occupancy interval at `s+n−h` per eligible chamber, exactly one
+      present;
+    - the per-chamber cumulative runs over occupancy intervals only;
+    - `_book_solved_placements` and every prebooked / `consume_from` path book hold weeks only.
+  - **Frozen:** `eligible[0]` over the last `h` weeks.
+  - **Tails:** In Progress / Blocked hold the last `min(hold, remaining_span)` weeks of the tail.
+    A Blocked hold books nothing.
+  - **Done:** the last `min(hold, actual length)` weeks of `[actual_start .. actual_end]`; only
+    weeks ≥ `CURRENT_WEEK` consume capacity.
+  - **Pinned (ADR 0054):** the last `h` weeks of the pinned window.
+  - **Monte Carlo:** a sampled `d` gives `h = min(hold, d)`; the hold is never sampled.
+  - **Input / hash:** `StepInput.lab_hold_weeks`, None = full. The canonical input omits None, so
+    all-NULL input hashes are unchanged.
+- **R62-6 Progress weights (I12)** stay on `eff` (the step, not the room).
+- **R62-7 Backfill** of hold copies covers every project, including reached / frozen / Cancelled /
+  Commercialized (frozen stays a no-op for re-derivation, I10).
+- **R62-8 Apply.**
+  - A room-weeks change is a third template change kind, after length and gap.
+  - On `¬never` pairs it writes `plan_lab_hold_weeks`, whatever ownEffort says.
+  - A change that flips NULL ↔ non-NULL on an own-lab-figure pair triggers R62-1 for that project.
+  - An apply that changes only holds marks stale and dispatches nothing (manual mode, ADR 0069).
+  - Audits `workflow_template.applied` / `project.template_applied` carry
+    `lab_hold_weeks [before, after]`.
+- **R62-9 What-if / plan import** projects take the hold and lengths from their category template.
+  R62-1 / R62-2 / R62-11 apply identically (I58 parity).
+- **R62-10 Supply** is unchanged, and booked % = Σ h / supply. The BUG-2 windowing (What-if
+  before-load, full-year / remaining) counts the held weeks actually inside the window, not a
+  pro-rata share of `n`.
+- **R62-11 Category C has no Pr. Pr and no Pilot** (owner Q2, an orchestrator reading of "c doesnt
+  have else have").
+  - C/PDD-J and C/PDD-L have length 0 and room weeks 0, so they are `partialRoom` and skipped.
+  - The C/PDD-J 1 → 0 length change reaches copies on `¬never` pairs by the P33 §C rules, in p71a
+    (audited, stale, no run).
+  - Reached / frozen / Cancelled / Commercialized C projects keep their J / L copy; recorded work
+    is never erased.
+  - This supersedes the proposal's "C holds J for 0 room weeks".
+- **R62-12** A length change on a `partialRoom` step reaches `plan_weeks` on `¬never` pairs
+  whatever ownEffort says; `own_effort_length_not_applied` never applies to it.
+- **R62-13 Room only.** Pr. Pr and Pilot never book the leader.
+
+### Readers (lab load = `h`; lab calendar = `n`)
+
+The following count `h`, not the step length:
+
+- greedy / CP-SAT chamber booking;
+- `invariants.py` I2 / I4 / I7;
+- demand (I25 lab half: `min(hold, eff)` / `min(hold, rem)`);
+- What-if (incl. BUG-2 windowing) / What-if chat / plan import;
+- template timeline and workflow previews (L total = Σ h; the bar keeps its length, with the held
+  weeks marked);
+- capacity and capacity-by-priority;
+- chamber utilisation / occupancy;
+- Gantt per-project `lab_weeks` and step rows;
+- planning, priority board, project cards;
+- exports (a room-weeks column; the length is unchanged).
+
+Unchanged: progress weights (I12) and capacity supply. The backend-builder confirms the list by
+grep at P62-T04; a reader found later is a defect against I66.
+
+### Invariants
+
+- **I64 (lab occupancy):** every non-skipped `lab` row with `h = min(hold, n) > 0` occupies exactly
+  one chamber in exactly its last `h` booked weeks, and no chamber in any other week. I2 counts
+  occupancy weeks only. `h = 0` ⟺ `chamber_id` NULL. A row with `h = 0` is never the cause of
+  `no_chamber` / LEFT_OUT.
+- **I65 (hold domain):** `0 ≤ lab_hold_weeks ≤ weeks` (template); `0 ≤ plan_lab_hold_weeks ≤
+  plan_weeks` (copy); run row `lab_hold_weeks ≤ duration_weeks`. Non-lab template rows are NULL via
+  the API (422 `LAB_HOLD_NOT_LAB`).
+- **I66 (lab load = hold):** booked lab load per region = Σ `h` over the active run's non-skipped
+  lab rows (NULL = `duration_weeks`) = the served `lab_load_booked_weeks` = Σ Gantt `lab_weeks`.
+  I25's lab half uses `min(hold, eff)` / `min(hold, rem)`. I9: no surface recomputes lab load from
+  the step length.
+- **I67 (partial-room steps):**
+  - A `partialRoom` step has `effort_weeks` NULL and `eff = user_override ?? plan_weeks`.
+  - It is never skipped by the certification-off predicate; it is skipped only when its
+    `plan_weeks` is 0 (C/PDD-J, C/PDD-L).
+  - On a category-C project, a PDD-J / PDD-L that is not reached is skipped, and nothing (an
+    override, a figure, a hold) revives it.
+  - With every hold NULL, splits and skips are byte-identical to before ADR 0071 (I8 / I14).

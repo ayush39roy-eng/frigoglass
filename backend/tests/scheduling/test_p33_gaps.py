@@ -675,6 +675,9 @@ def test_canonical_schedule_input_asdict_omits_p33_defaults() -> None:
     del raw["projects"][0]["actual_end_week"]  # P53 (R53-2b): omitted when None
     for row in raw["projects"][0]["step_timing"]:
         del row["wait_weeks"], row["lead_weeks"]
+        del row["lab_hold_weeks"]  # P62 (ADR 0071): omitted when None
+    for lt in raw["lead_times"]:
+        del lt["lab_hold_weeks"]  # P62 (ADR 0071): omitted when None
     assert data == raw
     waited = _si(_project(step_timing=(_t("PDD-H", wait=2, lead=4),)))
     row = canonical_schedule_input_asdict(waited)["projects"][0]["step_timing"][0]

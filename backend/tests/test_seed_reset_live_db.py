@@ -50,6 +50,7 @@ from models import (
 )
 from models.vip import VipItem, vip_item_projects
 from tests.conftest import run_alembic
+from tests.p62_audit import NOT_MIGRATION_AUDIT
 
 
 @pytest.fixture(scope="module")
@@ -205,7 +206,11 @@ async def _state(url: str) -> dict[str, Any]:
                 "scenario_apply_runs": await count(ScenarioApplyRun),
                 "scenario_apply_changes": await count(ScenarioApplyChange),
                 "schedule_run_ids": set((await s.execute(select(ScheduleRun.id))).scalars()),
-                "audit": await count(AuditLogEntry),
+                # P62: not migration p71a's own template rows.
+                "audit": await s.scalar(
+                    select(func.count()).select_from(AuditLogEntry).where(NOT_MIGRATION_AUDIT)
+                )
+                or 0,
                 "user_hub_scopes": await count(UserHubScope),
                 "grant_ids": set((await s.execute(select(ProjectAccessGrant.id))).scalars()),
                 "vip_items": set((await s.execute(select(VipItem.id))).scalars()),

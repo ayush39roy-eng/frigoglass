@@ -121,8 +121,8 @@ describe('PlanWeekChip / PlanWeekNotice (ADR 0052 §6)', () => {
         <PlanWeekNotice />
       </>,
     );
-    expect(screen.getByTestId('plan-week-chip')).toHaveTextContent('Plan from W42 · recalculating…');
-    expect(screen.getByTestId('plan-week-notice')).toHaveTextContent('This plan is from W42; the current week is W47.');
+    expect(screen.getByTestId('plan-week-chip')).toHaveTextContent('Plan from W42 \'26 · recalculating…');
+    expect(screen.getByTestId('plan-week-notice')).toHaveTextContent('This plan is from W42 \'26; the current week is W47 \'26.');
     expect(screen.queryByTestId('plan-week-recalculate')).not.toBeInTheDocument();
     expect(await seriousAxeViolations(container)).toEqual([]);
   });
@@ -130,7 +130,7 @@ describe('PlanWeekChip / PlanWeekNotice (ADR 0052 §6)', () => {
   it('"recalculation failed" with Recalculate for an Admin', async () => {
     seedSession({ ...W47, roles: ['Admin'], plan_week: { run_week: 42, run_version: 8, status: 'failed' } });
     const { container } = renderWithQuery(<PlanWeekChip />);
-    expect(screen.getByTestId('plan-week-chip')).toHaveTextContent('Plan from W42 · recalculation failed');
+    expect(screen.getByTestId('plan-week-chip')).toHaveTextContent('Plan from W42 \'26 · recalculation failed');
     expect(screen.getByTestId('plan-week-recalculate')).toBeEnabled();
     expect(await seriousAxeViolations(container)).toEqual([]);
   });
@@ -146,7 +146,7 @@ describe('PlanWeekChip / PlanWeekNotice (ADR 0052 §6)', () => {
     seedSession({ ...W47, plan_week: { run_week: 42, run_version: 8, status: 'pending' } });
     const { rerender } = renderWithQuery(<SimulatedWeekNotice simulatedWeek={47} />);
     expect(screen.getByTestId('simulated-week-notice')).toHaveTextContent(
-      'Simulated from W47; the active plan is from W42.',
+      'Simulated from W47 \'26; the active plan is from W42 \'26.',
     );
     rerender(<SimulatedWeekNotice simulatedWeek={42} />);
     expect(screen.queryByTestId('simulated-week-notice')).not.toBeInTheDocument();

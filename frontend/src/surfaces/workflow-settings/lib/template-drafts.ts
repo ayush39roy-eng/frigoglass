@@ -29,12 +29,45 @@ export const GAP_MAX = 104;
 export interface SavedCell {
   weeks: number;
   gap_weeks: number;
+  /** P62 (ADR 0071): room weeks; null = Full. Absent = Full (older callers). */
+  lab_hold_weeks?: number | null;
 }
 
 /** The overrides of one step; a missing field keeps the saved value. */
 export interface StepDraft {
   weeks?: number;
   gap_weeks?: number;
+  /** P62: drafted room weeks — an integer, or null = "Full". Undefined = keep. */
+  lab_hold_weeks?: number | null;
+}
+
+/** P62: a room-weeks click — one week fewer / more, or "Full" (the whole length). */
+export type HoldAction = -1 | 1 | 'full';
+
+function hasAnyValue(step: StepDraft): boolean {
+  return step.weeks !== undefined || step.gap_weeks !== undefined || step.lab_hold_weeks !== undefined;
+}
+
+/** Put `step` back into the drafts, dropping it when it no longer changes anything. */
+function withStep(drafts: CategoryDrafts, stepId: string, step: StepDraft): CategoryDrafts {
+  const out: Record<string, StepDraft> = { ...drafts };
+  if (hasAnyValue(step)) out[stepId] = step;
+  else delete out[stepId];
+  return out;
+}
+
+/**
+ * P62 (API_CONTRACT_P62 §4.1): after a length change, a DRAFTED room-weeks
+ * integer above the new length is cut to it, so the request never asks for
+ * room weeks outside `0..weeks` (422 `LAB_HOLD_OUT_OF_RANGE`). A saved value is
+ * left alone: the server clamps it and the apply preview says so.
+ */
+function clampDraftedHold(step: StepDraft, saved: SavedCell | undefined): void {
+  const weeks = step.weeks;
+  const hold = step.lab_hold_weeks;
+  if (weeks === undefined || hold === undefined || hold === null || hold <= weeks) return;
+  if (weeks === (saved?.lab_hold_weeks ?? null)) delete step.lab_hold_weeks;
+  else step.lab_hold_weeks = weeks;
 }
 
 /** step_id → draft, only for steps with at least one changed value. */
@@ -51,7 +84,7 @@ export function savedCells(
   const out: Record<string, SavedCell> = {};
   for (const lt of leadTimes) {
     if (lt.workflow_id !== workflowId || lt.category !== category) continue;
-    out[lt.step_id] = { weeks: lt.weeks, gap_weeks: lt.gap_weeks };
+    out[lt.step_id] = { weeks: lt.weeks, gap_weeks: lt.gap_weeks, lab_hold_weeks: lt.lab_hold_weeks };
   }
   return out;
 }
@@ -102,10 +135,62 @@ export function nudge(
   const step: StepDraft = { ...drafts[stepId] };
   if (next === savedValue) delete step[field];
   else step[field] = next;
-  const out: Record<string, StepDraft> = { ...drafts };
-  if (step.weeks === undefined && step.gap_weeks === undefined) delete out[stepId];
-  else out[stepId] = step;
-  return out;
+  if (field === 'weeks') clampDraftedHold(step, saved[stepId]);
+  return withStep(drafts, stepId, step);
+}
+
+// --- P62 room weeks (ADR 0071) ---------------------------------------------------------
+
+/** The room weeks in force: the draft, else the saved value; null = "Full". */
+export function currentHold(
+  drafts: CategoryDrafts,
+  saved: Readonly<Record<string, SavedCell>>,
+  stepId: string,
+): number | null {
+  const drafted = drafts[stepId]?.lab_hold_weeks;
+  if (drafted !== undefined) return drafted;
+  return saved[stepId]?.lab_hold_weeks ?? null;
+}
+
+/** Whether a room-weeks click can act, for a step whose length in force is `weeks`. */
+export function canHold(
+  drafts: CategoryDrafts,
+  saved: Readonly<Record<string, SavedCell>>,
+  stepId: string,
+  action: HoldAction,
+  weeks: number,
+): boolean {
+  const hold = currentHold(drafts, saved, stepId);
+  if (action === 'full') return hold !== null;
+  // From "Full", − asks for one week fewer than the length; + has nowhere to go.
+  const value = Math.min(hold ?? weeks, weeks);
+  return action < 0 ? value > 0 : hold !== null && value < weeks;
+}
+
+/**
+ * One room-weeks click (range 0..the length in force; "Full" = null). A value
+ * equal to the saved one drops out of the drafts, like `nudge`.
+ */
+export function nudgeHold(
+  drafts: CategoryDrafts,
+  saved: Readonly<Record<string, SavedCell>>,
+  stepId: string,
+  action: HoldAction,
+  weeks: number,
+): CategoryDrafts {
+  if (!canHold(drafts, saved, stepId, action, weeks)) return drafts;
+  const hold = currentHold(drafts, saved, stepId);
+  const next = action === 'full' ? null : Math.min(weeks, Math.max(0, Math.min(hold ?? weeks, weeks) + action));
+  const savedValue = saved[stepId]?.lab_hold_weeks ?? null;
+  const step: StepDraft = { ...drafts[stepId] };
+  if (next === savedValue) delete step.lab_hold_weeks;
+  else step.lab_hold_weeks = next;
+  return withStep(drafts, stepId, step);
+}
+
+/** "Full" or "2w" for a room-weeks value. */
+export function holdText(hold: number | null): string {
+  return hold === null ? 'Full' : `${String(hold)}w`;
 }
 
 /** Per-row reset: back to the saved template. */
@@ -124,8 +209,11 @@ export function pruneDrafts(drafts: CategoryDrafts, saved: Readonly<Record<strin
     const step: StepDraft = {};
     if (d.weeks !== undefined && d.weeks !== (saved[stepId]?.weeks ?? 0)) step.weeks = d.weeks;
     if (d.gap_weeks !== undefined && d.gap_weeks !== (saved[stepId]?.gap_weeks ?? 0)) step.gap_weeks = d.gap_weeks;
-    if (step.weeks !== d.weeks || step.gap_weeks !== d.gap_weeks) changed = true;
-    if (step.weeks !== undefined || step.gap_weeks !== undefined) out[stepId] = step;
+    if (d.lab_hold_weeks !== undefined && d.lab_hold_weeks !== (saved[stepId]?.lab_hold_weeks ?? null)) {
+      step.lab_hold_weeks = d.lab_hold_weeks;
+    }
+    if (step.weeks !== d.weeks || step.gap_weeks !== d.gap_weeks || step.lab_hold_weeks !== d.lab_hold_weeks) changed = true;
+    if (hasAnyValue(step)) out[stepId] = step;
   }
   return changed ? out : drafts;
 }
@@ -139,6 +227,8 @@ export function draftOverrides(drafts: CategoryDrafts): TemplateStepOverride[] {
       const o: TemplateStepOverride = { step_id: stepId };
       if (d.weeks !== undefined) o.weeks = d.weeks;
       if (d.gap_weeks !== undefined) o.gap_weeks = d.gap_weeks;
+      // P62 §4.1: null ("Full") goes on the wire as the string "full".
+      if (d.lab_hold_weeks !== undefined) o.lab_hold_weeks = d.lab_hold_weeks ?? 'full';
       return o;
     });
 }
@@ -167,6 +257,30 @@ export function overrideValue(
 }
 
 // --- Display copy (no arithmetic beyond formatting a served or drafted integer). ---
+
+/**
+ * "A · PDD-E length 6w → 7w" / "A · PDD-H gap 0w → −2w" / "A · PDD-J room
+ * weeks Full → 1w" for the apply dialog, in step-id order.
+ */
+export function draftSummaryLines(
+  category: string,
+  drafts: CategoryDrafts,
+  saved: Readonly<Record<string, SavedCell>>,
+): string[] {
+  const lines: string[] = [];
+  for (const stepId of Object.keys(drafts).sort()) {
+    const d = drafts[stepId] ?? {};
+    const s = saved[stepId] ?? { weeks: 0, gap_weeks: 0 };
+    if (d.weeks !== undefined) lines.push(`${category} · ${stepId} length ${String(s.weeks)}w → ${String(d.weeks)}w`);
+    if (d.gap_weeks !== undefined) {
+      lines.push(`${category} · ${stepId} gap ${signedWeeks(s.gap_weeks)}w → ${signedWeeks(d.gap_weeks)}w`);
+    }
+    if (d.lab_hold_weeks !== undefined) {
+      lines.push(`${category} · ${stepId} room weeks ${holdText(s.lab_hold_weeks ?? null)} → ${holdText(d.lab_hold_weeks)}`);
+    }
+  }
+  return lines;
+}
 
 /** "−3" with a true minus sign. */
 export function signedWeeks(n: number): string {

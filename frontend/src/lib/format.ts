@@ -98,7 +98,7 @@ export function formatBookedPct(value: number | null): string {
  * P53 (ADR 0063, R53-1/R53-6): weeks are ABSOLUTE from the served
  * `/me.week_base_year` W1, never re-based (2027 W1 = 53, 2028 W1 = 105, …),
  * for any year — no year is hard-coded. A week is SHOWN as the week of its own
- * year: "W5" when that year is the plan year, "W5 '28" otherwise, with
+ * year, always with the year: "W5 '26", "W5 '28" (P62-F1), with
  * "Week 5 of 2028" on hover ({@link formatWeekTitle}). Display only: the week
  * the server serves, and any week the client sends back, stays absolute.
  *
@@ -133,8 +133,14 @@ function shortYear(year: number): string {
 }
 
 /**
- * A served absolute week: `W47` inside the plan year, `W5 '28` in any other
- * year. Never prints W53+.
+ * A served absolute week with its year always named: `W47 '26`, `W5 '28`.
+ * Never prints W53+.
+ *
+ * P62-F1 (owner 2026-11-25, "which year week 40 we are talking about"): the
+ * year is shown even inside the plan year — before P62 a plan-year week read
+ * a bare `W47`. The year comes from the served week line (`week_base_year`,
+ * falling back to the served `plan_year`), never the browser clock. Only
+ * before `/me` resolves (isolated tests) does a plan-year week read `W47`.
  */
 export function formatWeek(week: number, planYear: number | null = servedPlanYear()): string {
   const n = weekOfYearNumber(week);
@@ -145,7 +151,6 @@ export function formatWeek(week: number, planYear: number | null = servedPlanYea
     if (idx === 0) return `W${String(n)}`;
     return `W${String(n)} ${idx === 1 ? '(next year)' : `(+${String(idx)} years)`}`;
   }
-  if (planYear !== null && year === planYear) return `W${String(n)}`;
   return `W${String(n)} ${shortYear(year)}`;
 }
 

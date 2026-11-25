@@ -102,6 +102,18 @@ export function GanttLegend({ rows = [] }: { rows?: readonly GanttProjectRow[] }
         />
         <dt>Elapsed step (books nobody), tinted</dt>
       </div>
+      {/* P62 (ADR 0071): lab bars are solid only for the weeks that book the chamber. */}
+      <div className="flex items-center gap-1.5" data-testid="gantt-legend-lab-room">
+        <span
+          className="flex h-2.5 w-7 overflow-hidden rounded-sm border"
+          style={{ borderColor: sample.fill }}
+          aria-hidden="true"
+        >
+          <span className="h-full flex-[2]" style={{ background: stepTint(sample, 0.22) }} />
+          <span className="h-full flex-1" style={{ background: sample.fill }} />
+        </span>
+        <dt>Lab step: solid = room booked (chamber), light = in the lab, no room booked</dt>
+      </div>
       <div className="flex items-center gap-1.5">
         <span
           className="inline-flex h-3.5 items-center rounded-sm border border-dashed border-border-strong px-1 text-[0.625rem] leading-none text-text-subtle"
@@ -151,7 +163,7 @@ export function GanttLegend({ rows = [] }: { rows?: readonly GanttProjectRow[] }
       {currentWeek !== null ? (
         <div className="flex items-center gap-1.5">
           <span className="h-3 w-0.5 border-l-2 border-gantt-marker-now" aria-hidden="true" />
-          <dt>Week {currentWeek} — now</dt>
+          <dt>{formatWeek(currentWeek)} — now</dt>
         </div>
       ) : null}
       <div className="flex items-center gap-1.5">

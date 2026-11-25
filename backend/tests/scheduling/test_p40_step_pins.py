@@ -125,7 +125,12 @@ def test_new_fields_default_to_empty_and_false() -> None:
     names = [f.name for f in dataclasses.fields(ProjectInput)]
     # P53 (R53-2b): `actual_end_week` follows, last.
     assert names[-2:] == ["step_pins", "actual_end_week"]
-    assert [f.name for f in dataclasses.fields(StepSchedule)][-2:] == ["pinned", "manual_overlap"]
+    # P62 (ADR 0071): `lab_hold_weeks` follows the P40 flags, last.
+    assert [f.name for f in dataclasses.fields(StepSchedule)][-3:] == [
+        "pinned",
+        "manual_overlap",
+        "lab_hold_weeks",
+    ]
     # P42 (ADR 0056): `not_scheduled_priority` / `counts_toward_year` follow.
     assert [f.name for f in dataclasses.fields(ProjectScheduleOutcome)][-4:-2] == [
         "manual_overlap",
@@ -145,6 +150,8 @@ def test_canonical_input_omits_empty_step_pins_and_keeps_a_set_one() -> None:
     for proj in raw["projects"]:
         proj.pop("band_rank")
         proj.pop("actual_end_week")  # P53 (R53-2b): omitted at None
+    for lt in raw["lead_times"]:
+        lt.pop("lab_hold_weeks")  # P62 (ADR 0071): omitted at None
     del raw["projects"][0]["step_pins"]
     assert data == raw
 
@@ -163,6 +170,7 @@ def test_canonical_output_omits_the_p40_flags_at_their_defaults() -> None:
         del o["not_scheduled_priority"], o["counts_toward_year"]
         for s in o["steps"]:
             del s["pinned"], s["manual_overlap"]
+            del s["lab_hold_weeks"]  # P62 (ADR 0071): omitted at None
     assert data == raw
     pinned_out, _ = _run(_si(_project(step_pins=(_pin("PDD-E", 20, 23),))))
     pdata = canonical_schedule_output_asdict(pinned_out)["project_outcomes"][0]

@@ -101,6 +101,15 @@ export interface GanttStepRow {
   /** P40-R02: the caller may Clear this step's pin now (Admin / Super Admin,
    *  in scope, live step, project not frozen). Same rules as the save. */
   pin_clearable: boolean;
+  /** P62 (ADR 0071, API_CONTRACT_P62 §5): room weeks the active run booked
+   *  (`h`); null on non-lab / unplaced rows, 0 = no room booked. */
+  lab_hold_weeks: number | null;
+  /** P62: the project's copy of the template room weeks (null = Full). */
+  plan_lab_hold_weeks: number | null;
+  /** P62: the held (room-booked) weeks, INCLUSIVE like `planned_*_week`;
+   *  both null when nothing is held (h = 0, skipped, not placed). */
+  room_start_week: number | null;
+  room_end_week: number | null;
 }
 
 /** P40 (R40-2): served reason a step's pin cannot be set. */

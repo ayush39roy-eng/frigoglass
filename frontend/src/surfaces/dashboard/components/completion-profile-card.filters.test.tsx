@@ -160,10 +160,10 @@ describe('CompletionProfileCard filters', () => {
     expect(screen.getByRole('heading', { name: /March 2026\s*1 project/ })).toBeInTheDocument();
     const weeks = screen.getByRole('list', { name: 'Within-year projects completed per week in March' });
     expect(within(weeks).getAllByRole('button').map((b) => b.textContent)).toEqual([
-      'W10: 0',
-      'W11: 1',
-      'W12: 0',
-      'W13: 0',
+      'W10 \'26: 0',
+      'W11 \'26: 1',
+      'W12 \'26: 0',
+      'W13 \'26: 0',
     ]);
     const projects = screen.getByRole('list', { name: 'Projects completing in March' });
     expect(within(projects).getAllByRole('link').map((l) => l.textContent)).toEqual(['Project b']);

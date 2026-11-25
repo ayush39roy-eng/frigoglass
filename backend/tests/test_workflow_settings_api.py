@@ -33,6 +33,7 @@ from tests.auth_helpers import (
     override_current_principal,
 )
 from tests.factories import make_chamber, make_hub, make_project, make_user
+from tests.p62_audit import P71A_TEMPLATE_VERSION as V0  # noqa: N814
 
 PDD_IDS = [f"PDD-{c}" for c in "ABCDEFGHIJKLMN"]
 
@@ -131,10 +132,12 @@ async def test_get_settings_shape_and_derived_figures(db_session):
     assert body["lead_times"][0] == {
         "workflow_id": "OEM", "category": "A-OEM", "step_id": "OEM-A", "weeks": 1,
         "gap_weeks": 0, "effort_weight_weeks": 1,
+        "lab_hold_weeks": None,  # P62 (contract P62 §3.1)
     }
     assert [(c["code"], c["workflow_id"], c["rank"], c["template_version"])
             for c in body["categories"]] == [
-        ("A+", "PDD", 1, 1), ("A", "PDD", 2, 1), ("B", "PDD", 3, 1), ("C", "PDD", 4, 1),
+        # P62: migration p71a's template change put A+ / A / B / C at V0.
+        ("A+", "PDD", 1, V0), ("A", "PDD", 2, V0), ("B", "PDD", 3, V0), ("C", "PDD", 4, V0),
         ("A-OEM", "OEM", 5, 1), ("B-OEM", "OEM", 6, 1), ("C-OEM", "OEM", 7, 1),
     ]
     cal = next(c for c in body["hub_calendars"] if c["hub_id"] == str(hub.id))

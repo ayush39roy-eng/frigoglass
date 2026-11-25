@@ -94,6 +94,7 @@ from schemas.workflow_settings import (
     WorkflowStepSetting,
 )
 from services.audit_helpers import chamber_audit_state
+from services.band_rank import lock_band_ranks
 from services.capacity_supply import (
     calendar_figures,
     chamber_figures,
@@ -190,10 +191,9 @@ async def build_settings_payload(
                     ],
                 )
             )
-        seq = {
-            t.id: t.sequence_order
-            for t in (await db.execute(select(WorkflowStepTemplate))).scalars().all()
-        }
+        all_templates = (await db.execute(select(WorkflowStepTemplate))).scalars().all()
+        seq = {t.id: t.sequence_order for t in all_templates}
+        step_kind_by_id = {t.id: t.kind for t in all_templates}
         # P33-T07: categories in rank order (the `categories` table).
         category_order = (await load_catalog(db)).rank_by_code
         lt_rows = (await db.execute(select(WorkflowLeadTime))).scalars().all()
@@ -206,6 +206,12 @@ async def build_settings_payload(
                 # P33-T09 (contract C1).
                 gap_weeks=lt.gap_weeks,
                 effort_weight_weeks=lt.effort_weight_weeks,
+                # P62 (contract P62 §3.1): null on a non-lab step.
+                lab_hold_weeks=(
+                    lt.lab_hold_weeks
+                    if step_kind_by_id.get(lt.step_id) == WorkflowStepKind.LAB
+                    else None
+                ),
             )
             for lt in sorted(
                 lt_rows,
@@ -809,9 +815,7 @@ async def put_chamber(
         regions = await scoped_lab_regions(db, current_user)
         if regions is not None:
             stmt = stmt.where(Chamber.lab_region.in_(regions))
-    if body.base:
-        # P47 (ADR 0059 C1): the chamber row `FOR UPDATE`, re-read.
-        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    # P62-R01 (S62-1): a plain scoped read first (404 / scope).
     chamber = (await db.execute(stmt)).scalar_one_or_none()
     if chamber is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chamber not found")
@@ -822,6 +826,18 @@ async def put_chamber(
             raise CodedHTTPException(
                 HTTP_422, "NULL_NOT_ALLOWED", f"{key} may not be null"
             )
+    # P62-R01 (S62-1, run-307 deadlock order): every successful PUT marks
+    # every schedulable project stale (`_finish_put`), so the band-rank lock
+    # comes FIRST (5 s, else 503 `BAND_RANK_BUSY`, nothing written), after
+    # authorisation, lookup and validation, before the chamber row lock (the
+    # `FOR UPDATE` re-read below, or the flush's UPDATE).
+    await lock_band_ranks(db)
+    if body.base:
+        # P47 (ADR 0059 C1): the chamber row `FOR UPDATE`, re-read.
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        chamber = (await db.execute(stmt)).scalar_one_or_none()
+        if chamber is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chamber not found")
     await check_base(
         db,
         current_user,

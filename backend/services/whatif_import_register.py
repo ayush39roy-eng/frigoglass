@@ -232,6 +232,8 @@ async def build_register_context(
                             kind=st.kind,
                             certification_testing_required=cert,
                             override_weeks=None if t is None else t.duration_override_weeks,
+                            # ADR 0071 (R62-2): the project's room weeks.
+                            lab_hold_weeks=None if t is None else t.lab_hold_weeks,
                         ),
                     )
             started = frozenset(sp.step_id for sp in p.step_progress if sp.status != "Not Started")

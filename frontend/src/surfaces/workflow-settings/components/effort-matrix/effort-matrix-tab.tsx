@@ -212,7 +212,8 @@ export function EffortMatrixTab({
           a step, or carry their own effort figure, keep their own weeks). Resource = which capacity a step books: Design
           (project leader), Lab (a chamber) or Other (calendar time only); changing it is Super Admin only. Totals are sums
           of the template weeks shown, including unsaved edits; timeline previews and B-equivalent are calculated by the
-          server.
+          server. L counts <strong>room weeks</strong> — the weeks a lab step books a chamber (its last weeks); set them
+          with Room on the timelines below (&ldquo;room n&rdquo; in a cell = not the full length).
         </p>
       </div>
 
@@ -356,6 +357,7 @@ function WorkflowCard({
                       disabled={disabled}
                       defaultOpen={t.category === openCategory}
                       onNudge={(stepId, field, dir) => state.nudge(wf, t.category, stepId, field, dir)}
+                      onHold={(stepId, action, weeks) => state.hold(wf, t.category, stepId, action, weeks)}
                       onResetStep={(stepId) => state.resetStep(wf, t.category, stepId)}
                     />
                   ))}

@@ -129,9 +129,9 @@ async def test_revive_gives_own_effort_project_a_share(db_session: AsyncSession,
     # F revived (0 -> 2 of the 6, weights F 3 : H 6), H re-split 6 -> 4.
     assert auto["01 Own lab"]["steps"] == [
         {"step_id": "PDD-F", "eff_before": 0, "eff_after": 2, "gap_before": 0, "gap_after": 0,
-         "flags": ["revived"]},
+         "hold_before": None, "hold_after": None, "flags": ["revived"]},
         {"step_id": "PDD-H", "eff_before": 6, "eff_after": 4, "gap_before": 0, "gap_after": 0,
-         "flags": []},
+         "hold_before": None, "hold_after": None, "flags": []},
     ]  # fmt: skip
     assert auto["02 No figure"]["steps"][0]["eff_after"] == 3
 

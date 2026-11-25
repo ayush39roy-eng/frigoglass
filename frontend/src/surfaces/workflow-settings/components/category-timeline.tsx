@@ -20,17 +20,21 @@ import type {
 import { useTemplateEditor, useTimelinePreview } from '../hooks/use-template-editor';
 import { applyErrorMessage, TEMPLATE_COPY } from '../lib/template-copy';
 import {
+  canHold,
   canNudge,
   changeEntry,
+  currentHold,
   currentValue,
   draftOverrides,
+  draftSummaryLines,
   gapBadge,
+  holdText,
   overrideValue,
   savedCells,
-  signedWeeks,
   templateFlagNote,
   type CategoryDrafts,
   type DraftField,
+  type HoldAction,
   type SavedCell,
 } from '../lib/template-drafts';
 
@@ -48,13 +52,29 @@ import {
  * With `workflow_templates.write` each step row gets Move − / + (the signed
  * gap) and Length − / + (the template weeks); the values are drafts until
  * Save, which opens the apply dialog (E2 → E3). No drag.
+ *
+ * P62 (ADR 0071): a lab bar is light for the weeks it only occupies on the
+ * path and solid for its served room weeks (`room_start_week`, `room_weeks`),
+ * the last weeks, which book a chamber. Lab steps also get a Room − / + / Full
+ * control next to Length (0..the length; Full = null), through the same apply.
  */
 
 const BAR_TONE: Record<WorkflowStepKind, string> = {
   design: 'border-primary bg-primary/15 text-primary-subtle-fg',
-  lab: 'border-success bg-success/15 text-success-subtle-fg',
+  // P62: the light part of a lab bar (in the lab, no room booked); the room weeks draw ROOM_TONE over it.
+  lab: 'border-success bg-success/5 text-success-subtle-fg',
   elapsed: 'border-dashed border-border-strong bg-surface-sunken text-text-muted',
 };
+
+/** P62: the room-booked (chamber) weeks of a lab bar. */
+const ROOM_TONE = 'bg-success/30';
+
+/** P62 (API_CONTRACT_P62 §8) help text on a lab step with a room-weeks value. */
+export const ROOM_SET_NOTE =
+  'Room weeks set: length from the template, not the lab figure; not skipped when certification testing is off';
+/** P62 (OQ #125): a value set back to Full moves the step back into the lab figure and the certification skip. */
+export const ROOM_FULL_NOTE =
+  'Full: the room is booked for the whole length; the step takes its share of the lab figure and is skipped when certification testing is off';
 
 const WAIT_HATCH =
   'bg-[repeating-linear-gradient(135deg,hsl(var(--color-warning)/0.55)_0_2px,transparent_2px_5px)] border border-dashed border-warning/60';
@@ -102,12 +122,20 @@ export function CategoryTimelineList({ timelines, editing, openCategory }: Categ
 function TimelineLegend(): React.JSX.Element {
   return (
     <ul aria-label="Timeline legend" className="flex flex-wrap items-center gap-s4 pt-s1 text-2xs font-medium text-text-muted">
-      {(['design', 'lab', 'elapsed'] as const).map((kind) => (
+      {(['design', 'elapsed'] as const).map((kind) => (
         <li key={kind} className="flex items-center gap-1.5">
           <span aria-hidden="true" className={cn('h-2.5 w-5 rounded-sm border-[1.5px]', BAR_TONE[kind])} />
           {STEP_KIND_META[kind].label}
         </li>
       ))}
+      <li className="flex items-center gap-1.5" data-testid="legend-lab-room">
+        <span aria-hidden="true" className={cn('h-2.5 w-5 rounded-sm border-[1.5px] border-success', ROOM_TONE)} />
+        {STEP_KIND_META.lab.label} — room booked (chamber)
+      </li>
+      <li className="flex items-center gap-1.5" data-testid="legend-lab-no-room">
+        <span aria-hidden="true" className={cn('h-2.5 w-5 rounded-sm border-[1.5px]', BAR_TONE.lab)} />
+        {STEP_KIND_META.lab.label} — no room booked
+      </li>
       <li className="flex items-center gap-1.5">
         <span aria-hidden="true" className={cn('h-2.5 w-5 rounded-sm', WAIT_HATCH)} />
         Wait (no work booked)
@@ -189,8 +217,12 @@ function TimelineCard({
             <span className="rounded-pill bg-primary/10 px-2 py-0.5 text-primary-subtle-fg">
               Design {formatInteger(timeline.design_weeks)}w
             </span>
-            <span className="rounded-pill bg-success/10 px-2 py-0.5 text-success-subtle-fg">
-              Lab {formatInteger(timeline.lab_weeks)}w
+            {/* P62 (I66): served `lab_weeks` = room weeks; `lab_length_weeks` = the lab steps' length. */}
+            <span className="rounded-pill bg-success/10 px-2 py-0.5 text-success-subtle-fg" data-testid="lab-weeks-pill">
+              Lab room {formatInteger(timeline.lab_weeks)}w
+              {timeline.lab_length_weeks !== timeline.lab_weeks ? (
+                <span className="font-normal"> · lab length {formatInteger(timeline.lab_length_weeks)}w</span>
+              ) : null}
             </span>
           </span>
         </button>
@@ -245,7 +277,7 @@ function EditableCategoryTimeline({
     const version = editing.versions[timeline.category] ?? timeline.template_version;
     const entry = changeEntry(timeline.workflow_id, timeline.category, version, editor.drafts);
     if (!entry) return;
-    editing.onSave(entry, summaryLines(timeline.category, editor.drafts, saved), editor.discard);
+    editing.onSave(entry, draftSummaryLines(timeline.category, editor.drafts, saved), editor.discard);
   };
 
   const controls: RowControls | undefined = editing.canWrite
@@ -256,6 +288,7 @@ function EditableCategoryTimeline({
         pending: editor.pending,
         disabled: editing.saving,
         nudge: editor.nudge,
+        hold: editor.hold,
         resetStep: editor.resetStep,
       }
     : undefined;
@@ -322,6 +355,7 @@ export function ControlledCategoryTimeline({
   disabled,
   defaultOpen = false,
   onNudge,
+  onHold,
   onResetStep,
 }: {
   /** The saved (served C2) timeline of this category. */
@@ -333,6 +367,8 @@ export function ControlledCategoryTimeline({
   disabled: boolean;
   defaultOpen?: boolean;
   onNudge: (stepId: string, field: DraftField, direction: -1 | 1) => void;
+  /** P62: a room-weeks click on a lab step of length `weeks`. */
+  onHold: (stepId: string, action: HoldAction, weeks: number) => void;
   onResetStep: (stepId: string) => void;
 }): React.JSX.Element {
   const [open, setOpen] = React.useState(defaultOpen);
@@ -348,7 +384,16 @@ export function ControlledCategoryTimeline({
   const draftCount = Object.keys(drafts).length;
   const shown = preview.shown.timeline;
   const controls: RowControls | undefined = canWrite
-    ? { drafts, saved, basis: preview.shown.basis, pending: preview.pending, disabled, nudge: onNudge, resetStep: onResetStep }
+    ? {
+        drafts,
+        saved,
+        basis: preview.shown.basis,
+        pending: preview.pending,
+        disabled,
+        nudge: onNudge,
+        hold: onHold,
+        resetStep: onResetStep,
+      }
     : undefined;
 
   return (
@@ -389,20 +434,6 @@ function previewErrorText(err: Error): string {
   return TEMPLATE_COPY.previewFailed;
 }
 
-/** "A · PDD-E length 6w → 7w" / "A · PDD-H gap 0w → −2w" for the apply dialog. */
-function summaryLines(category: string, drafts: CategoryDrafts, saved: Readonly<Record<string, SavedCell>>): string[] {
-  const lines: string[] = [];
-  for (const stepId of Object.keys(drafts).sort()) {
-    const d = drafts[stepId] ?? {};
-    const s = saved[stepId] ?? { weeks: 0, gap_weeks: 0 };
-    if (d.weeks !== undefined) lines.push(`${category} · ${stepId} length ${String(s.weeks)}w → ${String(d.weeks)}w`);
-    if (d.gap_weeks !== undefined) {
-      lines.push(`${category} · ${stepId} gap ${signedWeeks(s.gap_weeks)}w → ${signedWeeks(d.gap_weeks)}w`);
-    }
-  }
-  return lines;
-}
-
 // --- the chart -------------------------------------------------------------------
 
 interface RowControls {
@@ -413,6 +444,8 @@ interface RowControls {
   pending: boolean;
   disabled: boolean;
   nudge: (stepId: string, field: DraftField, direction: -1 | 1) => void;
+  /** P62: room weeks on a lab step (`weeks` = the length in force). */
+  hold: (stepId: string, action: HoldAction, weeks: number) => void;
   resetStep: (stepId: string) => void;
 }
 
@@ -424,6 +457,8 @@ function tickEvery(span: number): number {
 
 const GRID_READ = 'grid-cols-[5rem_3.75rem_1fr]';
 const GRID_EDIT = 'grid-cols-[5rem_3.75rem_minmax(14rem,1fr)_auto]';
+/** P62: the Room column of the editor (− value + Full). */
+const ROOM_COL = 'w-[9.75rem]';
 
 function MiniGantt({ timeline, controls }: { timeline: CategoryTimeline; controls?: RowControls | undefined }): React.JSX.Element {
   const steps = timeline.steps;
@@ -443,7 +478,7 @@ function MiniGantt({ timeline, controls }: { timeline: CategoryTimeline; control
       aria-label={`${timeline.category} timeline chart`}
       aria-busy={controls?.pending ? true : undefined}
     >
-      <div className={controls ? 'min-w-[52rem]' : 'min-w-[36rem]'}>
+      <div className={controls ? 'min-w-[62rem]' : 'min-w-[36rem]'}>
         {/* Week axis (served week numbers, from the first start). */}
         <div className={cn('grid items-end gap-s2 pb-1', grid)} aria-hidden="true">
           <span />
@@ -463,6 +498,7 @@ function MiniGantt({ timeline, controls }: { timeline: CategoryTimeline; control
             <span className="flex gap-s3 text-[0.625rem] font-semibold uppercase tracking-wider text-text-subtle">
               <span className="w-[4.25rem] text-center">Move</span>
               <span className="w-[6.5rem] text-center">Length</span>
+              <span className={cn(ROOM_COL, 'text-center')}>Room</span>
               <span className="w-7" />
             </span>
           ) : null}
@@ -518,10 +554,31 @@ function StepRow({
 
   const kind = STEP_KIND_META[step.resource_kind].label;
   const badge = gapBadge(gapValue, isFirst);
+  // P62 (ADR 0071): the served room weeks of a lab step — the last weeks, which book a chamber.
+  const isLab = step.resource_kind === 'lab';
+  const noRoom = isLab && !skipped && step.room_weeks === 0;
   const description = skipped
     ? `${step.code} ${step.name}: skipped (0 weeks)`
-    : `${step.code} ${step.name}: ${kind.toLowerCase()}, starts W${String(step.start_week)}, ${formatInteger(step.duration_weeks)} ${step.duration_weeks === 1 ? 'week' : 'weeks'}`;
-  const notes = step.flags.map((f) => ({ flag: f, text: templateFlagNote(f, step, steps) }));
+    : `${step.code} ${step.name}: ${kind.toLowerCase()}, starts W${String(step.start_week)}, ${formatInteger(step.duration_weeks)} ${step.duration_weeks === 1 ? 'week' : 'weeks'}${isLab ? `, ${roomPhrase(step)}` : ''}`;
+  // Room segment: served weeks, drawn only while the bar is not an optimistic guess.
+  const room =
+    isLab && !skipped && !optimistic && step.room_weeks > 0 && step.room_start_week !== null && step.duration_weeks > 0
+      ? {
+          left: ((step.room_start_week - step.start_week) / step.duration_weeks) * 100,
+          width: (step.room_weeks / step.duration_weeks) * 100,
+        }
+      : null;
+  const notes: { key: string; text: string; tone: 'danger' | 'muted' }[] = step.flags.map((f) => ({
+    key: f,
+    text: templateFlagNote(f, step, steps),
+    tone: f === 'same_leader_serialised' ? 'danger' : 'muted',
+  }));
+  if (controls && isLab) {
+    const hold = currentHold(controls.drafts, controls.saved, step.code);
+    const savedHold = controls.saved[step.code]?.lab_hold_weeks ?? null;
+    if (hold !== null) notes.push({ key: 'room-set', text: ROOM_SET_NOTE, tone: 'muted' });
+    else if (savedHold !== null) notes.push({ key: 'room-full', text: ROOM_FULL_NOTE, tone: 'muted' });
+  }
 
   return (
     <li data-testid={`step-${step.code}`} data-drafted={drafted || undefined} data-pending={optimistic || undefined}>
@@ -561,8 +618,19 @@ function StepRow({
               )}
               style={{ left: `${String(left)}%`, width: `${String(width)}%` }}
               title={description}
+              data-room-weeks={isLab ? step.room_weeks : undefined}
             >
-              <span className="truncate">{step.name}</span>
+              {room ? (
+                <span
+                  className={cn('absolute inset-y-0', ROOM_TONE)}
+                  style={{ left: `${String(room.left)}%`, width: `${String(room.width)}%` }}
+                  data-testid={`room-${step.code}`}
+                />
+              ) : null}
+              <span className="relative truncate">
+                {step.name}
+                {noRoom ? <span className="font-normal"> · no room</span> : null}
+              </span>
             </span>
           )}
         </div>
@@ -572,14 +640,11 @@ function StepRow({
         <ul className={cn('grid gap-s2', grid)} aria-label={`${step.code} notes`}>
           {notes.map((n) => (
             <li
-              key={n.flag}
-              className={cn(
-                'col-start-3 flex items-center gap-1 text-2xs',
-                n.flag === 'same_leader_serialised' ? 'font-medium text-danger' : 'text-text-muted',
-              )}
-              data-testid={`flag-${step.code}-${n.flag}`}
+              key={n.key}
+              className={cn('col-start-3 flex items-center gap-1 text-2xs', n.tone === 'danger' ? 'font-medium text-danger' : 'text-text-muted')}
+              data-testid={`flag-${step.code}-${n.key}`}
             >
-              {n.flag === 'same_leader_serialised' ? <TriangleAlert className="size-3 shrink-0" aria-hidden="true" /> : null}
+              {n.tone === 'danger' ? <TriangleAlert className="size-3 shrink-0" aria-hidden="true" /> : null}
               {n.text}
             </li>
           ))}
@@ -653,6 +718,15 @@ function RowButtons({
           <Plus />
         </StepButton>
       </span>
+      <span className={cn('flex items-center justify-center gap-1', ROOM_COL)} role="group" aria-label={`Room weeks of ${id}`}>
+        {step.resource_kind === 'lab' ? (
+          <RoomButtons id={id} weeks={weeks} controls={controls} />
+        ) : (
+          <span className="text-2xs text-text-subtle" title="Only lab steps book a room">
+            —
+          </span>
+        )}
+      </span>
       <span className="flex w-7 justify-center">
         {drafted ? (
           <StepButton label={`Reset ${id} to the saved template`} disabled={disabled} onClick={() => resetStep(id)}>
@@ -662,6 +736,62 @@ function RowButtons({
       </span>
     </span>
   );
+}
+
+/**
+ * P62: Room − / value / + / Full on a lab step. The value is the drafted or
+ * saved room weeks (range 0..the length in force); "Full" = null, the whole
+ * length. A saved value above a shortened length is shown at the length: the
+ * server cuts it on save (`room_weeks_clamped`).
+ */
+function RoomButtons({ id, weeks, controls }: { id: string; weeks: number; controls: RowControls }): React.JSX.Element {
+  const { drafts, saved, disabled, hold } = controls;
+  const value = currentHold(drafts, saved, id);
+  const shown = value === null ? null : Math.min(value, weeks);
+  const drafted = drafts[id]?.lab_hold_weeks !== undefined;
+  const can = (action: HoldAction) => !disabled && canHold(drafts, saved, id, action, weeks);
+  return (
+    <>
+      <StepButton label={`One room week fewer for ${id}`} disabled={!can(-1)} onClick={() => hold(id, -1, weeks)}>
+        <Minus />
+      </StepButton>
+      <span
+        className={cn('w-9 text-center font-mono text-2xs font-semibold', drafted ? 'text-primary' : 'text-text')}
+        data-numeric=""
+        data-testid={`room-value-${id}`}
+        title={shown === null ? 'Full: the room is booked for the whole length' : `Room booked for the last ${String(shown)} of ${String(weeks)} weeks`}
+      >
+        {holdText(shown)}
+      </span>
+      <StepButton label={`One room week more for ${id}`} disabled={!can(1)} onClick={() => hold(id, 1, weeks)}>
+        <Plus />
+      </StepButton>
+      <button
+        type="button"
+        aria-pressed={value === null}
+        aria-label={`Room weeks of ${id}: Full (the whole length)`}
+        title="Book the room for the whole length"
+        disabled={disabled || value === null}
+        onClick={() => hold(id, 'full', weeks)}
+        className={cn(
+          'inline-flex h-7 items-center rounded-md border border-border-strong bg-surface px-1.5 text-[0.6875rem] font-semibold text-text transition-colors',
+          'hover:border-primary/50 hover:bg-primary-subtle/40 hover:text-primary',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border-strong disabled:hover:bg-surface disabled:hover:text-text',
+          'aria-pressed:border-success aria-pressed:bg-success/10',
+        )}
+      >
+        Full
+      </button>
+    </>
+  );
+}
+
+/** "room booked for the last 1 week, from W14" / "no room booked" (served fields). */
+function roomPhrase(step: TimelineStep): string {
+  if (step.room_weeks === 0 || step.room_start_week === null) return 'no room booked';
+  const n = step.room_weeks;
+  return `room booked for the last ${String(n)} ${n === 1 ? 'week' : 'weeks'}, from W${String(step.room_start_week)}`;
 }
 
 function StepButton({

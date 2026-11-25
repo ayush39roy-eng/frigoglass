@@ -71,7 +71,11 @@ def _domain_rules_literal() -> dict[tuple[str, str, str], int]:
 async def test_migration_seeded_lead_time_table_equals_domain_rules_literal(
     db_session: AsyncSession,
 ) -> None:
-    assert await _reload_lead_times(db_session) == _domain_rules_literal()
+    # DOMAIN_RULES "Lead times": the table is the workbook seed, and
+    # migration p71a sets PDD / C / J = 0 (R62-11, ADR 0071; the note under
+    # the table).
+    expected = {**_domain_rules_literal(), ("PDD", "C", "PDD-J"): 0}
+    assert await _reload_lead_times(db_session) == expected
 
 
 async def test_seed_script_upsert_reproduces_lead_time_table_byte_for_byte(

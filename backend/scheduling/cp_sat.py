@@ -72,6 +72,14 @@ A pin that could not be pre-booked (window past the horizon, lab pin with no
 eligible chamber) sends the project to the greedy walk (LEFT_OUT).
 `manual_overlap` is evaluated after the solve on this solve's own rows.
 
+Lab hold weeks (ADR 0071, R62-5): a lab step with room weeks `0 < h < n`
+keeps its interval `[s, s + n)` and gets one optional fixed-size-`h`
+occupancy interval at `end - h` per eligible chamber (exactly one present iff
+the project is); the per-chamber `AddCumulative` sees occupancy intervals
+only. `h = 0`: no chamber literal at all, and a missing chamber does not send
+the project to greedy. `h = n` (a full hold) is the pre-P62 model exactly.
+`_book_solved_placements` books held weeks only.
+
 Priority band meaning (ADR 0056 R42-5, R53-2): a non-frozen queue-tier
 project (a queued P3) is never a decision variable, nor walked before the
 model. Window and tail (ADR 0063 R53-5, I60): the model's window is `W_cp =
@@ -147,10 +155,13 @@ from scheduling.weeks import cp_sat_window
 from scheduling.workflow import (
     FRONTIER_SOURCE,
     ProjectPlan,
+    booked_hold_weeks,
     compute_progress_pct,
     first_step_frontier,
+    hold_window,
     manual_overlap_by_row,
     pins_lapsed,
+    row_lab_hold_weeks,
     unconstrained_end_week,
 )
 
@@ -467,11 +478,35 @@ def run_cp_sat(
             # `end == start + duration` is enforced by the optional interval(s)
             # (design/lab) or an explicit reified constraint (elapsed) ONLY
             # while present -- "not present -> no constraint at all".
+            # ADR 0071 (R62-5): a lab step's room weeks `h`; `h == duration`
+            # (a full hold) keeps the pre-P62 model exactly.
+            hold_h = booked_hold_weeks(sp.lab_hold_weeks, duration) if sp.step.kind == "lab" else 0
             if sp.step.kind == "design":
                 interval = model.NewOptionalIntervalVar(
                     start_var, duration, end_var, present, f"iv[{pid},{sid}]"
                 )
                 engineer_intervals.setdefault(leader.engineer_id, []).append(interval)
+            elif sp.step.kind == "lab" and 0 < hold_h < duration:
+                # R62-5: the step keeps `[s, s + n)` (the unconditional
+                # `end == start + duration` below); the room is one optional
+                # fixed-size-`h` occupancy interval at `s + n - h = end - h`
+                # per eligible chamber, exactly one present iff the project
+                # is. The per-chamber cumulative sees occupancy intervals only.
+                assign_vars = []
+                for chamber in _eligible_chambers(ctx.chambers_by_id, region, sid):
+                    a = model.new_bool_var(f"assign[{pid},{sid},{chamber.chamber_id}]")
+                    assign[(sid, chamber.chamber_id)] = a
+                    interval = model.new_optional_fixed_size_interval_var(
+                        end_var - hold_h, hold_h, a, f"room[{pid},{sid},{chamber.chamber_id}]"
+                    )
+                    chamber_intervals.setdefault(chamber.chamber_id, []).append(interval)
+                    chamber_demands.setdefault(chamber.chamber_id, []).append(1)
+                    assign_vars.append(a)
+                model.add(sum(assign_vars) == present)
+            elif sp.step.kind == "lab" and hold_h == 0:
+                # R62-4: room weeks 0 -- no chamber literal, no occupancy; the
+                # step only takes its calendar weeks (like elapsed).
+                model.add(end_var == start_var + duration).only_enforce_if(present)
             elif sp.step.kind == "lab":
                 assign_vars = []
                 for chamber in _eligible_chambers(ctx.chambers_by_id, region, sid):
@@ -732,7 +767,9 @@ def _book_solved_placements(
             if row.kind == "design" and row.assigned_engineer_id is not None:
                 state.book_engineer(row.assigned_engineer_id, weeks, project.project_id)
             elif row.kind == "lab" and row.assigned_chamber_id is not None:
-                state.book_chamber(chambers_by_id[row.assigned_chamber_id], weeks)
+                # ADR 0071 (R62-5): the held weeks only (all of them when full).
+                held = hold_window(row.start_week, row.end_week, row.lab_hold_weeks)
+                state.book_chamber(chambers_by_id[row.assigned_chamber_id], held)
 
 
 # --- Phase 2 ---------------------------------------------------------------------
@@ -802,7 +839,12 @@ def _needs_greedy(ctx: RunContext, plan: ProjectPlan, prebooked: dict[str, _Plac
             return True
         if sp.anchored:
             return True  # anchored behind a not-started predecessor
-        if sp.step.kind == "lab" and not _eligible_chambers(ctx.chambers_by_id, region, sid):
+        if (
+            sp.step.kind == "lab"
+            and booked_hold_weeks(sp.lab_hold_weeks, sp.span) > 0
+            and not _eligible_chambers(ctx.chambers_by_id, region, sid)
+        ):
+            # R62-4: only a step that needs a room (h > 0) dead-ends here.
             return True
         searchable += 1
     return searchable == 0
@@ -936,6 +978,7 @@ def _extract_outcome(
                 pv.prebooked[step.step_id].engineer_id,
                 pv.prebooked[step.step_id].chamber_id,
                 pinned=step.step_id in pinned,
+                lab_hold_weeks=pv.prebooked[step.step_id].lab_hold_weeks,
             )
             for step in plan.workflow.steps
             if step.step_id in pv.prebooked
@@ -991,6 +1034,7 @@ def _extract_outcome(
                     pl.engineer_id,
                     pl.chamber_id,
                     pinned=sid in pinned,
+                    lab_hold_weeks=pl.lab_hold_weeks,
                 )
             )
             continue
@@ -1012,6 +1056,9 @@ def _extract_outcome(
                 sp.duration,
                 leader.engineer_id if step.kind == "design" else None,
                 chamber_id,
+                lab_hold_weeks=(
+                    row_lab_hold_weeks(sp.lab_hold_weeks, sp.span) if step.kind == "lab" else None
+                ),
             )
         )
 

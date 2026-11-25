@@ -181,7 +181,7 @@ describe('P50 picker logic', () => {
   it('labels: band source, saved window and banner use week-of-year labels (never W53+)', () => {
     expect(bandHint(null)).toBe('From Must Do / band column');
     expect(bandHint(3)).toBe('From Must Do / band column · rank 3 in band');
-    expect(savedWindowText({ plan_from_week: 47, plan_until_week: 72 })).toBe("Plan from W47 to W20 '27");
+    expect(savedWindowText({ plan_from_week: 47, plan_until_week: 72 })).toBe("Plan from W47 '26 to W20 '27");
     expect(savedWindowText({})).toBeNull();
     expect(savedBannerTitle(57, 14)).toBe("Saved scenario — simulated W5 '27 against plan v14");
   });
@@ -377,7 +377,7 @@ describe('P50 saved scenarios', () => {
     const user = userEvent.setup();
     renderWithProviders(<ImportPlanView />);
     const banner = await screen.findByTestId('import-view-banner');
-    expect(within(banner).getByTestId('import-view-window')).toHaveTextContent("Plan from W40 to W52 '27");
+    expect(within(banner).getByTestId('import-view-window')).toHaveTextContent("Plan from W40 '26 to W52 '27");
 
     await user.click(within(banner).getByRole('button', { name: "Re-run on today's plan" }));
     const simulates = () => calls.filter((c) => c.path === '/whatif/import/simulate');

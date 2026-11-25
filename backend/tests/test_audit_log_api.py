@@ -25,6 +25,7 @@ from tests.auth_helpers import (
     override_current_principal,
 )
 from tests.factories import make_engineer, make_hub, make_user, registration_body
+from tests.p62_audit import migration_audit_count
 
 
 def _client(db_session) -> AsyncClient:
@@ -241,7 +242,9 @@ async def test_audit_log_filters_by_hub_id_as_convenience_narrowing_not_access_c
         assert resp_a.status_code == 200
         assert resp_a.json()["total_count"] == 1
         assert resp_all.status_code == 200
-        assert resp_all.json()["total_count"] == 2
+        # P62: the unfiltered log also lists migration p71a's own template
+        # rows (hub_id NULL); this test's two entries are the rest.
+        assert resp_all.json()["total_count"] == 2 + await migration_audit_count(db_session)
     finally:
         _teardown()
 

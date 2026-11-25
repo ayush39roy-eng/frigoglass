@@ -35,6 +35,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import domain_constants as dc
+from scheduling import certification_off_skips, is_partial_room, merged_step_override
 
 # --- Lightweight table handles (no ORM dependency) ---------------------------
 
@@ -174,14 +175,24 @@ def live_step_effective_weeks(
     own_effort: bool,
     effort_weeks: int | None,
     excluded: bool = False,
+    lab_hold_weeks: int | None = None,
 ) -> int:
     """DOMAIN_RULES "Category templates" §B (ADR 0046 OR-2) as replaced by
-    R35-1 (P35, ADR 0049), `eff(p, s)` of a live step row:
+    R35-1 (P35, ADR 0049) and amended by ADR 0071 (DOMAIN_RULES "Lab hold
+    weeks", I67), `eff(p, s)` of a live step row:
 
         eff = 0                       excluded(p, s)       # ADR 0049, first
-            = 0                       kind = lab and not cert
+            = 0                       kind = lab and not cert and not partialRoom   # R62-2
+            = plan_weeks              partialRoom(p, s)    # R62-1: no lab-figure share
             = effort_weeks ?? 0       ownEffort(p, kind)   # its own figure is the timeline
             = plan_weeks              otherwise            # the project's template copy
+
+    `lab_hold_weeks` is the row's `plan_lab_hold_weeks` (None = "Full", the
+    pre-P62 predicate). `partialRoom` and the certification-off term are the
+    engine's own functions (`scheduling.is_partial_room`,
+    `scheduling.certification_off_skips`). A `partialRoom` step with
+    `plan_weeks` 0 (C/PDD-J, C/PDD-L, R62-11) is skipped and nothing revives
+    it.
 
     `own_effort` is `ownEffort(p, kind(s))` (`own_effort_kinds`). Equal to
     R33-1 on the live builder's input (contract F4): on an own-effort step
@@ -198,8 +209,16 @@ def live_step_effective_weeks(
         # R35-1 (ADR 0049 as ruled at P35-T03): first branch.
         return 0
     k = _kind_value(kind)
-    if k == "lab" and not certification_testing_required:
+    if certification_off_skips(
+        kind=k,
+        certification_testing_required=certification_testing_required,
+        lab_hold_weeks=lab_hold_weeks,
+    ):
         return 0
+    if is_partial_room(kind=k, lab_hold_weeks=lab_hold_weeks):
+        # ADR 0071 R62-1 / I67: outside the lab split, the copy is the length
+        # (the user override is retired, CHECK `step_timing_retired`).
+        return plan_weeks
     if own_effort and k in EFFORT_KINDS:
         return 0 if effort_weeks is None else effort_weeks
     return plan_weeks
@@ -213,11 +232,12 @@ def live_step_skipped(
     own_effort: bool,
     effort_weeks: int | None,
     excluded: bool = False,
+    lab_hold_weeks: int | None = None,
 ) -> bool:
     """THE service-side skip predicate (ADR 0041 R5 as revised by ADR 0046
-    §B; contract P33 F4; R35-1): skipped ⟺ `live_step_effective_weeks(...)
-    == 0`, on `(plan_weeks, kind, cert, own_effort, effort_weeks,
-    excluded)`."""
+    §B; contract P33 F4; R35-1; ADR 0071 R62-2): skipped ⟺
+    `live_step_effective_weeks(...) == 0`, on `(plan_weeks, kind, cert,
+    own_effort, effort_weeks, excluded, lab_hold_weeks)`."""
 
     return (
         live_step_effective_weeks(
@@ -227,6 +247,7 @@ def live_step_skipped(
             own_effort=own_effort,
             effort_weeks=effort_weeks,
             excluded=excluded,
+            lab_hold_weeks=lab_hold_weeks,
         )
         == 0
     )
@@ -240,16 +261,23 @@ def display_duration_weeks(
     own_effort: bool,
     effort_weeks: int | None,
     excluded: bool = False,
+    lab_hold_weeks: int | None = None,
 ) -> int:
     """The duration a stage is shown with (Workspace / agent context): `eff`,
     except that a lab step skipped only because certification testing is off
     shows its copy (`plan_weeks`, P12-F04, unchanged), so it still reads as a
     planned length; a 0-length step, an effort-zeroed step and an excluded
-    step (P35, R35-1) show 0. Its `skipped` flag is served beside it."""
+    step (P35, R35-1) show 0. Its `skipped` flag is served beside it.
+    ADR 0071: a `partialRoom` step is never cert-skipped (R62-2), so it
+    shows its `eff` (= `plan_weeks`)."""
 
     if excluded:
         return 0
-    if _kind_value(kind) == "lab" and not certification_testing_required:
+    if certification_off_skips(
+        kind=_kind_value(kind),
+        certification_testing_required=certification_testing_required,
+        lab_hold_weeks=lab_hold_weeks,
+    ):
         return plan_weeks
     return live_step_effective_weeks(
         plan_weeks=plan_weeks,
@@ -257,6 +285,7 @@ def display_duration_weeks(
         certification_testing_required=certification_testing_required,
         own_effort=own_effort,
         effort_weeks=effort_weeks,
+        lab_hold_weeks=lab_hold_weeks,
     )
 
 
@@ -268,6 +297,8 @@ def run_input_lead_and_override(
     own_effort: bool,
     effort_weeks: int | None,
     excluded: bool = False,
+    kind: str | None = None,
+    lab_hold_weeks: int | None = None,
 ) -> tuple[int | None, int | None]:
     """Contract P33 F4 (ADR 0046 OR-3), exact since p33c:
     `(lead_weeks, duration_override_weeks)` of one live step in the solver
@@ -290,12 +321,25 @@ def run_input_lead_and_override(
     (None when the table is already 0) and no override, whatever the rows
     above would give. It sits above OR-3's table as its first row; the
     scheduler then gives `eff = 0` before any override (R33-1), so no new
-    scheduler field or snapshot key exists (I33)."""
+    scheduler field or snapshot key exists (I33).
+
+    ADR 0071: with `kind` and `lab_hold_weeks` (`plan_lab_hold_weeks`), a
+    `partialRoom` step (`scheduling.is_partial_room`) maps to `lead_weeks =
+    plan_weeks` and no override; the builder sends the hold in
+    `StepTimingInput.lab_hold_weeks`."""
 
     if excluded:
         return (None if table_weeks == 0 else 0), None
+    if kind is not None and is_partial_room(kind=kind, lab_hold_weeks=lab_hold_weeks):
+        # ADR 0071 R62-1 / contract P62 §2: a `partialRoom` step takes no
+        # effort share, so `lead_weeks = plan_weeks`, whatever ownEffort says.
+        own_effort = False
     lead = effort_weight_weeks if own_effort else plan_weeks
-    override = effort_weeks if own_effort else None
+    # ADR 0041 R4 through the engine's precedence (`user ?? effort`, the user
+    # override retired by p33c; ADR 0071: None on a `partialRoom` step).
+    override = merged_step_override(
+        None, effort_weeks if own_effort else None, kind=kind, lab_hold_weeks=lab_hold_weeks
+    )
     if own_effort and effort_weeks is None:
         # ADR 0070: a revived weight can sit on an own-effort step that has no
         # share (held back, or not yet re-derived). OR-2 gives it `eff = 0`,

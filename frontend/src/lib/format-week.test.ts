@@ -34,9 +34,10 @@ describe('week-of-year formatting (owner rule 2026-11-18)', () => {
     expect(weekOfYear(105)).toEqual({ week: 1, yearOffset: 2 });
   });
 
-  it('prints W1..W52 unchanged and a next-year week with a short year tag', () => {
-    expect(formatWeek(47, 2026)).toBe('W47');
-    expect(formatWeek(52, 2026)).toBe('W52');
+  it('prints every week with its short year tag (P62-F1), next-year weeks included', () => {
+    // P62-F1 (owner 2026-11-25): the year is named inside the plan year too.
+    expect(formatWeek(47, 2026)).toBe("W47 '26");
+    expect(formatWeek(52, 2026)).toBe("W52 '26");
     expect(formatWeek(53, 2026)).toBe("W1 '27");
     expect(formatWeek(57, 2026)).toBe("W5 '27");
     expect(formatWeek(104, 2026)).toBe("W52 '27");
@@ -63,8 +64,8 @@ describe('week-of-year formatting (owner rule 2026-11-18)', () => {
 
   it('P53: reads the served base and plan year; any year, no re-basing', () => {
     useSessionStore.setState({ me: { plan_year: 2027, week_base_year: 2026 } as MeResponse });
-    // 2027 is the plan year: absolute 57 is its W5, shown without a tag.
-    expect(formatWeek(57)).toBe('W5');
+    // 2027 is the plan year: absolute 57 is its W5, shown with its year (P62-F1).
+    expect(formatWeek(57)).toBe("W5 '27");
     expect(formatWeek(47)).toBe("W47 '26");
     expect(formatWeek(105)).toBe("W1 '28");
     expect(formatWeek(160)).toBe("W4 '29");

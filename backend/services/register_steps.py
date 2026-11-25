@@ -61,6 +61,7 @@ from models.audit import AuditLogEntry
 from models.enums import ProjectStatus, WorkflowStepKind, WorkflowStepStatus
 from models.project import Project
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
+from scheduling import certification_off_skips, is_partial_room
 from scheduling.effort_split import EffortSplitRejected
 from services.project_effort import (
     TRIGGER_STAGE_STATUS,
@@ -167,7 +168,18 @@ def in_force_kinds(project: Project, ctx: StepContext) -> frozenset[str]:
             continue
         if kind == "lab" and not project.certification_testing_required:
             continue
-        if any(kinds.get(sid) == kind and w > 0 for sid, w in ctx.weights.items()):
+        # ADR 0071 R62-1: a `partialRoom` step is outside S′ (no share).
+        if any(
+            kinds.get(sid) == kind
+            and w > 0
+            and not is_partial_room(
+                kind=kind,
+                lab_hold_weeks=(
+                    ctx.rows[sid].plan_lab_hold_weeks if sid in ctx.rows else None
+                ),
+            )
+            for sid, w in ctx.weights.items()
+        ):
             out.add(kind)
     return frozenset(out)
 
@@ -179,10 +191,12 @@ def is_applicable(
     """R35-2 `applicable(p, s)`: from the template copy and the R2 weights,
     ignoring the step's own exclusion."""
 
-    if kind == "lab" and not cert:
+    hold = row.plan_lab_hold_weeks
+    if certification_off_skips(kind=kind, certification_testing_required=cert, lab_hold_weeks=hold):
         return False
-    if kind in in_force:
+    if kind in in_force and not is_partial_room(kind=kind, lab_hold_weeks=hold):
         return weights.get(row.step_template_id, 0) > 0
+    # ADR 0071 R62-1: a `partialRoom` step's length is its copy.
     return row.plan_weeks > 0
 
 

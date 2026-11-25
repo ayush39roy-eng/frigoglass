@@ -52,6 +52,17 @@ state before it is stored (R35-5, 409 `EFFORT_NEEDS_A_STEP`). The scheduler
 never sees the flag: the run-input builder expresses an exclusion as
 `lead_weeks = 0` (R35-9).
 
+**Partial-room lab steps** (ADR 0071 **R62-1**, owner "Only PoC +
+Certification"). A `lab` step with a room-weeks value
+(`EffortStepInput.lab_hold_weeks` not None: `partialRoom`, i.e. PDD-J / PDD-L
+with the approved defaults) is outside the lab S′ like an excluded step: no
+share, never raised, `effort_weeks = None`; its length is `user_override ??
+plan_weeks`. The lab figure is split over the remaining lab steps (PoC,
+Certification). The rule sits in one function, `in_effort_split`, so it can
+be reverted alone. With every hold None the splits are byte-identical to
+before ADR 0071 (I67). Certification off (R7) is unchanged here: the lab
+split is not applied, so a `partialRoom` step carries no share either way.
+
 Worked examples (DOMAIN_RULES lead-time table): PDD/B design, x = 4 →
 A 1, E 2, K 1 (D, J and M skipped); PDD/C design, x = 3 → A 1, D 1, E 1
 (J and K skipped); PDD/B lab, x = 10 → H 10; PDD/A+ lab, x = 4 → F 2, H 2;
@@ -124,6 +135,30 @@ class EffortStepInput:
     lead_weeks: int
     started: bool = False
     excluded: bool = False
+    # ADR 0071 (R62-1): the step's room weeks (`plan_lab_hold_weeks`, None =
+    # full). On a `lab` step a value makes it `partialRoom`: outside S′.
+    lab_hold_weeks: int | None = None
+
+
+def outside_lab_split(step: EffortStepInput) -> bool:
+    """ADR 0071 **R62-1**: a `partialRoom` lab step (`kind = lab ∧
+    lab_hold_weeks IS NOT NULL`) takes no share of the own lab figure. The
+    one place R62-1 lives: reverting it is making this return False."""
+
+    return step.kind == "lab" and step.lab_hold_weeks is not None
+
+
+def in_effort_split(step: EffortStepInput, kind: str) -> bool:
+    """S′ membership for the `kind` split: the step is of that kind, has a
+    weight (`lead_weeks > 0`), is not excluded (R35-3) and is not outside the
+    lab split (R62-1, `outside_lab_split`)."""
+
+    return (
+        step.kind == kind
+        and step.lead_weeks > 0
+        and not step.excluded
+        and not outside_lab_split(step)
+    )
 
 
 @dataclass(frozen=True)
@@ -258,11 +293,16 @@ def apportion_effort(
         return not_applied(NOT_APPLIED_NO_FIGURE)
     if kind == "lab" and not certification_testing_required:
         return not_applied(NOT_APPLIED_CERTIFICATION_OFF)
-    weighted = [s for s in ordered if s.kind == kind and s.lead_weeks > 0]
+    # ADR 0071 R62-1: a `partialRoom` lab step is not a weighted member at all
+    # (like a step outside the kind), so a lab kind whose only weighted steps
+    # are partial-room reads "no non-zero step", never "all excluded".
+    weighted = [
+        s for s in ordered if s.kind == kind and s.lead_weeks > 0 and not outside_lab_split(s)
+    ]
     if not weighted:
         return not_applied(NOT_APPLIED_NO_NONZERO_STEP)
     # R35-3: S′ = the weighted steps of the kind that are not excluded.
-    members = [s for s in weighted if not s.excluded]
+    members = [s for s in weighted if in_effort_split(s, kind)]
     if not members:
         return not_applied(NOT_APPLIED_ALL_EXCLUDED)
     total_lead = sum(s.lead_weeks for s in members)

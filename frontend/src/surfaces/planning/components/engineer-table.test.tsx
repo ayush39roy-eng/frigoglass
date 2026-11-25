@@ -64,7 +64,7 @@ describe('EngineerTable', () => {
       <EngineerTable rows={[inactive]} canEdit canChangeStatus onEdit={vi.fn()} onDeactivate={vi.fn()} onReactivate={onReactivate} />,
     );
     expect(screen.getByTestId('inactive-tag')).toHaveTextContent('Inactive');
-    expect(screen.getByTestId('inactive-since')).toHaveTextContent('Since W47 · Left the company');
+    expect(screen.getByTestId('inactive-since')).toHaveTextContent('Since W47 \'26 · Left the company');
     expect(screen.queryByRole('button', { name: /^Deactivate/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit name of Ada Lovelace' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Reactivate Ada Lovelace' }));

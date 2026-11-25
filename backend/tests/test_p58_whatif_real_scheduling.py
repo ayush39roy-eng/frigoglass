@@ -242,8 +242,12 @@ async def test_lab_step_with_no_chamber_serves_no_chamber_reason_and_label(db_se
     )
     await db_session.flush()
     await act_as(db_session, RoleName.PORTFOLIO_MANAGER)
+    # P62 (ADR 0071 R62-11 / R62-4): category C has no Pr. Pr (C/PDD-J is 0
+    # weeks since p71a, so skipped, never "no chamber"); B's J (1 week, 1
+    # room week) still needs a chamber.
+    add_five_b = {"add_projects": [{"hub": "R&D-Greece", "category": "B", "count": 5}]}
     async with client_for(db_session) as client:
-        resp = await client.post("/whatif/simulate", json={"scenario": ADD_FIVE})
+        resp = await client.post("/whatif/simulate", json={"scenario": add_five_b})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     new = [p for p in body["projects"] if p["is_new"]]

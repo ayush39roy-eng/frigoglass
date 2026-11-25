@@ -161,6 +161,20 @@ What is assertable at the pure-function level (2026-09-27 revision):
         outcome) is within / spillover by its finish against u; capacity weekly
         series is `cw..u` and windows are calendar years clipped to u; served
         `plan_until_week = u`
+    I64 (P62, ADR 0071) lab occupancy: a lab row whose step has a hold
+        reports `lab_hold_weeks = h = min(hold, n)` over its booked interval
+        of `n` weeks (a full-hold row and every non-lab row report None), its
+        chamber occupancy is its last `h` weeks only (I2 counts those weeks:
+        `_Ctx.effective_weeks`), `h = 0` <=> no chamber, and a step with
+        `h = 0` is never `no_chamber_step_id`
+    I65 (P62) the run-row half: `0 <= lab_hold_weeks <= n` (the booked
+        interval); the template / copy halves are storage CHECKs
+    I66 (P62) lab load per hub = Σ `h` over non-skipped lab rows, NULL read as
+        `duration_weeks` (`compute_lab_load_by_hub`, `workflow.row_lab_load_weeks`)
+    I67 (P62) a `partialRoom` step (lab, hold set) is never skipped by
+        certification off (R62-2) and is skipped when its length is 0
+        (R62-11), derived from the inputs; the `effort_weeks` NULL half is the
+        live-row check `scheduling.demand.check_i26_effort_split`
     I13 (health badge), I14 (run immutability) and I17 (capacity supply) are
     API/DB-side invariants with nothing to assert on a `ScheduleOutput`; they
     are the workflow-auditor's to check against the live API (P9-T06).
@@ -239,11 +253,16 @@ from scheduling.workflow import (
     ProjectPlan,
     Workflow,
     analyse_project,
+    booked_hold_weeks,
     build_lead_time_table,
     build_workflows,
+    certification_off_skips,
     compute_progress_pct,
     first_step_frontier,
+    is_partial_room,
     leader_fte_of,
+    partial_room_zero_length_skips,
+    row_lab_load_weeks,
     step_gate,
     unconstrained_end_week,
 )
@@ -346,7 +365,7 @@ class _Ctx:
             return range(0)
         project = self.projects.get(project_id)
         if project is not None and project.frozen:
-            return range(step.start_week, step.end_week + 1)
+            return range(self._held_from(step), step.end_week + 1)
         start = step.start_week
         plan = self.plans.get(project_id)
         sp = plan.steps.get(step.step_id) if plan is not None else None
@@ -359,7 +378,18 @@ class _Ctx:
             # `[end - remaining_span + 1 .. end]` is booked (DOMAIN_RULES
             # progress; ADR 0032 stretches a design tail by the leader's FTE).
             start = max(start, step.end_week - sp.remaining_span + 1)
+        start = max(start, self._held_from(step))
         return range(max(start, self.schedule_input.current_week), step.end_week + 1)
+
+    @staticmethod
+    def _held_from(step: StepSchedule) -> int:
+        """ADR 0071 (I64): the first week a lab row with a hold occupies its
+        chamber, `end - h + 1` (its last `h` booked weeks); a row without a
+        hold (None) is unrestricted."""
+
+        if step.kind != "lab" or step.lab_hold_weeks is None:
+            return step.start_week
+        return step.end_week - max(0, step.lab_hold_weeks) + 1
 
     def is_scheduled(self, outcome: ProjectScheduleOutcome) -> bool:
         """Neither excluded, left_out, data-error nor held by a Blocked stage."""
@@ -526,6 +556,8 @@ def validate_invariants(
     violations.extend(_check_i49_band_exclusion(ctx))
     violations.extend(_check_i51_tier_order(ctx))
     violations.extend(_check_i58_rows_within_horizon(ctx))
+    violations.extend(_check_i64_lab_occupancy(ctx))
+    violations.extend(_check_i67_partial_room(ctx))
     return tuple(violations)
 
 
@@ -970,6 +1002,8 @@ def _check_i4_lab_chamber_eligibility(ctx: _Ctx) -> list[InvariantViolation]:
         for step in outcome.steps:
             if step.kind != "lab" or ctx.books_nothing(pid, step):
                 continue
+            if step.lab_hold_weeks == 0:
+                continue  # ADR 0071 R62-4: no room weeks, I4 is vacuous (I64 checks it)
             if step.assigned_chamber_id is None:
                 violations.append(
                     InvariantViolation(
@@ -1081,10 +1115,29 @@ def _input_eff(ctx: _Ctx, project: ProjectInput, step_id: str) -> int | None:
         return None
     if lead == 0:
         return 0
-    if wf.steps_by_id[step_id].kind == "lab" and not project.certification_testing_required:
+    kind = wf.steps_by_id[step_id].kind
+    # ADR 0071 R62-2: certification off skips the full-room lab steps only.
+    if certification_off_skips(
+        kind=kind,
+        certification_testing_required=project.certification_testing_required,
+        lab_hold_weeks=_input_hold(project, step_id),
+    ):
         return 0
     override = _input_override(project, step_id)
     return lead if override is None else override
+
+
+def _input_hold(project: ProjectInput, step_id: str) -> int | None:
+    """ADR 0071, from the input rows only: the step's room weeks
+    (`StepTimingInput.lab_hold_weeks`, the smallest with duplicate rows),
+    None = full."""
+
+    holds = sorted(
+        r.lab_hold_weeks
+        for r in project.step_timing
+        if r.step_id == step_id and r.lab_hold_weeks is not None
+    )
+    return holds[0] if holds else None
 
 
 def _input_says_skipped(ctx: _Ctx, project: ProjectInput, step_id: str) -> bool | None:
@@ -1300,8 +1353,11 @@ def cross_capacity_hub_leaders(schedule_input: ScheduleInput) -> tuple[CrossCapa
 def compute_lab_load_by_hub(
     schedule_input: ScheduleInput, schedule_output: ScheduleOutput
 ) -> dict[str, float]:
-    """I7: Σ `lab`-kind step `duration_weeks` × 1.0 per project hub (ADR 0007).
-    Aggregate per lab region with `domain_constants.HUB_LAB_REGION`."""
+    """I7 rev. by I66 (ADR 0071): Σ room weeks `h` of the `lab`-kind rows ×
+    1.0 per project hub (ADR 0007), a row without a hold counting its
+    `duration_weeks` (`workflow.row_lab_load_weeks`; with every hold NULL
+    this is the pre-P62 Σ `duration_weeks`). Aggregate per lab region with
+    `domain_constants.HUB_LAB_REGION`."""
 
     projects = {p.project_id: p for p in schedule_input.projects}
     load: dict[str, float] = defaultdict(float)
@@ -1311,7 +1367,7 @@ def compute_lab_load_by_hub(
             continue
         for step in outcome.steps:
             if step.kind == "lab" and not step.skipped:
-                load[project.hub] += step.duration_weeks * LAB_CONSUMPTION_PER_PROJECT_WEEK
+                load[project.hub] += row_lab_load_weeks(step) * LAB_CONSUMPTION_PER_PROJECT_WEEK
     return dict(load)
 
 
@@ -1395,7 +1451,8 @@ def _check_i7_lab_load(ctx: _Ctx) -> list[InvariantViolation]:
         if outcome is None or project.hub not in hubs.HUB_LAB_REGION:
             continue
         grand += sum(
-            s.duration_weeks * LAB_CONSUMPTION_PER_PROJECT_WEEK
+            (s.duration_weeks if s.lab_hold_weeks is None else s.lab_hold_weeks)
+            * LAB_CONSUMPTION_PER_PROJECT_WEEK
             for s in outcome.steps
             if s.kind == "lab" and not s.skipped
         )
@@ -2628,7 +2685,7 @@ def _check_i45_pins_placed(ctx: _Ctx) -> list[InvariantViolation]:
                     f"{project.leader_engineer_id!r}",
                     sid,
                 )
-            if row.kind == "lab" and row.assigned_chamber_id is None:
+            if row.kind == "lab" and row.assigned_chamber_id is None and row.lab_hold_weeks != 0:
                 bad("lab pin books no chamber", sid)
         if outcome.pin_lapsed != lapsed:
             bad(f"pin_lapsed={outcome.pin_lapsed} but the input's pins give {lapsed}")
@@ -3215,6 +3272,146 @@ def _check_i58_rows_within_horizon(ctx: _Ctx) -> list[InvariantViolation]:
                     "I58", "LEFT_OUT outcome has no served reason", project_id=outcome.project_id
                 )
             )
+    return out
+
+
+# --- I64 / I65 / I67: lab hold weeks (P62, ADR 0071) -------------------------------
+
+
+def _booked_interval_weeks(ctx: _Ctx, project_id: str, row: StepSchedule) -> int:
+    """`n`, the row's booked interval: the In Progress / Blocked tail
+    (`remaining_span`) of a non-frozen project, else the row's span."""
+
+    plan = ctx.plans.get(project_id)
+    sp = plan.steps.get(row.step_id) if plan is not None else None
+    project = ctx.projects.get(project_id)
+    if (
+        sp is not None
+        and project is not None
+        and not project.frozen
+        and sp.status in (STATUS_IN_PROGRESS, STATUS_BLOCKED)
+    ):
+        return sp.remaining_span
+    return row.end_week - row.start_week + 1
+
+
+def _check_i64_lab_occupancy(ctx: _Ctx) -> list[InvariantViolation]:
+    """I64 + the run-row half of I65 (ADR 0071), on the rows:
+
+    - a non-lab row, and a lab row whose step has no hold in the input
+      (`StepTimingInput.lab_hold_weeks` None, read independently of
+      `analyse_project`), reports `lab_hold_weeks = None` (full);
+    - a booking lab row whose step has a hold reports `h = min(hold, n)`,
+      `n` its booked interval (I65: `0 <= h <= n`), and `h = 0` <=> no
+      chamber. Its occupancy is then its last `h` weeks only, which is how
+      `_Ctx.effective_weeks` feeds I1 / I2 (no week outside them is counted);
+    - a project's `no_chamber_step_id` is never a step with room weeks 0."""
+
+    out: list[InvariantViolation] = []
+
+    def bad(pid: str, sid: str | None, why: str) -> None:
+        out.append(
+            InvariantViolation("I64", f"project {pid!r}: {why}", project_id=pid, step_id=sid)
+        )
+
+    for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
+        pid = outcome.project_id
+        project = ctx.projects.get(pid)
+        if project is None:
+            continue
+        wf = ctx.workflows.get(project.workflow_id)
+        for row in outcome.steps:
+            if row.kind != "lab":
+                if row.lab_hold_weeks is not None:
+                    bad(pid, row.step_id, f"{row.kind} row reports lab_hold_weeks")
+                continue
+            hold = _input_hold(project, row.step_id)
+            if hold is None:
+                if row.lab_hold_weeks is not None:
+                    bad(pid, row.step_id, "full-hold lab row reports lab_hold_weeks")
+                continue
+            if row.skipped or ctx.books_nothing(pid, row):
+                if row.assigned_chamber_id is not None:
+                    bad(pid, row.step_id, "a row that books nothing carries a chamber")
+                continue
+            n = _booked_interval_weeks(ctx, pid, row)
+            h = row.lab_hold_weeks
+            if h is None:
+                bad(pid, row.step_id, f"lab row of a step with room weeks {hold} reports no hold")
+                continue
+            if not 0 <= h <= max(n, 0):
+                out.append(
+                    InvariantViolation(
+                        "I65",
+                        f"project {pid!r}: lab row reports lab_hold_weeks={h!r}, outside 0..{n}",
+                        project_id=pid,
+                        step_id=row.step_id,
+                    )
+                )
+                continue
+            want = booked_hold_weeks(hold, n)
+            if h != want:
+                bad(pid, row.step_id, f"lab_hold_weeks={h} but min(hold {hold}, n {n}) = {want}")
+            if (h == 0) != (row.assigned_chamber_id is None):
+                bad(
+                    pid,
+                    row.step_id,
+                    f"lab_hold_weeks={h} with chamber {row.assigned_chamber_id!r} "
+                    "(h = 0 <=> no chamber)",
+                )
+        sid = outcome.no_chamber_step_id
+        if sid is not None and wf is not None and sid in wf.steps_by_id:
+            if wf.steps_by_id[sid].kind == "lab" and _input_hold(project, sid) == 0:
+                bad(pid, sid, "a step with room weeks 0 is the no_chamber cause (R62-4)")
+    return out
+
+
+def _check_i67_partial_room(ctx: _Ctx) -> list[InvariantViolation]:
+    """I67 (ADR 0071), from the inputs: a `partialRoom` step (lab, hold set)
+    of a project with certification testing off is not skipped when its
+    length and merged override are not 0 (R62-2), and a `partialRoom` step
+    of length 0 is skipped whatever its override (R62-11). Rows of
+    LEFT_OUT / data-error projects that are absent are not checked."""
+
+    out: list[InvariantViolation] = []
+    for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
+        pid = outcome.project_id
+        project = ctx.projects.get(pid)
+        if project is None or outcome.excluded or outcome.data_error is not None:
+            continue
+        wf = ctx.workflows.get(project.workflow_id)
+        if wf is None:
+            continue
+        for row in outcome.steps:
+            step = wf.steps_by_id.get(row.step_id)
+            hold = _input_hold(project, row.step_id)
+            if step is None or not is_partial_room(kind=step.kind, lab_hold_weeks=hold):
+                continue
+            lead = _input_lead(ctx, project, row.step_id)
+            if lead is None:
+                continue
+            override = _input_override(project, row.step_id)
+            if partial_room_zero_length_skips(kind=step.kind, lead_weeks=lead, lab_hold_weeks=hold):
+                if not row.skipped:
+                    out.append(
+                        InvariantViolation(
+                            "I67",
+                            f"project {pid!r}: partialRoom step {row.step_id!r} has length 0 "
+                            "but is not skipped (R62-11)",
+                            project_id=pid,
+                            step_id=row.step_id,
+                        )
+                    )
+            elif override != 0 and row.skipped:
+                out.append(
+                    InvariantViolation(
+                        "I67",
+                        f"project {pid!r}: partialRoom step {row.step_id!r} is skipped although "
+                        "its length is not 0 (certification off never skips it, R62-2)",
+                        project_id=pid,
+                        step_id=row.step_id,
+                    )
+                )
     return out
 
 

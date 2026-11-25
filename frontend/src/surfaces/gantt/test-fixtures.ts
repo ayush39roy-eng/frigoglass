@@ -43,6 +43,10 @@ export const P40_GANTT_STEP_PIN_DEFAULTS: Pick<
   | 'pin_block_reason'
   | 'pin_lapsed'
   | 'pin_clearable'
+  | 'lab_hold_weeks'
+  | 'plan_lab_hold_weeks'
+  | 'room_start_week'
+  | 'room_end_week'
 > = {
   manual_start_week: null,
   manual_end_week: null,
@@ -54,4 +58,9 @@ export const P40_GANTT_STEP_PIN_DEFAULTS: Pick<
   // P40-R02: served per-step lapse and Clear permission.
   pin_lapsed: false,
   pin_clearable: false,
+  // P62 (API_CONTRACT_P62 §5): no room weeks (a non-lab row).
+  lab_hold_weeks: null,
+  plan_lab_hold_weeks: null,
+  room_start_week: null,
+  room_end_week: null,
 };

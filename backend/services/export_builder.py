@@ -852,6 +852,9 @@ async def build_gantt_sheets(
         "skipped",
         "sequence_order",
         "duration_weeks",
+        # P62 (ADR 0071, contract P62 §5): the lab row's booked room weeks
+        # (blank on non-lab rows); the length column is unchanged.
+        "lab_hold_weeks",
         "planned_start_week",
         "planned_end_week",
         "actual_start_week",
@@ -901,6 +904,7 @@ async def build_gantt_sheets(
                     "skipped": step.skipped,
                     "sequence_order": step.sequence_order,
                     "duration_weeks": step.duration_weeks,
+                    "lab_hold_weeks": step.lab_hold_weeks,
                     "planned_start_week": step.planned_start_week,
                     "planned_end_week": step.planned_end_week,
                     "actual_start_week": step.actual_start_week,
@@ -967,6 +971,7 @@ async def build_gantt_sheets(
         {GANTT_DATA_SHEET: (headers, rows)},
         title="Gantt — schedule data",
         context=context,
+        labels={"lab_hold_weeks": "Room weeks"},
         charts={GANTT_SHEET: chart},
         summaries={SUMMARY_SHEET: summary},
         order=[SUMMARY_SHEET, GANTT_SHEET, GANTT_DATA_SHEET],

@@ -380,7 +380,7 @@ def test_canonical_form_omits_zero_overlap() -> None:
     pre = {
         k: v
         for k, v in dataclasses.asdict(row).items()
-        if k not in ("overlap_weeks", "wait_weeks", "lead_weeks")
+        if k not in ("overlap_weeks", "wait_weeks", "lead_weeks", "lab_hold_weeks")
     }
     assert canonical_step_timing_dict(row) == pre
     assert canonical_step_timing_dict(_t("PDD-H", overlap=2))["overlap_weeks"] == 2
@@ -391,10 +391,11 @@ def test_canonical_form_omits_zero_overlap() -> None:
 def test_default_overlap_is_zero() -> None:
     row = StepTimingInput("PDD-H", None, None)
     assert row.overlap_weeks == 0
-    assert tuple(f.name for f in dataclasses.fields(StepTimingInput))[-3:] == (
+    assert tuple(f.name for f in dataclasses.fields(StepTimingInput))[-4:] == (
         "overlap_weeks",
         "wait_weeks",
         "lead_weeks",
+        "lab_hold_weeks",  # P62 (ADR 0071): appended after the P33 fields
     )
 
 

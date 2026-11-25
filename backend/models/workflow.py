@@ -169,6 +169,14 @@ class WorkflowLeadTime(Base):
     effort_weight_weeks: Mapped[int] = mapped_column(
         Integer, nullable=False, default=_default_from("weeks")
     )
+    #: P62 (ADR 0071, migration `p71a`): the template's room weeks, 0..weeks,
+    #: NULL = "Full" (the whole length, follows `weeks`). Read only on a
+    #: `lab`-kind step (a value kept through a kind change away from `lab`
+    #: is stored but not read); the API rejects a non-null value on a
+    #: non-lab step (422 `LAB_HOLD_NOT_LAB`). An explicit value equal to
+    #: `weeks` is stored as given (R62-3). Copied onto
+    #: `ProjectWorkflowStep.plan_lab_hold_weeks` like `weeks`.
+    lab_hold_weeks: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     workflow: Mapped[Workflow] = relationship(back_populates="lead_times")
     step_template: Mapped[WorkflowStepTemplate] = relationship(back_populates="lead_times")
@@ -177,6 +185,11 @@ class WorkflowLeadTime(Base):
         CheckConstraint("weeks >= 0", name="weeks_non_negative"),
         CheckConstraint("gap_weeks BETWEEN -104 AND 104", name="gap_weeks_range"),
         CheckConstraint("effort_weight_weeks BETWEEN 0 AND 104", name="effort_weight_weeks_range"),
+        # P62 (ADR 0071 I65, migration p71a).
+        CheckConstraint(
+            "lab_hold_weeks IS NULL OR (lab_hold_weeks >= 0 AND lab_hold_weeks <= weeks)",
+            name="lab_hold_weeks_range",
+        ),
     )
 
     @validates("category")
@@ -302,6 +315,15 @@ class ProjectWorkflowStep(TimestampMixin, Base):
     plan_gap_weeks: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    #: P62 (ADR 0071, migration `p71a`): the project's copy of the template's
+    #: room weeks, 0..plan_weeks, NULL = "Full". On a `lab`-kind step a value
+    #: makes the step `partialRoom` (`scheduling.is_partial_room`): it books
+    #: its chamber for its last `min(hold, n)` weeks only, takes no lab-figure
+    #: share (R62-1) and is not skipped by certification off (R62-2). Copied
+    #: at registration / on a category change like `plan_weeks`, otherwise
+    #: written only by the P33 apply (R62-8); clamped to `plan_weeks` when a
+    #: copy shortens the step (I65).
+    plan_lab_hold_weeks: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # --- Manual step pins (P40, ADR 0054 ruling R40-1..R40-15) ----------------
     #: A person's fixed placement of this step: weeks `manual_start_week ..
     #: manual_end_week`, end inclusive (length `me − ms + 1`). Both set or both
@@ -410,6 +432,12 @@ class ProjectWorkflowStep(TimestampMixin, Base):
         # P33 (migration p33b_template_copy).
         CheckConstraint("plan_weeks BETWEEN 0 AND 104", name="plan_weeks_range"),
         CheckConstraint("plan_gap_weeks BETWEEN -104 AND 104", name="plan_gap_weeks_range"),
+        # P62 (ADR 0071 I65, migration p71a).
+        CheckConstraint(
+            "plan_lab_hold_weeks IS NULL OR "
+            "(plan_lab_hold_weeks >= 0 AND plan_lab_hold_weeks <= plan_weeks)",
+            name="plan_lab_hold_weeks_range",
+        ),
         # P35 (migration p35b_step_excluded): I34 (i).
         CheckConstraint("NOT (excluded AND status = 'Done')", name="excluded_not_done"),
         # P40 (migration p40a_step_pins, ADR 0054 R40-1); P53 (p53a_week_line,

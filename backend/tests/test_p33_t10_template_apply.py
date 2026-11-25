@@ -56,6 +56,8 @@ from services.workflow_durations import live_step_effective_weeks, own_effort_ki
 from tests.auth_helpers import clear_current_principal_override
 from tests.factories import make_engineer, make_hub, make_schedule_run
 from tests.p12_helpers import act_as, client_for, set_progress, stepped_project
+from tests.p62_audit import NOT_MIGRATION_AUDIT, NOT_MIGRATION_CHANGE
+from tests.p62_audit import P71A_TEMPLATE_VERSION as V0  # noqa: N814
 from workers.schedule_tasks import run_greedy_schedule
 
 APPLY = "/workflow-templates/apply"
@@ -102,7 +104,7 @@ def dispatch(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 
 
 def _change(
-    steps: list[dict[str, Any]], *, category: str = "B", version: int = 1
+    steps: list[dict[str, Any]], *, category: str = "B", version: int = V0
 ) -> dict[str, Any]:
     return {"workflow_id": "PDD", "category": category, "base_version": version, "steps": steps}
 
@@ -112,7 +114,7 @@ def _apply_body(
     *,
     mode: str = "none",
     ids: list[uuid.UUID] | None = None,
-    version: int = 1,
+    version: int = V0,
     reason: str | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
@@ -211,6 +213,8 @@ async def _audits(db: AsyncSession, action: str) -> list[AuditLogEntry]:
             await db.execute(
                 select(AuditLogEntry)
                 .where(AuditLogEntry.action == action)
+                # P62: not migration p71a's own template rows.
+                .where(NOT_MIGRATION_AUDIT)
                 .order_by(AuditLogEntry.entity_id)
             )
         ).scalars()
@@ -279,11 +283,11 @@ async def test_preview_classifies_every_stage_rule_row(db_session: AsyncSession)
     assert list(auto) == ["01 Auto In Queue", "02 On Hold", "03 Draft"]  # by name
     assert auto["01 Auto In Queue"]["steps"] == [
         {"step_id": "PDD-E", "eff_before": 4, "eff_after": 5, "gap_before": 0, "gap_after": 0,
-         "flags": []},
+         "hold_before": None, "hold_after": None, "flags": []},
         {"step_id": "PDD-H", "eff_before": 6, "eff_after": 6, "gap_before": 0, "gap_after": 2,
-         "flags": []},
+         "hold_before": None, "hold_after": None, "flags": []},
         {"step_id": "PDD-L", "eff_before": 1, "eff_after": 3, "gap_before": 0, "gap_after": 0,
-         "flags": []},
+         "hold_before": None, "hold_after": None, "flags": []},
     ]  # fmt: skip
     assert auto["02 On Hold"]["status"] == "On Hold"
     assert auto["01 Auto In Queue"]["hub"] == "R&D-Greece"
@@ -313,7 +317,8 @@ async def test_preview_classifies_every_stage_rule_row(db_session: AsyncSession)
     }
     # Previews write nothing.
     assert await _template(db_session, "PDD-E") == (4, 0, 4)
-    assert (await db_session.execute(select(TemplateChange))).scalars().all() == []
+    changes = select(TemplateChange).where(NOT_MIGRATION_CHANGE)
+    assert (await db_session.execute(changes)).scalars().all() == []
     # Never served: financial fields, engineer names.
     text = json.dumps(body)
     for forbidden in ("customer", "tcogs", "selling_price", "gross_margin", "Lead"):
@@ -342,7 +347,7 @@ async def test_not_started_step_behind_a_started_successor_is_reached(
     assert [p["name"] for p in body["automatic"]] == ["Fresh"]
     assert body["automatic"][0]["steps"] == [
         {"step_id": "PDD-B", "eff_before": 0, "eff_after": 2, "gap_before": 0, "gap_after": 0,
-         "flags": ["revived"]},
+         "hold_before": None, "hold_after": None, "flags": ["revived"]},
     ]  # fmt: skip
     assert body["choosable"] == []
     assert body["never"] == [{"project_id": str(started.id), "name": "D started",
@@ -387,7 +392,9 @@ async def test_apply_by_selection_mode(
         "own_effort_not_applied": 0,
     }
     assert out["not_applied"] == []
-    assert out["versions"] == [{"workflow_id": "PDD", "category": "B", "template_version": 2}]
+    assert out["versions"] == [
+        {"workflow_id": "PDD", "category": "B", "template_version": V0 + 1}
+    ]
 
     # The template (weights untouched) and its version.
     assert await _template(db_session, "PDD-E") == (5, 0, 4)
@@ -398,14 +405,16 @@ async def test_apply_by_selection_mode(
             select(Category).where(Category.code == "B").execution_options(populate_existing=True)
         )
     ).scalar_one()
-    assert category.template_version == 2
+    assert category.template_version == V0 + 1
 
-    change = (await db_session.execute(select(TemplateChange))).scalar_one()
+    change = (
+        await db_session.execute(select(TemplateChange).where(NOT_MIGRATION_CHANGE))
+    ).scalar_one()
     assert str(change.id) == out["template_change_id"]
     assert change.reason == "Owner ask"
     assert change.selection == {"mode": mode, "project_ids": [str(i) for i in ids or []]}
     assert change.changes == [{
-        "workflow_id": "PDD", "category": "B", "template_version": [1, 2],
+        "workflow_id": "PDD", "category": "B", "template_version": [V0, V0 + 1],
         "steps": [{"step_id": "PDD-E", "weeks": [4, 5]}, {"step_id": "PDD-H", "gap_weeks": [0, 2]},
                   {"step_id": "PDD-L", "weeks": [1, 3]}],
     }]  # fmt: skip
@@ -531,7 +540,7 @@ async def test_selected_project_not_choosable_and_bad_ids(
     assert resp.json()["applied"]["automatic"] == 3
 
     bogus = uuid.uuid4()
-    resp = await _post(db_session, APPLY, _apply_body(mode="selected", ids=[bogus], version=2))
+    resp = await _post(db_session, APPLY, _apply_body(mode="selected", ids=[bogus], version=V0 + 1))
     assert resp.status_code == 422 and resp.json()["code"] == "BAD_PROJECT"
 
 
@@ -587,11 +596,11 @@ async def test_own_effort_length_not_applied_gap_and_elapsed_applied(
     auto = _by_name(body["automatic"])
     assert auto["Own design figure"]["steps"] == [
         {"step_id": "PDD-E", "eff_before": 2, "eff_after": 2, "gap_before": 0, "gap_after": 0,
-         "flags": ["own_effort_length_not_applied"]},
+         "hold_before": None, "hold_after": None, "flags": ["own_effort_length_not_applied"]},
         {"step_id": "PDD-H", "eff_before": 6, "eff_after": 6, "gap_before": 0, "gap_after": 2,
-         "flags": []},
+         "hold_before": None, "hold_after": None, "flags": []},
         {"step_id": "PDD-L", "eff_before": 1, "eff_after": 3, "gap_before": 0, "gap_after": 0,
-         "flags": []},
+         "hold_before": None, "hold_after": None, "flags": []},
     ]  # fmt: skip
     assert auto["No figure"]["steps"][0]["eff_after"] == 5
 
@@ -720,15 +729,15 @@ async def test_stale_base_version_is_409_with_current_versions(
         assert resp.status_code == 409, resp.text
         assert resp.json()["code"] == "TEMPLATE_CHANGED"
         assert resp.json()["detail"]["versions"] == [
-            {"workflow_id": "PDD", "category": "B", "template_version": 2}
+            {"workflow_id": "PDD", "category": "B", "template_version": V0 + 1}
         ]
     # The template is the first apply's.
     assert await _template(db_session, "PDD-E") == (5, 0, 4)
     resp = await _post(
-        db_session, APPLY, _apply_body([{"step_id": "PDD-E", "weeks": 6}], version=2)
+        db_session, APPLY, _apply_body([{"step_id": "PDD-E", "weeks": 6}], version=V0 + 1)
     )
     assert resp.status_code == 200
-    assert resp.json()["versions"][0]["template_version"] == 3
+    assert resp.json()["versions"][0]["template_version"] == V0 + 2
 
 
 async def test_deferred_with_one_coalesced_follow_up_when_a_run_is_in_flight(
@@ -841,7 +850,7 @@ async def test_apply_is_rate_limited(
     await act_as(db_session, RoleName.ADMIN)
     async with client_for(db_session) as client:
         first = await client.post(APPLY, json=_apply_body())
-        second = await client.post(APPLY, json=_apply_body(version=2))
+        second = await client.post(APPLY, json=_apply_body(version=V0 + 1))
     assert first.status_code == 200
     assert second.status_code == 429 and second.json()["code"] == "RATE_LIMITED"
     assert "Retry-After" in second.headers

@@ -153,6 +153,7 @@ from services.hub_scope import (
     narrowed_lab_regions,
     region_list,
 )
+from services.lab_hold import run_row_held_weeks, run_row_lab_weeks
 from services.plan_clock import PlanClock, get_plan_clock
 from services.run_step_effort import weekly_effort_for_rows
 
@@ -224,13 +225,14 @@ async def hub_load_vs_capacity(
                     ScheduleRunProjectStep.step_template_id,
                     ScheduleRunProjectStep.duration_weeks,
                     ScheduleRunProjectStep.skipped,
+                    ScheduleRunProjectStep.lab_hold_weeks,
                 )
                 .join(Project, ScheduleRunProjectStep.project_id == Project.id)
                 .join(Hub, Project.hub_id == Hub.id)
                 .where(ScheduleRunProjectStep.schedule_run_id == active_run.id)
             )
         ).all()
-        for step_project, step_hub_id, step_region, step_id, duration, skipped in steps:
+        for step_project, step_hub_id, step_region, step_id, duration, skipped, hold in steps:
             # design-kind → design, lab-kind → lab (× 1.0); elapsed and
             # skipped rows add 0.
             if skipped:
@@ -240,8 +242,9 @@ async def hub_load_vs_capacity(
                 booked_design[step_hub_id] += duration
                 booked_projects[step_hub_id].add(step_project)
             elif kind == WorkflowStepKind.LAB:
+                # ADR 0071 I66: the room weeks `h` (NULL = duration_weeks).
                 booked_lab_by_region[step_region] += (
-                    duration * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
+                    run_row_lab_weeks(duration, hold) * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
                 )
 
     # --- Demand load (I25, ADR 0041), from live project + step rows, never
@@ -829,7 +832,9 @@ async def utilization_matrix(
         lambda: defaultdict(int)
     )
     for step in chamber_steps:
-        for week in range(step.start_week, step.end_week + 1):
+        # ADR 0071 R62-0 / I64: a chamber is occupied in the row's held
+        # weeks only (the last `h`; every week when NULL).
+        for week in run_row_held_weeks(step.start_week, step.end_week, step.lab_hold_weeks):
             week_counts_by_chamber[step.assigned_chamber_id][week] += 1
 
     # P3-T09 (security remediation, finding #1 / OQ#8 dependency): `name` is

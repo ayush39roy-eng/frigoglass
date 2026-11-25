@@ -46,6 +46,14 @@ non-frozen project at FTE 1.0 carrying the same lengths (`lead_weeks`) and
 gaps (`overlap_weeks` / `wait_weeks`): that walk's finish is `frontier +
 total_weeks - 1`.
 
+ADR 0071 (P62, API_CONTRACT_P62 §3.2): `lab_holds` maps a lab step id to
+its template room weeks (missing / None = "Full"). Each lab step reports
+`room_weeks = h = min(hold ?? length, length)` and `room_start_week = end -
+h` (end-exclusive, None when `h = 0`); the bar keeps its length. The
+category's `lab_weeks` is Σ `room_weeks` (I66, the Matrix "D/L" L total) and
+`lab_length_weeks` Σ lab lengths (the old value). With no hold every figure
+is the pre-P62 one.
+
 Pure, deterministic, no I/O. Iteration is over the workflow's deterministic
 walk order and sorted sequences only (I8).
 """
@@ -56,11 +64,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from scheduling.workflow import (
+    LAB_HOLD_MAX_WEEKS,
+    LAB_HOLD_MIN_WEEKS,
     LEAD_MAX_WEEKS,
     LEAD_MIN_WEEKS,
     OVERLAP_MAX_WEEKS,
     WAIT_MAX_WEEKS,
     Workflow,
+    booked_hold_weeks,
     first_free_week,
 )
 
@@ -102,6 +113,12 @@ class TemplateStep:
     requested_gap_weeks: int
     effective_gap_weeks: int  # start_week - release(s); 0 on a skipped step
     flags: frozenset[str]
+    # ADR 0071: the template room weeks (None = Full; None on non-lab steps),
+    # the held weeks `h` (0 on non-lab steps) and the first held week
+    # (end-exclusive convention: `end_week - room_weeks`; None when h = 0).
+    lab_hold_weeks: int | None = None
+    room_weeks: int = 0
+    room_start_week: int | None = None
 
 
 @dataclass(frozen=True)
@@ -114,8 +131,9 @@ class TemplateTimeline:
     steps: tuple[TemplateStep, ...]
     total_weeks: int
     design_weeks: int
-    lab_weeks: int
+    lab_weeks: int  # ADR 0071: Σ room_weeks over lab steps (= Σ lengths with no hold)
     note: str = TEMPLATE_VIEW_NOTE
+    lab_length_weeks: int = 0  # ADR 0071: Σ lab step lengths (the pre-P62 lab_weeks)
 
 
 def _validate(workflow: Workflow, lengths: Mapping[str, int], gaps: Mapping[str, int]) -> None:
@@ -148,7 +166,11 @@ def _validate(workflow: Workflow, lengths: Mapping[str, int], gaps: Mapping[str,
 
 
 def template_timeline(
-    *, workflow: Workflow, lengths: Mapping[str, int], gaps: Mapping[str, int]
+    *,
+    workflow: Workflow,
+    lengths: Mapping[str, int],
+    gaps: Mapping[str, int],
+    lab_holds: Mapping[str, int | None] | None = None,
 ) -> TemplateTimeline:
     """The category template timeline (module docstring). `lengths` maps step
     id → template weeks (a missing step counts as 0, i.e. skipped, as the
@@ -157,6 +179,30 @@ def template_timeline(
     outside -104..104 or a non-zero gap on the workflow's first step."""
 
     _validate(workflow, lengths, gaps)
+    holds: dict[str, int | None] = {}
+    for sid in sorted(lab_holds or {}):
+        if sid not in workflow.steps_by_id:
+            raise ValueError(
+                f"room weeks for unknown step {sid!r} (workflow {workflow.workflow_id!r})"
+            )
+        hold = (lab_holds or {})[sid]
+        if hold is not None and (
+            isinstance(hold, bool)
+            or not isinstance(hold, int)
+            or not LAB_HOLD_MIN_WEEKS <= hold <= LAB_HOLD_MAX_WEEKS
+        ):
+            raise ValueError(
+                f"step {sid!r}: room weeks {hold!r} outside "
+                f"{LAB_HOLD_MIN_WEEKS}..{LAB_HOLD_MAX_WEEKS}"
+            )
+        # A hold on a non-lab step is stored but not read (ADR 0071 §1).
+        if workflow.steps_by_id[sid].kind == "lab":
+            holds[sid] = hold
+
+    def room(sid: str) -> int:
+        if workflow.steps_by_id[sid].kind != "lab":
+            return 0
+        return booked_hold_weeks(holds.get(sid), lengths.get(sid, 0))
 
     starts: dict[str, int] = {}
     ends: dict[str, int] = {}  # exclusive
@@ -218,7 +264,8 @@ def template_timeline(
         g[sid] = ends[sid] if overlap == 0 else max(ends[sid], release)
 
     design = sum(lengths.get(s.step_id, 0) for s in workflow.steps if s.kind == "design")
-    lab = sum(lengths.get(s.step_id, 0) for s in workflow.steps if s.kind == "lab")
+    lab_length = sum(lengths.get(s.step_id, 0) for s in workflow.steps if s.kind == "lab")
+    lab = sum(room(s.step_id) for s in workflow.steps if s.kind == "lab")
     steps = tuple(
         TemplateStep(
             step_id=s.step_id,
@@ -230,6 +277,9 @@ def template_timeline(
                 0 if lengths.get(s.step_id, 0) == 0 else starts[s.step_id] - releases[s.step_id]
             ),
             flags=frozenset(flags[s.step_id]),
+            lab_hold_weeks=holds.get(s.step_id),
+            room_weeks=room(s.step_id),
+            room_start_week=ends[s.step_id] - room(s.step_id) if room(s.step_id) else None,
         )
         for s in workflow.steps
     )
@@ -239,4 +289,5 @@ def template_timeline(
         total_weeks=max(ends.values(), default=0),
         design_weeks=design,
         lab_weeks=lab,
+        lab_length_weeks=lab_length,
     )

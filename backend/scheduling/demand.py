@@ -81,7 +81,9 @@ from scheduling.workflow import (
     STATUS_DONE,
     STATUS_IN_PROGRESS,
     STATUS_NOT_STARTED,
+    booked_hold_weeks,
     derive_remaining,
+    is_partial_room,
     merged_step_override,
     step_effective_weeks,
 )
@@ -121,6 +123,12 @@ class LiveStepRow:
     percent_complete: int = 0
     remaining_weeks_override: int | None = None
     excluded: bool = False
+    # ADR 0071: `project_workflow_steps.plan_lab_hold_weeks` (None = full).
+    # On a lab step a value makes it `partialRoom`: `eff = user_override ??
+    # lead` (no effort share, R62-1), not skipped by certification off
+    # (R62-2), and its lab demand is `min(hold, eff)` / `min(hold, rem)`
+    # (I25 lab half, I66). The default keeps every pre-P62 caller unchanged.
+    lab_hold_weeks: int | None = None
 
 
 @dataclass(frozen=True)
@@ -193,8 +201,24 @@ def live_step_effective_weeks(project: LiveProjectRow, step: LiveStepRow) -> int
         lead_weeks=step.lead_weeks,
         kind=step.kind,
         certification_testing_required=project.certification_testing_required,
-        override_weeks=merged_step_override(step.user_override_weeks, step.effort_weeks),
+        override_weeks=merged_step_override(
+            step.user_override_weeks,
+            step.effort_weeks,
+            kind=step.kind,
+            lab_hold_weeks=step.lab_hold_weeks,
+        ),
+        lab_hold_weeks=step.lab_hold_weeks,
     )
+
+
+def live_step_lab_load_weeks(weeks: int, step: LiveStepRow) -> int:
+    """ADR 0071 (I25 lab half, I66): the room weeks of a lab step's `weeks`
+    (its `eff` or `rem`), `min(hold, weeks)`; `weeks` itself when the hold
+    is full (None) or the step is not `partialRoom`."""
+
+    if not is_partial_room(kind=step.kind, lab_hold_weeks=step.lab_hold_weeks):
+        return weeks
+    return booked_hold_weeks(step.lab_hold_weeks, weeks)
 
 
 def live_step_remaining_weeks(project: LiveProjectRow, step: LiveStepRow) -> int:
@@ -254,9 +278,14 @@ def compute_demand_load(projects: Iterable[LiveProjectRow]) -> DemandLoad:
                 if open_:
                     design_rem[p.capacity_hub] += rem
             else:
-                lab_year[region] += eff * LAB_CONSUMPTION_PER_PROJECT_WEEK
+                # ADR 0071: room weeks, `min(hold, eff)` / `min(hold, rem)`.
+                lab_year[region] += (
+                    live_step_lab_load_weeks(eff, s) * LAB_CONSUMPTION_PER_PROJECT_WEEK
+                )
                 if open_:
-                    lab_rem[region] += rem * LAB_CONSUMPTION_PER_PROJECT_WEEK
+                    lab_rem[region] += (
+                        live_step_lab_load_weeks(rem, s) * LAB_CONSUMPTION_PER_PROJECT_WEEK
+                    )
     return DemandLoad(
         design_full_year=dict(sorted(design_year.items())),
         design_remaining=dict(sorted(design_rem.items())),
@@ -382,6 +411,7 @@ def check_i26_effort_split(projects: Iterable[LiveProjectRow]) -> tuple[Invarian
                 lead_weeks=s.lead_weeks,
                 started=s.status != STATUS_NOT_STARTED,
                 excluded=s.excluded,
+                lab_hold_weeks=s.lab_hold_weeks,
             )
             for s in p.steps
         )
@@ -417,7 +447,14 @@ def check_i26_effort_split(projects: Iterable[LiveProjectRow]) -> tuple[Invarian
                 )
         expected = derivation.effort_weeks_by_step()
         for s in sorted(p.steps, key=lambda r: (r.sequence_order, r.step_id)):
-            if s.kind == "lab" and not p.certification_testing_required:
+            # R7 as amended by R62-2: only full-room lab steps are skipped by
+            # certification off; a `partialRoom` step must carry no effort
+            # share either way (R62-1 / I67).
+            if (
+                s.kind == "lab"
+                and not p.certification_testing_required
+                and not is_partial_room(kind=s.kind, lab_hold_weeks=s.lab_hold_weeks)
+            ):
                 continue
             want = expected.get(s.step_id)
             if s.effort_weeks != want:

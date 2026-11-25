@@ -68,10 +68,16 @@ from core.principal import Principal
 from models.enums import ProjectStatus, WorkflowStepStatus
 from models.project import Project
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
+from scheduling import certification_off_skips, is_partial_room
 from scheduling.effort_split import EffortSplitRejected
 from services.hub_scope import hub_scope_filter
-from services.project_effort import derive_for, effort_weights
-from services.template_copy import reached_step_ids
+from services.project_effort import (
+    TRIGGER_LAB_HOLD_CHANGE,
+    TRIGGER_TEMPLATE_REVIVE,
+    derive_for,
+    effort_weights,
+)
+from services.template_copy import clamp_hold, reached_step_ids
 from services.template_editor import ResolvedEntry, StepDelta
 from services.workflow_durations import live_step_effective_weeks, own_effort_kinds
 
@@ -83,6 +89,15 @@ FLAG_OWN_EFFORT_LENGTH_NOT_APPLIED = "own_effort_length_not_applied"
 #: P35 (R35-8): the pair is received (the copy is written, so a re-include
 #: gets the current copy) but the step is excluded for this project.
 FLAG_EXCLUDED_NO_EFFECT = "excluded_no_effect"
+#: P62 (ADR 0071, contract P62 §4.1/§4.2): the room weeks were clamped to a
+#: shortened length (the template's or this project's copy; I65).
+FLAG_ROOM_WEEKS_CLAMPED = "room_weeks_clamped"
+#: P62 (R62-8): the room weeks flip NULL <-> value on an own-lab-figure
+#: project; its lab split is re-derived (R62-1), on every step it changes.
+FLAG_LAB_SPLIT_REDERIVED = "lab_split_rederived"
+#: P62 (R62-12): a length change on a `partialRoom` step of an own-lab-figure
+#: project, applied (never `own_effort_length_not_applied`).
+FLAG_PARTIAL_ROOM_LENGTH_APPLIED = "partial_room_length_applied"
 #: Contract order of the step flags (deterministic wire form).
 STEP_FLAGS: tuple[str, ...] = (
     FLAG_REVIVED,
@@ -91,7 +106,14 @@ STEP_FLAGS: tuple[str, ...] = (
     FLAG_CERT_OFF_NO_EFFECT,
     FLAG_OWN_EFFORT_LENGTH_NOT_APPLIED,
     FLAG_EXCLUDED_NO_EFFECT,
+    FLAG_ROOM_WEEKS_CLAMPED,
+    FLAG_LAB_SPLIT_REDERIVED,
+    FLAG_PARTIAL_ROOM_LENGTH_APPLIED,
 )
+
+#: `StepOutcome.write_plan_lab_hold_weeks` when the hold copy is unchanged
+#: (None is a real value: "Full").
+_KEEP: Any = object()
 
 _STARTED_STAGES = frozenset(
     {WorkflowStepStatus.IN_PROGRESS, WorkflowStepStatus.BLOCKED, WorkflowStepStatus.DONE}
@@ -161,10 +183,22 @@ class StepOutcome:
     #: The copy values to write (None = that field unchanged).
     write_plan_weeks: int | None
     write_plan_gap_weeks: int | None
+    #: P62: the copy's room weeks before / after (None = Full).
+    hold_before: int | None = None
+    hold_after: int | None = None
+
+    @property
+    def write_hold(self) -> bool:
+        """P62 (R62-8): the room-weeks copy changes."""
+        return self.hold_before != self.hold_after
 
     @property
     def written(self) -> bool:
-        return self.write_plan_weeks is not None or self.write_plan_gap_weeks is not None
+        return (
+            self.write_plan_weeks is not None
+            or self.write_plan_gap_weeks is not None
+            or self.write_hold
+        )
 
 
 @dataclass
@@ -183,7 +217,11 @@ class ProjectOutcome:
     current_stage: tuple[str, WorkflowStepStatus] | None = None
     #: ADR 0070: the predicted `effort_weeks` after the revive re-derivation
     #: (None = this project receives no revive and is not re-derived).
+    #: P62 (R62-8): also set when a room-weeks flip re-derives the lab split.
     effort_after: dict[str, int | None] | None = None
+    #: The R6 trigger of that re-derivation (`template_revive` /
+    #: `lab_hold_change`).
+    rederive_trigger: str | None = None
 
     @property
     def needs_rederive(self) -> bool:
@@ -238,6 +276,27 @@ class Evaluation:
         return out
 
 
+def pair_hold_after(delta: StepDelta, row: ProjectWorkflowStep) -> int | None:
+    """P62 (R62-8): the room-weeks copy a receiving pair gets: the template's
+    new value when the change carries one, else the copy as it is."""
+
+    return delta.hold_after if delta.hold_changed else row.plan_lab_hold_weeks
+
+
+def _pair_plan_after(delta: StepDelta, row: ProjectWorkflowStep, *, own_effort: bool,
+                     revive: bool) -> tuple[int, bool]:  # fmt: skip
+    """`(plan_weeks after, own_effort_length_not_applied)` of one receiving
+    pair: OR-4, ADR 0070's revive and ADR 0071 R62-12 (a length change on a
+    `partialRoom` step reaches the copy whatever ownEffort says)."""
+
+    if not delta.length_changed:
+        return row.plan_weeks, False
+    partial = is_partial_room(kind=delta.kind, lab_hold_weeks=pair_hold_after(delta, row))
+    if own_effort and not revive and not partial:
+        return row.plan_weeks, True
+    return delta.weeks_after, False
+
+
 def _step_outcome(
     delta: StepDelta,
     row: ProjectWorkflowStep,
@@ -247,31 +306,53 @@ def _step_outcome(
     revive: bool = False,
     effort_after: Mapping[str, int | None] | None = None,
     own_effort_after: bool | None = None,
+    lab_split_rederived: bool = False,
 ) -> StepOutcome | None:
     """OR-4 for one receivable pair; None when nothing is received or
     flagged. ADR 0070: with `revive`, an own-effort length is received (the
     copy is written) and `eff_after` reads the predicted re-split
-    (`effort_after`, `own_effort_after`)."""
+    (`effort_after`, `own_effort_after`).
+
+    P62 (ADR 0071): the room-weeks copy is written on every receiving pair,
+    whatever ownEffort says (R62-8), clamped to the copy's length (I65,
+    `room_weeks_clamped`); a length change on a `partialRoom` step is applied
+    on an own-effort pair too (R62-12, `partial_room_length_applied`);
+    `lab_split_rederived` marks a pair whose own lab split the change
+    re-derives."""
 
     flags: set[str] = set()
-    new_plan = row.plan_weeks
     new_gap = row.plan_gap_weeks
-    if delta.length_changed:
-        if own_effort and revive:
-            new_plan = delta.weeks_after
-        elif own_effort:
-            flags.add(FLAG_OWN_EFFORT_LENGTH_NOT_APPLIED)
-        else:
-            new_plan = delta.weeks_after
-            if delta.kind == "lab" and not certification_testing_required:
-                flags.add(FLAG_CERT_OFF_NO_EFFECT)
+    new_plan, not_applied = _pair_plan_after(delta, row, own_effort=own_effort, revive=revive)
+    if not_applied:
+        flags.add(FLAG_OWN_EFFORT_LENGTH_NOT_APPLIED)
+    elif delta.length_changed:
+        if own_effort and not revive:
+            flags.add(FLAG_PARTIAL_ROOM_LENGTH_APPLIED)
+        if (
+            certification_off_skips(
+                kind=delta.kind,
+                certification_testing_required=certification_testing_required,
+                lab_hold_weeks=pair_hold_after(delta, row),
+            )
+            and not own_effort
+        ):
+            flags.add(FLAG_CERT_OFF_NO_EFFECT)
     if delta.gap_changed:
         new_gap = delta.gap_after
-    if row.excluded and (delta.length_changed or delta.gap_changed):
+    wanted_hold = pair_hold_after(delta, row)
+    new_hold = clamp_hold(wanted_hold, new_plan)
+    if delta.kind == "lab" and (
+        new_hold != wanted_hold or (delta.hold_clamped and new_hold != row.plan_lab_hold_weeks)
+    ):
+        # A hold on a non-lab step is stored but not read: clamped silently.
+        flags.add(FLAG_ROOM_WEEKS_CLAMPED)
+    if row.excluded and (delta.length_changed or delta.gap_changed or delta.hold_changed):
         # R35-8: an apply never touches `excluded`; the copy still lands.
         flags.add(FLAG_EXCLUDED_NO_EFFECT)
+    if lab_split_rederived:
+        flags.add(FLAG_LAB_SPLIT_REDERIVED)
 
-    def eff(plan_weeks: int, *, after: bool) -> int:
+    def eff(plan_weeks: int, hold: int | None, *, after: bool) -> int:
         resplit = after and effort_after is not None
         return live_step_effective_weeks(
             plan_weeks=plan_weeks,
@@ -286,9 +367,11 @@ def _step_outcome(
                 else row.effort_weeks
             ),
             excluded=row.excluded,
+            lab_hold_weeks=hold,
         )
 
-    eff_before, eff_after = eff(row.plan_weeks, after=False), eff(new_plan, after=True)
+    eff_before = eff(row.plan_weeks, row.plan_lab_hold_weeks, after=False)
+    eff_after = eff(new_plan, new_hold, after=True)
     if eff_before == 0 and eff_after > 0:
         flags.add(FLAG_REVIVED)
     if eff_before > 0 and eff_after == 0:
@@ -300,8 +383,9 @@ def _step_outcome(
     if (
         write_plan is None
         and write_gap is None
+        and new_hold == row.plan_lab_hold_weeks
         and FLAG_OWN_EFFORT_LENGTH_NOT_APPLIED not in flags
-        and not (revive and eff_before != eff_after)
+        and not ((revive or lab_split_rederived) and eff_before != eff_after)
     ):
         return None
     return StepOutcome(
@@ -314,6 +398,8 @@ def _step_outcome(
         flags=[f for f in STEP_FLAGS if f in flags],
         write_plan_weeks=write_plan,
         write_plan_gap_weeks=write_gap,
+        hold_before=row.plan_lab_hold_weeks,
+        hold_after=new_hold,
     )
 
 
@@ -353,6 +439,7 @@ def plan_effort_revive(
     reached: frozenset[str],
     weights_after: Mapping[str, int],
     revive: Mapping[str, int],
+    hold_overrides: Mapping[str, int | None] | None = None,
 ) -> RevivePlan:
     """ADR 0070 for one project that is not frozen / Cancelled /
     Commercialized: of the revived steps (`revive`, step id -> N), the ones
@@ -362,7 +449,8 @@ def plan_effort_revive(
     the new copies). The whole revive is refused (`started_share`) when the
     re-split would change the effort of a reached step (owner: never touch
     Done / In Progress / reached steps), or (`split_rejected`) when R7
-    rejects it. Pure: nothing is written."""
+    rejects it. Pure: nothing is written. P62: `hold_overrides` are the
+    room-weeks copies the same apply writes (R62-1 sees them)."""
 
     own = own_effort_kinds(((r.step_template_id, r.effort_weeks) for r in rows), kinds)
     by_step = {r.step_template_id: r for r in rows}
@@ -379,8 +467,9 @@ def plan_effort_revive(
         return RevivePlan((), {}, None, not_applied)
     try:
         derivation = derive_for(
-            project, list(rows), dict(kinds), weights_after, plan_overrides=received
-        )
+            project, list(rows), dict(kinds), weights_after, plan_overrides=received,
+            hold_overrides=hold_overrides,
+        )  # fmt: skip
     except EffortSplitRejected:
         refused = dict.fromkeys(received, "split_rejected")
         return RevivePlan((), {}, None, {**not_applied, **refused})
@@ -448,13 +537,66 @@ def evaluate_project(
     )
     if closed is not None:
         return outcome
+    # P62 (R62-8): the room-weeks copies the receiving pairs get (clamped to
+    # their lengths), and the own-lab-figure pairs whose copy flips
+    # NULL <-> value (R62-1 then re-derives the lab split, no
+    # `started_share` refusal).
+    holds_after: dict[str, int | None] = {}
+    flips: set[str] = set()
+    rejected_flips: set[str] = set()
+    for delta in entry.changed:
+        row = by_step.get(delta.step_id)
+        if delta.step_id in reached or row is None or not delta.hold_changed:
+            continue
+        new_plan, _ = _pair_plan_after(delta, row, own_effort=delta.kind in own, revive=False)
+        hold = clamp_hold(pair_hold_after(delta, row), new_plan)
+        if hold == row.plan_lab_hold_weeks:
+            continue
+        holds_after[delta.step_id] = hold
+        # "Own lab figure": the project has a lab figure (its shares may all
+        # be on steps this change moves into / out of the split).
+        own_lab_figure = "lab" in own or project.lab_effort_weeks is not None
+        if (
+            delta.kind == "lab"
+            and own_lab_figure
+            and (hold is None) != (row.plan_lab_hold_weeks is None)
+        ):
+            flips.add(delta.step_id)
     revive = revived_weights(entry, weights) if weights is not None else {}
     plan = (
-        plan_effort_revive(project, rows, kinds, reached, {**(weights or {}), **revive}, revive)
+        plan_effort_revive(
+            project,
+            rows,
+            kinds,
+            reached,
+            {**(weights or {}), **revive},
+            revive,
+            hold_overrides=holds_after,
+        )  # fmt: skip
         if revive
         else None
     )
     effort_after = plan.effort_after if plan is not None else None
+    trigger = TRIGGER_TEMPLATE_REVIVE if effort_after is not None else None
+    if flips and effort_after is None:
+        try:
+            effort_after = derive_for(
+                project, list(rows), dict(kinds), {**(weights or {})},
+                hold_overrides=holds_after,
+            ).effort_weeks_by_step()  # fmt: skip
+            effort_after = {r.step_template_id: effort_after.get(r.step_template_id) for r in rows}
+            trigger = TRIGGER_LAB_HOLD_CHANGE
+            if effort_after == {r.step_template_id: r.effort_weeks for r in rows}:
+                # The figure is not applied (e.g. certification off): the
+                # copy lands, nothing is re-split.
+                flips, effort_after, trigger = set(), None, None
+        except EffortSplitRejected:  # pragma: no cover - fewer S′ members raise R7 only past 104
+            # R7 would reject the re-split: the flips are not received (the
+            # copies stay), as an unreceivable revive.
+            rejected_flips, flips = flips, set()
+            effort_after = None
+    elif flips:
+        trigger = TRIGGER_LAB_HOLD_CHANGE
     own_after = own_effort_kinds(effort_after.items(), kinds) if effort_after is not None else None
     received = set(plan.step_ids) if plan is not None else set()
     listed: set[str] = set()
@@ -465,6 +607,8 @@ def evaluate_project(
         row = by_step.get(delta.step_id)
         if row is None:  # pragma: no cover - every project carries its 14 rows
             continue
+        if delta.step_id in rejected_flips:  # pragma: no cover - see above
+            continue
         step = _step_outcome(
             delta,
             row,
@@ -473,12 +617,14 @@ def evaluate_project(
             revive=delta.step_id in received,
             effort_after=effort_after,
             own_effort_after=(delta.kind in own_after) if own_after is not None else None,
+            lab_split_rederived=delta.step_id in flips,
         )
         if step is not None:
             outcome.steps.append(step)
             listed.add(step.step_id)
     if effort_after is not None and own_after is not None:
         outcome.effort_after = effort_after
+        outcome.rederive_trigger = trigger
         # R33-11 honesty: the other steps whose eff the re-split changes.
         for r in rows:
             sid = r.step_template_id
@@ -486,21 +632,25 @@ def evaluate_project(
                 continue
             kind = kinds.get(sid, "elapsed")
             cert = project.certification_testing_required
+            hold = r.plan_lab_hold_weeks
             before = live_step_effective_weeks(
                 plan_weeks=r.plan_weeks, kind=kind, certification_testing_required=cert,
                 own_effort=kind in own, effort_weeks=r.effort_weeks, excluded=r.excluded,
+                lab_hold_weeks=hold,
             )  # fmt: skip
             after = live_step_effective_weeks(
                 plan_weeks=r.plan_weeks, kind=kind, certification_testing_required=cert,
                 own_effort=kind in own_after, effort_weeks=effort_after.get(sid),
-                excluded=r.excluded,
+                excluded=r.excluded, lab_hold_weeks=hold,
             )  # fmt: skip
             if before != after:
                 outcome.steps.append(
                     StepOutcome(
                         step_id=sid, kind=kind, eff_before=before, eff_after=after,
                         gap_before=r.plan_gap_weeks, gap_after=r.plan_gap_weeks,
-                        flags=[], write_plan_weeks=None, write_plan_gap_weeks=None,
+                        flags=[FLAG_LAB_SPLIT_REDERIVED] if flips and kind == "lab" else [],
+                        write_plan_weeks=None, write_plan_gap_weeks=None,
+                        hold_before=hold, hold_after=hold,
                     )
                 )  # fmt: skip
         order = {s.step_id: i for i, s in enumerate(workflow.steps)}
@@ -591,23 +741,31 @@ async def step_names(db: AsyncSession, step_ids: Iterable[str]) -> dict[str, str
 
 def write_copies(
     outcome: ProjectOutcome, template_change_id: uuid.UUID
-) -> tuple[dict[str, dict[str, int]], dict[str, dict[str, int]]]:
+) -> tuple[dict[str, dict[str, int | None]], dict[str, dict[str, int | None]]]:
     """Write the OR-4 copies of one receiving project (never `effort_weeks`,
     never a progress field). Returns the audit `(before, after)` per written
-    step and field."""
+    step and field. P62 (R62-8): the room-weeks copy `plan_lab_hold_weeks`
+    is a third field (None = Full); it is written after the length, so the
+    I65 CHECK sees the final pair."""
 
-    before: dict[str, dict[str, int]] = {}
-    after: dict[str, dict[str, int]] = {}
+    before: dict[str, dict[str, int | None]] = {}
+    after: dict[str, dict[str, int | None]] = {}
     for s in outcome.written_steps:
         row = outcome.rows[s.step_id]
-        b: dict[str, int] = {}
-        a: dict[str, int] = {}
+        b: dict[str, int | None] = {}
+        a: dict[str, int | None] = {}
+        if s.write_hold and s.hold_after is not None and row.plan_lab_hold_weeks is not None:
+            # Lower the hold first when the length shrinks (I65 at flush).
+            row.plan_lab_hold_weeks = min(row.plan_lab_hold_weeks, s.hold_after)
         if s.write_plan_weeks is not None:
             b["plan_weeks"], a["plan_weeks"] = row.plan_weeks, s.write_plan_weeks
             row.plan_weeks = s.write_plan_weeks
         if s.write_plan_gap_weeks is not None:
             b["plan_gap_weeks"], a["plan_gap_weeks"] = row.plan_gap_weeks, s.write_plan_gap_weeks
             row.plan_gap_weeks = s.write_plan_gap_weeks
+        if s.write_hold:
+            b["plan_lab_hold_weeks"], a["plan_lab_hold_weeks"] = s.hold_before, s.hold_after
+            row.plan_lab_hold_weeks = s.hold_after
         row.template_change_id = template_change_id
         before[s.step_id], after[s.step_id] = b, a
     return before, after
@@ -627,6 +785,9 @@ def change_summary(
             item["weeks"] = [d.weeks_before, d.weeks_after]
         if d.gap_changed:
             item["gap_weeks"] = [d.gap_before, d.gap_after]
+        if d.hold_changed:
+            # P62 (R62-8): the room weeks, before / after (None = Full).
+            item["lab_hold_weeks"] = [d.hold_before, d.hold_after]
         if revived and d.step_id in revived:
             item["effort_weight_weeks"] = [0, revived[d.step_id]]
         steps.append(item)

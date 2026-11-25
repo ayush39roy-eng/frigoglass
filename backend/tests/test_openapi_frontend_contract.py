@@ -225,6 +225,8 @@ _NULLABILITY_ALLOWLIST: dict[tuple[str, str], str] = {
 # fails `test_pending_frontend_fields_are_still_pending`).
 #: P42-T04 mirrored every P42-T03 field (docs/API_CONTRACT_P42.md) and
 #: emptied this list.
+#: P62-T05 mirrored every P62-T04 room-weeks field (docs/API_CONTRACT_P62.md
+#: §3–§5) and emptied this list.
 _PENDING_FRONTEND_FIELDS: dict[tuple[str, str], str] = {}
 
 

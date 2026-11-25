@@ -363,7 +363,8 @@ async def test_totals_cover_only_touched_hubs_and_regions(db_session):
     gr_lab = next(r for r in est["lab"] if r["lab_region"] == "Greece")
     assert est["min_extra_designers_total"] == gr["min_extra_designers"]
     assert est["min_extra_chambers_total"] == gr_lab["min_extra_chambers"]
-    assert est["extra_design_weeks_total"] == gr["extra_design_weeks"] == 18
+    # P62 (p71a, R62-11): PDD / C is 5 design weeks (C/PDD-J 0).
+    assert est["extra_design_weeks_total"] == gr["extra_design_weeks"] == 15
     india = next(r for r in est["design"] if r["hub"] == "PD-India")
     assert india["min_extra_designers"] > 0  # untouched deficit stays a row figure only
     assert {r["hub"] for r in est["design"]} == {"R&D-Greece", "PD-India"}
@@ -380,7 +381,7 @@ async def test_hub_planner_totals_come_from_visible_touched_rows(db_session):
     assert est["touched_hubs"] == ["R&D-Greece"] and est["touched_lab_regions"] == ["Greece"]
     gr = est["design"][0]
     assert est["min_extra_designers_total"] == gr["min_extra_designers"]
-    assert est["extra_design_weeks_total"] == 18
+    assert est["extra_design_weeks_total"] == 15  # P62: 3 x 5 (C/PDD-J 0)
     assert "India" not in str(est)
     assert zero["touched_hubs"] == [] and zero["min_extra_designers_total"] == 0
 

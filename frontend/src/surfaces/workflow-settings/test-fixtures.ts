@@ -37,6 +37,8 @@ export function settingsFixture(): WorkflowSettings {
       weeks: A_PLUS[i]!,
       gap_weeks: 0,
       effort_weight_weeks: A_PLUS[i]!,
+      // P62: room weeks Full everywhere (the seed; J/L are design / elapsed here).
+      lab_hold_weeks: null,
     })),
     categories: SEEDED_TEST_CATEGORIES.map((c) => ({ ...c, template_version: 1 })),
     hub_calendars: [
@@ -98,6 +100,10 @@ export function timelineFixture(
       effective_gap_weeks: 0,
       flags: [],
       predecessor_ids: i === 0 ? [] : [`PDD-${PDD[i - 1]![0]}`],
+      // P62: Full room weeks — a lab step holds its whole length.
+      lab_hold_weeks: null,
+      room_weeks: kind === 'lab' ? duration : 0,
+      room_start_week: kind === 'lab' && duration > 0 ? start : null,
       ...patch[code],
     };
     start += duration;
@@ -113,6 +119,7 @@ export function timelineFixture(
     total_weeks: 44,
     design_weeks: 22,
     lab_weeks: 12,
+    lab_length_weeks: 12,
     steps,
     ...extra,
   };

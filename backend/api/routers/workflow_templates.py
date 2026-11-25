@@ -222,6 +222,10 @@ def _steps_out(outcome: ProjectOutcome) -> list[ApplyPreviewStep]:
             eff_after=s.eff_after,
             gap_before=s.gap_before,
             gap_after=s.gap_after,
+            # P62 (contract §4.2): null on a non-lab step (a stored hold
+            # there is not read, R62-3), as `GET /workflow-settings` serves it.
+            hold_before=s.hold_before if s.kind == "lab" else None,
+            hold_after=s.hold_after if s.kind == "lab" else None,
             flags=s.flags,
         )
         for s in outcome.steps
@@ -354,17 +358,22 @@ async def _check_selected_ids_exist(
 
 
 async def _write_template(db: AsyncSession, entry: ResolvedEntry, revived: dict[str, int]) -> None:
-    """Contract E3 step 4: the template's `weeks` / `gap_weeks` of the changed
-    steps and `template_version + 1`. `effort_weight_weeks` is written only
-    for a revived step (ADR 0070: 0 -> N, `revived`); every other weight is
-    left alone. The category row is locked by the caller."""
+    """Contract E3 step 4: the template's `weeks` / `gap_weeks` /
+    `lab_hold_weeks` (P62) of the changed steps and `template_version + 1`.
+    `effort_weight_weeks` is written only for a revived step (ADR 0070:
+    0 -> N, `revived`); every other weight is left alone. The category row
+    is locked by the caller."""
 
     for d in entry.changed:
-        values: dict[str, int] = {}
+        values: dict[str, int | None] = {}
         if d.length_changed:
             values["weeks"] = d.weeks_after
         if d.gap_changed:
             values["gap_weeks"] = d.gap_after
+        if d.hold_changed:
+            # P62 (R62-8): the room weeks (None = Full), in the same UPDATE as
+            # the length so the I65 CHECK sees the final row.
+            values["lab_hold_weeks"] = d.hold_after
         if d.step_id in revived:
             values["effort_weight_weeks"] = revived[d.step_id]
         await db.execute(
@@ -459,6 +468,23 @@ async def apply_template(
         if not after and not o.needs_rederive:  # pragma: no cover - a receiver writes
             continue
         changed.append((o.project, how))
+        # P62 (contract §4.3): `lab_hold_weeks: [before, after]` per step
+        # whose room-weeks copy changed.
+        hold_changes = {
+            sid: [before[sid].get("plan_lab_hold_weeks"), a["plan_lab_hold_weeks"]]
+            for sid, a in sorted(after.items())
+            if "plan_lab_hold_weeks" in a
+        }
+        after_state: dict[str, Any] = {
+            "template_change_id": str(change_id),
+            "workflow_id": o.entry.category.workflow_id,
+            "category": o.entry.category.code,
+            "received_as": how,
+            "steps": after,
+            "effort_rederived": o.needs_rederive,
+        }
+        if hold_changes:
+            after_state["lab_hold_weeks"] = hold_changes
         db.add(
             AuditLogEntry(
                 actor_user_id=current_user.user_id,
@@ -467,27 +493,22 @@ async def apply_template(
                 entity_id=str(o.project.id),
                 hub_id=o.project.hub_id,
                 before_state={"steps": before},
-                after_state={
-                    "template_change_id": str(change_id),
-                    "workflow_id": o.entry.category.workflow_id,
-                    "category": o.entry.category.code,
-                    "received_as": how,
-                    "steps": after,
-                    "effort_rederived": o.needs_rederive,
-                },
+                after_state=after_state,
             )
         )
         if o.needs_rederive:
             # ADR 0070: the revived weight reaches this project; the same R6
             # re-derivation as the project PATCH (audit
             # `project.effort_rederived`), after the template weights and the
-            # copies above are in the session.
+            # copies above are in the session. P62 (R62-8): or a room-weeks
+            # flip on an own-lab-figure project (trigger `lab_hold_change`,
+            # no `started_share` refusal).
             await db.flush()
             try:
                 await rederive_project_effort(
                     db,
                     o.project,
-                    trigger=TRIGGER_TEMPLATE_REVIVE,
+                    trigger=o.rederive_trigger or TRIGGER_TEMPLATE_REVIVE,
                     actor_user_id=current_user.user_id,
                     kinds=kinds,
                     rows=sorted(o.rows.values(), key=lambda r: r.sequence_order),
@@ -502,6 +523,11 @@ async def apply_template(
 
     own_effort = evaluation.in_list("own_effort")
     schedulable_changed = [p for p, _ in changed if p.status not in NON_SCHEDULABLE_STATUSES]
+    # P62 (contract §4.3, ADR 0069): an apply that changes only room weeks
+    # marks stale and dispatches nothing (`not_needed`).
+    hold_only = all(e.hold_only for e in entries)
+    if hold_only:
+        schedulable_changed = []
     recalc, baseline_id = await decide_auto_recalc_batch(
         db, needs_run=bool(schedulable_changed), trigger_reason=TEMPLATE_APPLY_TRIGGER_REASON,
         defer=body.defer_recalc,

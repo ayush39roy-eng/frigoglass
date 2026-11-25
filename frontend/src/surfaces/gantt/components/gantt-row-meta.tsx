@@ -66,7 +66,7 @@ export function RowWeeks({ project }: { project: GanttProjectRow }): React.JSX.E
     <span
       className="tnum shrink-0"
       data-testid="gantt-row-weeks"
-      title={`Total ${String(total)} weeks: ${d} design weeks, ${l} lab weeks (served)`}
+      title={`Total ${String(total)} weeks: ${d} design weeks, ${l} lab room weeks (chamber booked; served)`}
     >
       Total {total}W · {d} DW / {l} LW
     </span>

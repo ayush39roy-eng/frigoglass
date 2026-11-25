@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
+import { ResolvedWeekHint } from '@/components/shared/week-year-input';
 import { PRIORITY_BAND_TITLE, priorityBandName } from '@/components/shared/priority-band-meta';
 import { PriorityMoveNotAppliedError } from '@/components/shared/priority-move/form-priority-move';
 import { usePriorityMoveHost, type PriorityMoveApi } from '@/components/shared/priority-move/priority-move-context';
@@ -766,6 +767,7 @@ export function ProjectForm({
                 aria-invalid={errors.target_end_week ? true : undefined}
                 {...register('target_end_week')}
               />
+              <ResolvedWeekHint raw={watched.target_end_week} />
             </Field>
             {withRegister ? null : (
             <div className="flex flex-col gap-1">

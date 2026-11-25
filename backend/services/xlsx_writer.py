@@ -172,6 +172,8 @@ HEADER_LABELS: Final[Mapping[str, str]] = {
     "kind": "Kind",
     "sequence_order": "Step no.",
     "duration_weeks": "Duration (weeks)",
+    # P62 (ADR 0071): the lab step's room weeks (the length is unchanged).
+    "lab_hold_weeks": "Room weeks",
     "span_weeks": "Span (weeks)",
     "planned_start_week": "Planned start (week)",
     "planned_end_week": "Planned end (week)",

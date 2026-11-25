@@ -42,7 +42,7 @@ from models.enums import WorkflowStepKind
 from models.workflow import WorkflowLeadTime, WorkflowStepTemplate
 from scheduling.template_timeline import TEMPLATE_FLAGS, TemplateTimeline, template_timeline
 from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
-from scheduling.workflow import Workflow, build_workflows
+from scheduling.workflow import Workflow, booked_hold_weeks, build_workflows
 from services.capacity_supply import round2
 from services.categories import CategoryCatalog, default_catalog, load_catalog
 
@@ -82,10 +82,16 @@ def categories_for(
 
 
 def category_preview(
-    workflow: Workflow, category: str, weeks: Mapping[str, int]
+    workflow: Workflow,
+    category: str,
+    weeks: Mapping[str, int],
+    holds: Mapping[str, int | None] | None = None,
 ) -> CategoryPreview:
     """Pure: earliest-start timeline for one category. `weeks` maps step id →
-    lead-time weeks; a missing cell counts as 0 (skipped)."""
+    lead-time weeks; a missing cell counts as 0 (skipped). ADR 0071
+    (readers list, "workflow previews"): `lab_weeks` is Σ room weeks
+    `min(hold ?? length, length)` over lab steps (`holds`: step id -> the
+    template's `lab_hold_weeks`)."""
 
     ends: dict[str, int] = {}
     starts: dict[str, int] = {}
@@ -103,7 +109,7 @@ def category_preview(
         if kind is WorkflowStepKind.DESIGN:
             design += duration
         elif kind is WorkflowStepKind.LAB:
-            lab += duration
+            lab += booked_hold_weeks((holds or {}).get(step.step_id), duration)
         spans.append(
             StepSpan(
                 step_id=step.step_id,
@@ -138,6 +144,8 @@ class TemplateCell:
 
     weeks: int
     gap_weeks: int
+    #: ADR 0071: the room weeks (None = Full).
+    lab_hold_weeks: int | None = None
 
 
 @dataclass(frozen=True)
@@ -199,7 +207,7 @@ async def load_template_cells(
     out: dict[str, dict[str, TemplateCell]] = {}
     for lt in (await db.execute(stmt.execution_options(populate_existing=True))).scalars():
         out.setdefault(lt.category, {})[lt.step_id] = TemplateCell(
-            weeks=lt.weeks, gap_weeks=lt.gap_weeks
+            weeks=lt.weeks, gap_weeks=lt.gap_weeks, lab_hold_weeks=lt.lab_hold_weeks
         )
     return out
 
@@ -217,7 +225,14 @@ def template_timeline_for(
     merged = {**cells, **(overrides or {})}
     lengths = {sid: c.weeks for sid, c in merged.items() if sid in wf.workflow.steps_by_id}
     gaps = {sid: c.gap_weeks for sid, c in merged.items() if sid in wf.workflow.steps_by_id}
-    return template_timeline(workflow=wf.workflow, lengths=lengths, gaps=gaps)
+    # ADR 0071 (contract P62 §3.2): the room weeks; the engine reads them on
+    # lab steps only (`room_weeks`, category `lab_weeks` = Σ h).
+    holds = {
+        sid: c.lab_hold_weeks
+        for sid, c in merged.items()
+        if sid in wf.workflow.steps_by_id and c.lab_hold_weeks is not None
+    }
+    return template_timeline(workflow=wf.workflow, lengths=lengths, gaps=gaps, lab_holds=holds)
 
 
 def ordered_flags(flags: frozenset[str]) -> list[str]:
@@ -259,10 +274,12 @@ async def load_category_previews(
         )
     )[workflow_id]
     weeks: dict[str, dict[str, int]] = {}
+    holds: dict[str, dict[str, int | None]] = {}
     lead_stmt = select(WorkflowLeadTime).where(WorkflowLeadTime.workflow_id == workflow_id)
     for lt in (await db.execute(lead_stmt)).scalars():
         weeks.setdefault(lt.category, {})[lt.step_id] = lt.weeks
+        holds.setdefault(lt.category, {})[lt.step_id] = lt.lab_hold_weeks
     return tuple(
-        category_preview(workflow, c, weeks.get(c, {}))
+        category_preview(workflow, c, weeks.get(c, {}), holds.get(c, {}))
         for c in categories_for(workflow_id, await load_catalog(db))
     )

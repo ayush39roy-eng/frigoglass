@@ -337,7 +337,7 @@ describe('GanttPage', () => {
       renderWithProviders(<GanttPage />);
       const axis = screen.getByRole('img', { name: 'Week axis, Week 1 of 2026 to Week 52 of 2027' });
       expect(axis).toHaveAttribute('width', String(104 * W));
-      expect(within(axis).getByText('W52 year-end')).toBeInTheDocument();
+      expect(within(axis).getByText('W52 \'26 year-end')).toBeInTheDocument();
       const ticks = within(axis).getAllByTestId('gantt-week-tick');
       // Stride 4 at 16 px: absolute 1, 5, …, 49, 53, 57, …, 77.
       expect(ticks.map((t) => t.getAttribute('data-week'))).toContain('53');
@@ -466,7 +466,7 @@ describe('GanttPage', () => {
       expect(expected).toHaveAttribute('data-week', '40');
       expect(projected).toHaveAttribute('data-week', '44');
       expect(screen.getByTestId('gantt-slip-bracket')).toHaveTextContent('+4 wk');
-      expect(screen.getByRole('img', { name: /Expected \(target\) W40 · will be completed W44 · slip \+4 wk/ })).toBeInTheDocument();
+      expect(screen.getByRole('img', { name: /Expected \(target\) W40 '26 · will be completed W44 '26 · slip \+4 wk/ })).toBeInTheDocument();
     });
 
     it('labels the expected line "process-derived" when the project has no target week', () => {

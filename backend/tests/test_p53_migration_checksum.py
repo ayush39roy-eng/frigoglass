@@ -213,6 +213,10 @@ def test_p53a_changes_no_existing_row(seeded_url: str) -> None:
     _run(url, unpin)
     assert _checksums(url) == before
 
-    r = run_alembic(["upgrade", "head"], url)
+    # P62: up to the revision before p71a, whose owner-approved data steps
+    # change existing rows on purpose (checked by tests/test_p62_migration.py).
+    r = run_alembic(["upgrade", "p70a_effort_weight_revive"], url)
     assert r.returncode == 0, r.stderr
     assert _checksums(url) == before
+    r = run_alembic(["upgrade", "head"], url)
+    assert r.returncode == 0, r.stderr

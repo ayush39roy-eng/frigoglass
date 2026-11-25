@@ -48,12 +48,12 @@ export function validateStage(d: StageDraft): StageErrors {
   if (needsStart.has(d.status) && d.actual_start_week === null) {
     e.actual_start_week = `Actual start week is required when the stage is ${d.status}.`;
   } else if (d.actual_start_week !== null && !inHorizon(d.actual_start_week)) {
-    e.actual_start_week = 'Week must be a whole number from 1.';
+    e.actual_start_week = 'Week must be a whole number from 1 to 52.';
   }
 
   if (d.status === 'Done') {
     if (d.actual_end_week === null) e.actual_end_week = 'Actual end week is required when the stage is Done.';
-    else if (!inHorizon(d.actual_end_week)) e.actual_end_week = 'Week must be a whole number from 1.';
+    else if (!inHorizon(d.actual_end_week)) e.actual_end_week = 'Week must be a whole number from 1 to 52.';
     else if (d.actual_start_week !== null && d.actual_end_week < d.actual_start_week)
       e.actual_end_week = 'Actual end week cannot be before the actual start week.';
   } else if (d.actual_end_week !== null) {

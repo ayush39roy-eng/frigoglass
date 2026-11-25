@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from scheduling import row_lab_load_weeks
 from scheduling.greedy import run_greedy_sgs
 from scheduling.types import ScheduleOutput
 from scheduling.weeks import WEEK_BASE_YEAR
@@ -80,6 +81,8 @@ GANTT_DATA_HEADERS: list[str] = [
     "kind",
     "sequence_order",
     "duration_weeks",
+    # P62 (ADR 0071): the lab row's booked room weeks (blank otherwise).
+    "lab_hold_weeks",
     "start_week",
     "end_week",
     "skipped",
@@ -179,6 +182,9 @@ def planner_book(
                     "kind": st.kind,
                     "sequence_order": st.sequence_order,
                     "duration_weeks": st.duration_weeks,
+                    "lab_hold_weeks": (
+                        row_lab_load_weeks(st) if st.kind == "lab" and not st.skipped else None
+                    ),
                     "start_week": st.start_week,
                     "end_week": st.end_week,
                     "skipped": st.skipped,

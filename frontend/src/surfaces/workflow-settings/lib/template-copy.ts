@@ -2,7 +2,7 @@ import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
 
-import type { ApplyNeverReason, ApplyStepFlag } from '../api/types';
+import { LAB_HOLD_NOT_LAB, LAB_HOLD_OUT_OF_RANGE, type ApplyNeverReason, type ApplyStepFlag } from '../api/types';
 
 /**
  * P33-T16..T18 copy, in one place (ADR 0045, API_CONTRACT_P33 Part I). Plain
@@ -27,6 +27,9 @@ export const TEMPLATE_COPY = {
   applyRateLimited: 'Too many saves in a row — wait a few seconds and try again. Nothing was saved.',
   applyPreviewRateLimited: 'Too many save checks in a row — wait a few seconds and try again. Nothing was saved.',
   forbidden: 'Your role cannot change the category templates.',
+  // P62 (API_CONTRACT_P62 §7).
+  labHoldNotLab: 'Room weeks can only be set on a lab step. Nothing was saved.',
+  labHoldOutOfRange: 'Room weeks must be from 0 to the step’s length. Nothing was saved.',
   // The apply dialog.
   automaticHelp: 'These projects have not started, so they always follow the template.',
   choosableHelp: 'These projects have started, but have not reached the changed steps yet.',
@@ -52,6 +55,11 @@ export const APPLY_FLAG_NOTE: Record<ApplyStepFlag, string> = {
   gap_ignored_skipped: 'skipped for this project, so the gap has no effect',
   cert_off_no_effect: 'certification testing is off, so no effect',
   own_effort_length_not_applied: 'uses its own weeks — length not changed',
+  excluded_no_effect: 'step excluded for this project, so no effect for now',
+  // P62 (ADR 0071, API_CONTRACT_P62 §4).
+  room_weeks_clamped: 'room weeks cut to the new length',
+  lab_split_rederived: 'its own lab figure is shared out again over the other lab steps',
+  partial_room_length_applied: 'room-weeks step: the template length is applied, even with its own lab figure',
 };
 
 export const NEVER_REASON: Record<ApplyNeverReason, string> = {
@@ -72,6 +80,8 @@ export function applyErrorMessage(err: unknown, stage: 'preview' | 'apply'): str
     if (err.code === TEMPLATE_CHANGED) return TEMPLATE_COPY.templateChanged;
     if (err.code === 'NO_CHANGE') return TEMPLATE_COPY.noChange;
     if (err.code === 'BAD_PROJECT') return TEMPLATE_COPY.badProject;
+    if (err.code === LAB_HOLD_NOT_LAB) return TEMPLATE_COPY.labHoldNotLab;
+    if (err.code === LAB_HOLD_OUT_OF_RANGE) return TEMPLATE_COPY.labHoldOutOfRange;
     if (err.status === 429) {
       const base = stage === 'apply' ? 'Too many saves in a row' : 'Too many save checks in a row';
       return err.retryAfterSeconds === undefined

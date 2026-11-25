@@ -130,6 +130,8 @@ def _live_step_row(
         own_effort=kind in own_kinds,
         effort_weeks=s.effort_weeks,
         excluded=s.excluded,
+        kind=kind,
+        lab_hold_weeks=s.plan_lab_hold_weeks,
     )
     return LiveStepRow(
         step_id=s.step_template_id,
@@ -147,6 +149,8 @@ def _live_step_row(
         remaining_weeks_override=s.remaining_weeks_override,
         # R35-1 (P35): `eff = 0` first, in `scheduling.demand` too (I25/I33).
         excluded=s.excluded,
+        # ADR 0071: the copy's room weeks (I25 lab half `min(hold, ·)`).
+        lab_hold_weeks=s.plan_lab_hold_weeks,
     )
 
 

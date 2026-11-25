@@ -1388,3 +1388,59 @@ of 2027. P37-F01 must be planned before 28 Dec 2026.
 ### 121
 **What-if import default "plan until"** in the last quarter: end of the current year (today, R53-4) or end
 of next year (as ADR 0044 had)? **Assuming until answered:** end of the current year. **Who must answer:** owner.
+
+### 122
+**Which edit changed the India chambers between 23 and 25 Nov 2026?** *(2026-11-25, P62, non-blocking)*
+
+- On 23 Nov (P58 hosted fix), MEMORY records that IN-CH2 and IN-CH3 got PDD-J / PDD-L, and IN-CH4
+  was left as PDD-F only.
+- On 25 Nov (run v319), India J/L could book only IN-CH4.
+- Some chamber edit in between is not accounted for. Since then the caller has added J/L to
+  IN-CH1..3, which the owner approved.
+
+P62-T06 reads the `chamber.update` audit trail for 23–25 Nov and reports who changed what.
+**Assuming until answered:** the current hosted chamber lists (J/L on IN-CH1..4) are intended.
+**Who must answer:** owner (after T06 reports the audit trail).
+
+### 123
+**OEM Pr. Pr / Pilot (OEM-J, OEM-L): should they also be room-only lab steps that book 1 week?** *(2026-11-25, P62, ADR 0071, non-blocking)*
+
+On hosted, OEM-J is `design` (it books the leader) and OEM-L is `elapsed`; only the PDD workflow
+changed. Their lengths: A-OEM J 1, B-OEM J 1, C-OEM J 0; L is 0 in every OEM category.
+**Assuming until answered:** no change. OEM-J stays design and OEM-L stays elapsed, with no room
+weeks. If the owner says yes, a Workflow Settings kind edit plus an apply setting 1 room week is
+enough, with no code.
+**Who must answer:** owner.
+
+### 124
+**Close P51-T03 ("lab chamber stages J/L, on hold: decide later")?** *(2026-11-25, P62, non-blocking)*
+
+The owner's 2026-11-25 answers settle it:
+
+- Pr. Pr and Pilot are lab steps that book the room only, for their last week.
+- The project's own lab figure covers PoC + Certification only.
+- Category C has neither step.
+
+This matches the client's 2027 Process-steps sheet (lab = F + H).
+**Assuming until answered:** closed, by ADR 0071 R62-1 / R62-11 / R62-13. The plan row is re-marked
+at the P62 gate.
+**Who must answer:** owner (confirm).
+
+### 125
+**Room weeks and the lab rules are linked; is that what the owner wants?** *(2026-11-25, P62, ADR 0071, non-blocking)*
+
+1. **The rules follow the room-weeks value, not the step.** Any lab step with a "Room weeks" value
+   is treated like Pr. Pr / Pilot: it is left out of the project's own lab figure and it is not
+   skipped when certification testing is off. A lab step set to "Full" is treated like PoC /
+   Certification. This only matters if someone later puts a room-weeks value on PoC /
+   Certification, or sets Pr. Pr / Pilot back to Full. The editor warns when they do.
+2. **Our reading of "c doesnt have else have".** We read it as follows:
+   - Category C has no Pr. Pr and no Pilot. The C template's Pr. Pr length becomes 0, and
+     not-started C projects drop it.
+   - Every other category always has both steps, whether or not certification testing is required.
+
+   If the owner meant something else (for example "C keeps Pr. Pr but books no room"), R62-11 is
+   reverted on its own.
+
+**Assuming until answered:** both as built (ADR 0071 R62-1, R62-2, R62-11).
+**Who must answer:** owner.

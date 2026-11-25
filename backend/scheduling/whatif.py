@@ -88,9 +88,13 @@ from scheduling.weeks import (
 from scheduling.workflow import (
     CategoryMaps,
     analyse_project,
+    booked_hold_weeks,
+    build_lab_hold_table,
     build_lead_time_table,
     build_workflows,
     is_valid_fte,
+    row_held_weeks,
+    template_lab_hold_rows,
     unconstrained_end_week,
 )
 
@@ -821,6 +825,7 @@ def apply_scenario(
     labels: dict[str, tuple[str, str, str | None]] = {}
     workflows = build_workflows(si.workflow_steps)
     table = build_lead_time_table(si.lead_times)
+    hold_table = build_lab_hold_table(si.lead_times)  # ADR 0071 R62-9
     n_new = 0
     for idx, ap in enumerate(scenario.add_projects, start=1):
         wf_id = "OEM" if ap.hub in hub_names.OEM_HUBS else "PDD"
@@ -840,6 +845,9 @@ def apply_scenario(
                 workflow_id=wf_id,
                 certification_testing_required=ap.certification_testing_required,
                 capacity_hub=_capacity_hub_for(si, ap.hub, ap.capacity_hub),
+                # ADR 0071 R62-9: the category template's room weeks (`()` when
+                # every hold is full, so the input is the pre-P62 one).
+                step_timing=template_lab_hold_rows(workflows[wf_id], ap.category, hold_table),
             )
             leader = _pick_leader(proto, engineers, load, categories.workflow)
             if leader is not None and not is_not_scheduled_priority(proto):
@@ -918,8 +926,11 @@ def _plan_loads(
         d = sum(
             sp.duration for sp in plan.steps.values() if sp.step.kind == "design" and not sp.skipped
         )
+        # ADR 0071 (I66 / R62-10): lab load is the room weeks `min(hold, eff)`.
         lab = sum(
-            sp.duration for sp in plan.steps.values() if sp.step.kind == "lab" and not sp.skipped
+            booked_hold_weeks(sp.lab_hold_weeks, sp.duration)
+            for sp in plan.steps.values()
+            if sp.step.kind == "lab" and not sp.skipped
         )
         by_hub[p.capacity_hub] += d
         by_region[hub_names.HUB_LAB_REGION[p.hub]] += lab * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
@@ -1681,6 +1692,12 @@ def window_share(start: int, end: int, effort: int, lo: int, hi: int) -> Fractio
     return Fraction(effort * overlap, span)
 
 
+def _count_in(weeks: range, lo: int, hi: int) -> int:
+    """How many of `weeks` lie in `lo..hi` (inclusive)."""
+
+    return max(0, min(weeks.stop - 1, hi) - max(weeks.start, lo) + 1) if len(weeks) else 0
+
+
 def _utilization(
     si: ScheduleInput,
     output: ScheduleOutput,
@@ -1722,8 +1739,16 @@ def _utilization(
         for st in o.steps:
             if st.skipped or st.kind not in ("design", "lab"):
                 continue
-            y = window_share(st.start_week, st.end_week, st.duration_weeks, *year_win)
-            r = window_share(st.start_week, st.end_week, st.duration_weeks, *rem_win)
+            held = row_held_weeks(st) if st.kind == "lab" else None
+            if held is not None:
+                # ADR 0071 R62-10: a lab row with a hold books the held weeks
+                # actually inside the window (its last `h` weeks), never a
+                # pro-rata share of its length.
+                y = Fraction(_count_in(held, *year_win))
+                r = Fraction(_count_in(held, *rem_win))
+            else:
+                y = window_share(st.start_week, st.end_week, st.duration_weeks, *year_win)
+                r = window_share(st.start_week, st.end_week, st.duration_weeks, *rem_win)
             if st.kind == "design":
                 hub_year[p.capacity_hub] += y
                 hub_rem[p.capacity_hub] += r

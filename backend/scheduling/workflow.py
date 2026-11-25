@@ -112,12 +112,64 @@ def effective_lead_weeks(row: StepTimingInput | None, table_weeks: int) -> int:
 # --- The one skip predicate (ADR 0041 R5) -----------------------------------------
 
 
-def merged_step_override(user_override_weeks: int | None, effort_weeks: int | None) -> int | None:
+def is_partial_room(*, kind: str, lab_hold_weeks: int | None) -> bool:
+    """ADR 0071: `partialRoom(p, s) ⟺ kind(s) = lab ∧ plan_lab_hold_weeks(p,
+    s) IS NOT NULL`. A hold on a non-lab step is stored but not read."""
+
+    return kind == "lab" and lab_hold_weeks is not None
+
+
+def merged_step_override(
+    user_override_weeks: int | None,
+    effort_weeks: int | None,
+    *,
+    kind: str | None = None,
+    lab_hold_weeks: int | None = None,
+) -> int | None:
     """ADR 0041 R4 precedence for the solver input: `user ?? effort`. The
     result goes into `StepTimingInput.duration_override_weeks`; `None` means
-    "use the lead time". Pure; no range check (see `validate_step_timing`)."""
+    "use the lead time". Pure; no range check (see `validate_step_timing`).
 
+    ADR 0071 R62-1 / I67: a `partialRoom` step (pass `kind` and
+    `lab_hold_weeks`) takes no effort share, so its merged value is the
+    user's override only (`eff = user_override ?? plan_weeks`), whatever a
+    stale `effort_weeks` says. Without `kind` the result is the pre-P62 one."""
+
+    if kind is not None and is_partial_room(kind=kind, lab_hold_weeks=lab_hold_weeks):
+        return user_override_weeks
     return user_override_weeks if user_override_weeks is not None else effort_weeks
+
+
+def certification_off_skips(
+    *, kind: str, certification_testing_required: bool, lab_hold_weeks: int | None = None
+) -> bool:
+    """ADR 0041 R5 second line as amended by ADR 0071 **R62-2** (owner Q2):
+    certification testing off skips the **full-room** lab steps only,
+    `kind = lab ∧ ¬certification_testing_required ∧ ¬partialRoom`. Pr. Pr /
+    Pilot (room weeks set) run whether or not certification testing is
+    required. Kept as its own function so R62-2 can be reverted alone (drop
+    the `¬partialRoom` term)."""
+
+    return (
+        kind == "lab"
+        and not certification_testing_required
+        and not is_partial_room(kind=kind, lab_hold_weeks=lab_hold_weeks)
+    )
+
+
+def partial_room_zero_length_skips(
+    *, kind: str, lead_weeks: int, lab_hold_weeks: int | None = None
+) -> bool:
+    """ADR 0071 **R62-11** / I67 (owner Q2, "C has no Pr. Pr / Pilot"): a
+    `partialRoom` step whose length (`lead = plan_weeks`) is 0 is skipped,
+    and nothing revives it: not an override, not a figure (it is outside the
+    lab split, R62-1), not a hold. In the engine R62-11 is carried by data
+    (C/PDD-J and C/PDD-L get length 0 and room weeks 0 in migration p71a), so
+    this rule is implied by the general `lead = 0` skip; it is named here so
+    I67 is checkable on its own and R62-11 can be reverted (data revert, then
+    this function) without touching R62-2."""
+
+    return is_partial_room(kind=kind, lab_hold_weeks=lab_hold_weeks) and lead_weeks == 0
 
 
 def step_effective_weeks(
@@ -126,19 +178,30 @@ def step_effective_weeks(
     kind: str,
     certification_testing_required: bool,
     override_weeks: int | None,
+    lab_hold_weeks: int | None = None,
 ) -> int:
-    """ADR 0041 "Invariant wording", `eff(p, s)`:
+    """ADR 0041 "Invariant wording", `eff(p, s)`, as amended by ADR 0071:
 
-        eff = 0                       if lead = 0
-        eff = 0                       if kind = lab and not certification_testing_required
+        eff = 0                       if lead = 0              (R62-11 for partialRoom)
+        eff = 0                       if kind = lab ∧ ¬cert ∧ ¬partialRoom      (R62-2)
         eff = override ?? lead        otherwise
 
     `override_weeks` is the merged per-project value (`merged_step_override`:
-    user ?? effort, 0..104). An override never revives a lead-0 step or a lab
-    step with certification testing off (ADR 0019, R7); an override of 0
-    zeroes (skips) a step whose lead time is not 0 (ADR 0041 §3)."""
+    user ?? effort, 0..104; for a `partialRoom` step the user's override
+    only). An override never revives a lead-0 step or a full-room lab step
+    with certification testing off (ADR 0019, R7); an override of 0 zeroes
+    (skips) a step whose lead time is not 0 (ADR 0041 §3). `lab_hold_weeks`
+    is the step's room weeks (None = full, the pre-P62 predicate)."""
 
-    if lead_weeks == 0 or (kind == "lab" and not certification_testing_required):
+    if partial_room_zero_length_skips(
+        kind=kind, lead_weeks=lead_weeks, lab_hold_weeks=lab_hold_weeks
+    ):
+        return 0
+    if lead_weeks == 0 or certification_off_skips(
+        kind=kind,
+        certification_testing_required=certification_testing_required,
+        lab_hold_weeks=lab_hold_weeks,
+    ):
         return 0
     return lead_weeks if override_weeks is None else override_weeks
 
@@ -149,17 +212,20 @@ def is_step_skipped(
     kind: str,
     certification_testing_required: bool,
     override_weeks: int | None,
+    lab_hold_weeks: int | None = None,
 ) -> bool:
     """ADR 0041 R5 — the ONE skip predicate, used by `analyse_project` and
     meant for every service-side caller (`services.workspace.is_step_skipped`,
     step timing `STEP_SKIPPED`, the stage PATCH `STAGE_SKIPPED`, Gantt
     `timing_editable`, project cards, tracking and the demand query):
 
-        skipped  ⟺  lead = 0  ∨  (kind = lab ∧ ¬certification_testing_required)
+        skipped  ⟺  lead = 0  ∨  (kind = lab ∧ ¬cert ∧ ¬partialRoom)
                               ∨  effective = 0
 
     i.e. `step_effective_weeks(...) == 0`. Same keyword arguments as
-    `step_effective_weeks`."""
+    `step_effective_weeks`; ADR 0071: pass the step's `lab_hold_weeks`
+    (`plan_lab_hold_weeks`, None = full) so a `partialRoom` step is not
+    skipped by certification off (R62-2)."""
 
     return (
         step_effective_weeks(
@@ -167,8 +233,107 @@ def is_step_skipped(
             kind=kind,
             certification_testing_required=certification_testing_required,
             override_weeks=override_weeks,
+            lab_hold_weeks=lab_hold_weeks,
         )
         == 0
+    )
+
+
+# --- Lab hold weeks (ADR 0071, R62-0 / R62-4 / R62-5) ------------------------------
+
+
+#: ADR 0071 / I65: domain of `StepTimingInput.lab_hold_weeks` (None = full).
+LAB_HOLD_MIN_WEEKS = 0
+LAB_HOLD_MAX_WEEKS = 104
+
+
+def booked_hold_weeks(lab_hold_weeks: int | None, n: int) -> int:
+    """R62-0: `h = min(hold, n)` on a booked interval of `n` weeks; `None`
+    (full) holds all `n`. Never negative; 0 when `n <= 0`."""
+
+    if n <= 0:
+        return 0
+    if lab_hold_weeks is None:
+        return n
+    return max(0, min(lab_hold_weeks, n))
+
+
+def hold_window(start: int, end: int, lab_hold_weeks: int | None) -> range:
+    """R62-0: the weeks a lab step booked on `start..end` (inclusive) holds
+    its chamber, the **last** `h` of them: `range(end - h + 1, end + 1)`.
+    With `None` (full) this is `range(start, end + 1)`, the pre-P62 rule;
+    with `h = 0` it is empty."""
+
+    h = booked_hold_weeks(lab_hold_weeks, end - start + 1)
+    return range(end - h + 1, end + 1)
+
+
+def row_lab_hold_weeks(lab_hold_weeks: int | None, n: int) -> int | None:
+    """The value a lab row reports in `StepSchedule.lab_hold_weeks`: `None`
+    for a full-hold step (every booked week, as a pre-P62 row), else the
+    booked `h = min(hold, n)` over the row's booked interval of `n` weeks."""
+
+    return None if lab_hold_weeks is None else booked_hold_weeks(lab_hold_weeks, n)
+
+
+def row_held_weeks(row: StepSchedule) -> range | None:
+    """The held weeks of a lab row with a hold, `end - h + 1 .. end`
+    (`range(0)` when `h = 0`); `None` when the row reports no hold (full:
+    every week the row books, whatever rule the caller already applies)."""
+
+    if row.lab_hold_weeks is None:
+        return None
+    h = max(0, row.lab_hold_weeks)
+    return range(row.end_week - h + 1, row.end_week + 1)
+
+
+def row_lab_load_weeks(row: StepSchedule) -> int:
+    """I66: the lab load of one non-skipped lab row, `h` with NULL read as
+    `duration_weeks` (the pre-P62 load). 0 for a skipped or non-lab row."""
+
+    if row.kind != "lab" or row.skipped:
+        return 0
+    return row.duration_weeks if row.lab_hold_weeks is None else row.lab_hold_weeks
+
+
+def build_lab_hold_table(
+    lead_times: Iterable[LeadTime],
+) -> dict[tuple[str, str, str], int | None]:
+    """`(workflow_id, category, step_id) -> template room weeks` (None =
+    full) from the input's lead-time rows; the first row per key wins in
+    sorted order (`build_lead_time_table` rejects duplicates)."""
+
+    out: dict[tuple[str, str, str], int | None] = {}
+    for lt in sorted(
+        lead_times,
+        key=lambda r: (
+            r.workflow_id,
+            r.category,
+            r.step_id,
+            -1 if r.lab_hold_weeks is None else r.lab_hold_weeks,
+        ),
+    ):
+        out.setdefault((lt.workflow_id, lt.category, lt.step_id), lt.lab_hold_weeks)
+    return out
+
+
+def template_lab_hold_rows(
+    workflow: Workflow,
+    category: str,
+    hold_table: Mapping[tuple[str, str, str], int | None],
+) -> tuple[StepTimingInput, ...]:
+    """R62-9: the step-timing rows that give a project built from its
+    category template (a What-if added project, a plan-import file project)
+    the template's room weeks: one `StepTimingInput(step_id, None, None,
+    lab_hold_weeks=h)` per `lab` step whose template hold is not None,
+    sorted by step id. `()` when every hold is full, so such inputs are
+    byte-identical to before P62."""
+
+    return tuple(
+        StepTimingInput(sid, None, None, lab_hold_weeks=hold)
+        for sid in sorted(workflow.steps_by_id)
+        if workflow.steps_by_id[sid].kind == "lab"
+        and (hold := hold_table.get((workflow.workflow_id, category, sid))) is not None
     )
 
 
@@ -432,6 +597,12 @@ class StepPlan:
     # of a non-frozen project with predecessors; 0 everywhere else (a started
     # step's wait is over, a skipped step and a frozen project ignore it).
     wait_weeks: int = 0
+    # ADR 0071 (R62-0): the step's room weeks, read only on a `lab` step
+    # (None on every other kind and on a full-hold lab step). A booked
+    # interval of `n` weeks holds the chamber for its last
+    # `booked_hold_weeks(lab_hold_weeks, n)` weeks. A frozen project honours
+    # it (it is room, not timing).
+    lab_hold_weeks: int | None = None
 
     @property
     def anchored(self) -> bool:
@@ -711,12 +882,25 @@ def validate_step_timing(project: ProjectInput, workflow: Workflow, *, horizon_w
             raise ValueError(
                 f"{where}: lead_weeks={lead!r} is outside {LEAD_MIN_WEEKS}..{LEAD_MAX_WEEKS}"
             )
+        # P62 (ADR 0071, I65): room weeks 0..104 (None = full). The `<= length`
+        # half of I65 is a storage CHECK; the engine clamps `h = min(hold, n)`.
+        hold = row.lab_hold_weeks
+        if hold is not None and (
+            isinstance(hold, bool)
+            or not isinstance(hold, int)
+            or not LAB_HOLD_MIN_WEEKS <= hold <= LAB_HOLD_MAX_WEEKS
+        ):
+            raise ValueError(
+                f"{where}: lab_hold_weeks={hold!r} is outside "
+                f"{LAB_HOLD_MIN_WEEKS}..{LAB_HOLD_MAX_WEEKS}"
+            )
 
 
-def _step_timing_sort_key(row: StepTimingInput) -> tuple[str, int, int, int, int, int]:
+def _step_timing_sort_key(row: StepTimingInput) -> tuple[str, int, int, int, int, int, int]:
     """Total, deterministic order over timing rows (I8): by `step_id`, then the
     values (None sorts first), so even duplicate rows order identically. The
-    P33 fields come last, so rows without them order exactly as before."""
+    P33 fields come last, so rows without them order exactly as before; the
+    P62 hold after them."""
 
     return (
         row.step_id,
@@ -725,6 +909,7 @@ def _step_timing_sort_key(row: StepTimingInput) -> tuple[str, int, int, int, int
         row.overlap_weeks,
         row.wait_weeks,
         -1 if row.lead_weeks is None else row.lead_weeks,
+        -1 if row.lab_hold_weeks is None else row.lab_hold_weeks,
     )
 
 
@@ -752,6 +937,7 @@ def canonical_step_timing(rows: Iterable[StepTimingInput]) -> tuple[StepTimingIn
                 or r.overlap_weeks != 0
                 or r.wait_weeks != 0
                 or r.lead_weeks is not None
+                or r.lab_hold_weeks is not None
             ),
             key=_step_timing_sort_key,
         )
@@ -780,6 +966,9 @@ def canonical_step_timing_dict(row: StepTimingInput) -> dict[str, int | str | No
         out["wait_weeks"] = row.wait_weeks
     if row.lead_weeks is not None:
         out["lead_weeks"] = row.lead_weeks
+    # P62 (ADR 0071, R62-5): room weeks only when set.
+    if row.lab_hold_weeks is not None:
+        out["lab_hold_weeks"] = row.lab_hold_weeks
     return out
 
 
@@ -1012,6 +1201,13 @@ def canonical_schedule_input_asdict(schedule_input: ScheduleInput) -> dict[str, 
                 del row["wait_weeks"]
             if "lead_weeks" in row and row["lead_weeks"] is None:
                 del row["lead_weeks"]
+            # P62 (ADR 0071, R62-5): a full hold serialises as before P62.
+            if "lab_hold_weeks" in row and row["lab_hold_weeks"] is None:
+                del row["lab_hold_weeks"]
+    # P62 (ADR 0071): the template's room weeks only when set.
+    for lt in data.get("lead_times", ()):
+        if "lab_hold_weeks" in lt and lt["lab_hold_weeks"] is None:
+            del lt["lab_hold_weeks"]
     if is_default_categories(schedule_input.categories):
         del data["categories"]
     return data
@@ -1048,6 +1244,9 @@ def canonical_schedule_output_asdict(schedule_output: ScheduleOutput) -> dict[st
             for key in _STEP_PIN_FLAGS:
                 if step.get(key) is False:
                     del step[key]
+            # P62 (ADR 0071): a row without a hold serialises as before P62.
+            if "lab_hold_weeks" in step and step["lab_hold_weeks"] is None:
+                del step["lab_hold_weeks"]
     return data
 
 
@@ -1117,7 +1316,18 @@ def analyse_project(
             kind=step.kind,
             certification_testing_required=project.certification_testing_required,
             override_weeks=None if row is None else row.duration_override_weeks,
+            lab_hold_weeks=hold_of(step),
         )
+
+    def hold_of(step: WorkflowStepTemplate) -> int | None:
+        """ADR 0071: the step's room weeks, on a `lab` step only (a hold on
+        another kind is stored but not read). Tolerant of a malformed value
+        (the run rejects it earlier in `validate_step_timing`)."""
+
+        row = timing_by_step.get(step.step_id)
+        if step.kind != "lab" or row is None or row.lab_hold_weeks is None:
+            return None
+        return max(0, row.lab_hold_weeks)
 
     def start_floor(step_id: str) -> int | None:
         """The Not Started search floor; frozen projects ignore it (frozen wins)."""
@@ -1202,6 +1412,7 @@ def analyse_project(
                 start_not_before_week=start_floor(step.step_id),
                 overlap_weeks=overlap_of(step),
                 wait_weeks=wait_of(step),
+                lab_hold_weeks=hold_of(step),
             )
             continue
 
@@ -1271,6 +1482,7 @@ def analyse_project(
             ),
             overlap_weeks=overlap_of(step),
             wait_weeks=wait_of(step) if status == STATUS_NOT_STARTED else 0,
+            lab_hold_weeks=hold_of(step),
         )
 
     if not project.frozen and leader_fte is not None and not is_valid_fte(leader_fte):
@@ -1315,6 +1527,7 @@ def analyse_project(
                     start_not_before_week=start_floor(step.step_id),
                     overlap_weeks=overlap_of(step),
                     wait_weeks=wait_of(step),
+                    lab_hold_weeks=hold_of(step),
                 )
 
     tracked = any(not sp.skipped and sp.status != STATUS_NOT_STARTED for sp in plans.values())

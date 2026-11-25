@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Save, Undo2 } from 'lucide-react';
 
 import { StepKindBadge } from '@/components/shared/step-kind-badge';
+import { WeekYearInput } from '@/components/shared/week-year-input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,7 +23,6 @@ import {
 } from '@/lib/api/edit-conflict';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { formatPlanWeek } from '@/lib/format';
-import { cn } from '@/lib/utils';
 import { useEditConflict } from '@/lib/use-edit-conflict';
 import { useEditSession } from '@/stores/edit-session';
 import { stageStatusLabel, WORKFLOW_STEP_STATUSES, type WorkflowStepStatus } from '@/types/enums';
@@ -236,7 +236,7 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
       </div>
 
       {canWrite ? (
-        <fieldset className="grid gap-2 sm:grid-cols-[9rem_1fr_6rem_6rem_7rem]" aria-label={`Progress for ${label}`}>
+        <fieldset className="grid gap-2 sm:grid-cols-[9rem_1fr_8.5rem_8.5rem_7rem]" aria-label={`Progress for ${label}`}>
           <div className="flex flex-col gap-0.5">
             <label htmlFor={`${idBase}-status`} className="text-2xs text-text-muted">
               Status
@@ -287,7 +287,7 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
             </div>
           </div>
 
-          <WeekInput
+          <WeekYearInput
             id={`${idBase}-start`}
             label="Actual start"
             aria={`Actual start week — ${stage.name}`}
@@ -295,7 +295,7 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
             invalid={Boolean(errors.actual_start_week)}
             onChange={(v) => update({ ...draft, actual_start_week: v })}
           />
-          <WeekInput
+          <WeekYearInput
             id={`${idBase}-end`}
             label="Actual end"
             aria={`Actual end week — ${stage.name}`}
@@ -388,48 +388,6 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
         </div>
       ) : null}
     </li>
-  );
-}
-
-function WeekInput({
-  id,
-  label,
-  aria,
-  value,
-  invalid,
-  disabled,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  aria: string;
-  value: number | null;
-  invalid: boolean;
-  disabled?: boolean;
-  onChange: (v: number | null) => void;
-}): React.JSX.Element {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <label htmlFor={id} className="text-2xs text-text-muted">
-        {label}
-      </label>
-      <input
-        id={id}
-        type="number"
-        min={1}
-        inputMode="numeric"
-        placeholder="W"
-        value={value === null ? '' : String(value)}
-        disabled={disabled}
-        onChange={(e) => onChange(numOrNull(e.target.value))}
-        aria-label={aria}
-        aria-invalid={invalid ? true : undefined}
-        className={cn(
-          'h-8 rounded border border-border-strong bg-surface px-2 text-right text-xs tabular-nums text-text placeholder:text-text-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
-          'aria-[invalid=true]:border-danger',
-        )}
-      />
-    </div>
   );
 }
 

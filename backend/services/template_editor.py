@@ -15,7 +15,10 @@
   - a non-zero resulting gap on the workflow's first step: 422
     `FIRST_STEP_GAP`;
   - (change sets only) a step whose given values all equal the saved ones:
-    422 `NO_CHANGE`.
+    422 `NO_CHANGE`;
+  - P62 (ADR 0071, contract P62 §4.1): room weeks on a non-lab step: 422
+    `LAB_HOLD_NOT_LAB`; outside `0..weeks`: 422 `LAB_HOLD_OUT_OF_RANGE`; a
+    length lowered under the saved room weeks clamps them.
   Ranges (weeks 0..104, gap -104..104) are the request schema's.
 
 Nothing here writes.
@@ -35,7 +38,7 @@ from models.enums import WorkflowStepKind
 from models.workflow import Workflow as WorkflowRow
 from scheduling.template_timeline import TemplateTimeline
 from schemas.workflow_settings import CategoryTimeline, TimelineStep
-from schemas.workflow_templates import TemplateStepOverride
+from schemas.workflow_templates import LAB_HOLD_FULL, TemplateStepOverride
 from services.categories import unknown_category_error
 from services.workflow_previews import (
     TemplateCell,
@@ -58,6 +61,12 @@ class StepDelta:
     weeks_after: int
     gap_before: int
     gap_after: int
+    #: P62 (ADR 0071): the template's room weeks before / after (None =
+    #: Full). `hold_clamped`: the request lowered `weeks` under the saved
+    #: hold without giving one, so the server clamped it (contract §4.1).
+    hold_before: int | None = None
+    hold_after: int | None = None
+    hold_clamped: bool = False
 
     @property
     def length_changed(self) -> bool:
@@ -66,6 +75,11 @@ class StepDelta:
     @property
     def gap_changed(self) -> bool:
         return self.gap_before != self.gap_after
+
+    @property
+    def hold_changed(self) -> bool:
+        """P62 (R62-8): the third template change kind."""
+        return self.hold_before != self.hold_after
 
 
 @dataclass(frozen=True)
@@ -81,16 +95,70 @@ class ResolvedEntry:
     @property
     def overrides(self) -> dict[str, TemplateCell]:
         return {
-            d.step_id: TemplateCell(weeks=d.weeks_after, gap_weeks=d.gap_after) for d in self.deltas
+            d.step_id: TemplateCell(
+                weeks=d.weeks_after, gap_weeks=d.gap_after, lab_hold_weeks=d.hold_after
+            )
+            for d in self.deltas
         }
 
     @property
     def changed(self) -> tuple[StepDelta, ...]:
-        return tuple(d for d in self.deltas if d.length_changed or d.gap_changed)
+        return tuple(d for d in self.deltas if d.length_changed or d.gap_changed or d.hold_changed)
+
+    @property
+    def hold_only(self) -> bool:
+        """P62 (contract §4.3): every changed step changes only its room
+        weeks (the apply then marks stale and dispatches nothing)."""
+        return all(not (d.length_changed or d.gap_changed) for d in self.changed)
 
 
 def bad_step(message: str) -> CodedHTTPException:
     return CodedHTTPException(HTTP_422, "BAD_STEP", message)
+
+
+def resolve_hold(
+    step: TemplateStepOverride,
+    *,
+    kind: str,
+    saved_hold: int | None,
+    weeks_after: int,
+    index: int,
+    label: str,
+) -> tuple[int | None, bool]:
+    """P62 (ADR 0071, contract P62 §4.1): the template's room weeks after one
+    override, and whether the server clamped them.
+
+    - omitted: keep the saved value, clamped to a lowered `weeks` (I65;
+      `room_weeks_clamped`);
+    - `"full"`: NULL (on a non-lab step a no-op: the saved value is kept);
+    - an integer: 422 `LAB_HOLD_NOT_LAB` on a non-lab step, 422
+      `LAB_HOLD_OUT_OF_RANGE` outside `0..weeks_after`. Stored as given, an
+      explicit value equal to the length included (R62-3)."""
+
+    value = step.lab_hold_weeks
+    if value is None:
+        if saved_hold is not None and saved_hold > weeks_after:
+            return weeks_after, True
+        return saved_hold, False
+    if value == LAB_HOLD_FULL:
+        if kind != "lab":
+            return (min(saved_hold, weeks_after) if saved_hold is not None else None), False
+        return None, False
+    if kind != "lab":
+        raise CodedHTTPException(
+            HTTP_422,
+            "LAB_HOLD_NOT_LAB",
+            f"steps[{index}]: {label} is a {kind} step; room weeks apply to lab steps only",
+        )
+    assert isinstance(value, int)
+    if not 0 <= value <= weeks_after:
+        raise CodedHTTPException(
+            HTTP_422,
+            "LAB_HOLD_OUT_OF_RANGE",
+            f"steps[{index}]: {label} room weeks {value} must be 0..{weeks_after} "
+            "(the step's length)",
+        )
+    return value, False
 
 
 async def load_categories(
@@ -164,13 +232,22 @@ async def resolve_entry(
                 f"steps[{i}]: category {category_code!r} has no template row for {s.step_id!r}"
             )
         saved = cells[s.step_id]
+        kind = wf.workflow.steps_by_id[s.step_id].kind
+        weeks_after = saved.weeks if s.weeks is None else s.weeks
+        hold_after, hold_clamped = resolve_hold(
+            s, kind=kind, saved_hold=saved.lab_hold_weeks, weeks_after=weeks_after, index=i,
+            label=f"{workflow_id}/{category_code} {s.step_id}",
+        )  # fmt: skip
         delta = StepDelta(
             step_id=s.step_id,
-            kind=wf.workflow.steps_by_id[s.step_id].kind,
+            kind=kind,
             weeks_before=saved.weeks,
-            weeks_after=saved.weeks if s.weeks is None else s.weeks,
+            weeks_after=weeks_after,
             gap_before=saved.gap_weeks,
             gap_after=saved.gap_weeks if s.gap_weeks is None else s.gap_weeks,
+            hold_before=saved.lab_hold_weeks,
+            hold_after=hold_after,
+            hold_clamped=hold_clamped,
         )
         if delta.gap_after != 0 and s.step_id in wf.first_step_ids:
             raise CodedHTTPException(
@@ -178,7 +255,7 @@ async def resolve_entry(
                 "FIRST_STEP_GAP",
                 f"{s.step_id!r} is the first step of workflow {workflow_id!r}; its gap must be 0",
             )
-        if require_change and not (delta.length_changed or delta.gap_changed):
+        if require_change and not (delta.length_changed or delta.gap_changed or delta.hold_changed):
             raise CodedHTTPException(
                 HTTP_422,
                 "NO_CHANGE",
@@ -204,6 +281,7 @@ def category_timeline_payload(
         total_weeks=timeline.total_weeks,
         design_weeks=timeline.design_weeks,
         lab_weeks=timeline.lab_weeks,
+        lab_length_weeks=timeline.lab_length_weeks,
         note=timeline.note,
         steps=[
             TimelineStep(
@@ -216,6 +294,10 @@ def category_timeline_payload(
                 effective_gap_weeks=s.effective_gap_weeks,
                 flags=ordered_flags(s.flags),
                 predecessor_ids=list(wf.workflow.steps_by_id[s.step_id].predecessor_ids),
+                # ADR 0071 (contract P62 §3.2), from the engine's walk.
+                lab_hold_weeks=s.lab_hold_weeks,
+                room_weeks=s.room_weeks,
+                room_start_week=s.room_start_week,
             )
             for s in timeline.steps
         ],

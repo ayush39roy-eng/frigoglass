@@ -16,7 +16,7 @@ import {
 } from '@/lib/api/edit-conflict';
 import { queryKeys } from '@/lib/query-keys';
 import { useEditConflict } from '@/lib/use-edit-conflict';
-import { formatTimestamp } from '@/lib/format';
+import { formatTimestamp, formatWeek } from '@/lib/format';
 import { usePermission } from '@/stores/session';
 
 import type {
@@ -191,8 +191,8 @@ export function WorkflowTemplatesSection(): React.JSX.Element {
             <p className="text-2xs text-text-muted" data-numeric="">
               {/* ADR 0024: a 52-week year is presented; the served internal
                   search horizon (`horizon_weeks`) is not shown. */}
-              Planning week W{data.current_week} of {data.within_year_week} · within-year by W
-              {data.within_year_week}, later work is spillover · last changed {formatTimestamp(data.updated_at)}
+              Planning week {formatWeek(data.current_week)} · within-year by {formatWeek(data.within_year_week)}, later work
+              is spillover · last changed {formatTimestamp(data.updated_at)}
               {data.updated_by ? ` by ${data.updated_by}` : ''}
             </p>
             <TemplateTabs

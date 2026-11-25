@@ -43,8 +43,8 @@ describe('EngineerUtilizationHeatmap', () => {
     const text = rows.map((r) => r.textContent ?? '');
     expect(text.findIndex((t) => t.startsWith('PD-India'))).toBeLessThan(text.findIndex((t) => t.startsWith('R&D-Greece')));
     const row = screen.getAllByTestId('engineer-row').find((r) => r.textContent?.includes('Priya N'))!;
-    expect(within(row).getByLabelText(/W3: .*over-utilized/)).toHaveTextContent('120');
-    expect(within(row).getByLabelText(/W1: .*under-utilized/)).toBeInTheDocument();
+    expect(within(row).getByLabelText(/W3 '26: .*over-utilized/)).toHaveTextContent('120');
+    expect(within(row).getByLabelText(/W1 '26: .*under-utilized/)).toBeInTheDocument();
     expect(within(row).getByTestId('engineer-total')).toHaveTextContent('2/3');
     expect(screen.getByRole('columnheader', { name: '2' })).toHaveAttribute('aria-current', 'date');
     expect(screen.getByTestId('engineer-util-legend')).toHaveTextContent(/Under-utilized.*Well-utilized.*Over-utilized/);

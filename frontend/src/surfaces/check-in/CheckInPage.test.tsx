@@ -171,7 +171,7 @@ describe('CheckInPage — served display', () => {
     await user.click(within(stageEl('Design Detailing')).getByRole('button', { name: /Check-in history for Design Detailing/ }));
     const list = await screen.findByTestId('check-in-history');
     expect(client.apiGet).toHaveBeenCalledWith('/check-ins/history', expect.objectContaining({ query: { project_id: 'p1', step_id: 'PDD-E' } }));
-    expect(list).toHaveTextContent('W30 · On Hold · 30 %');
+    expect(list).toHaveTextContent('W30 \'26 · On Hold · 30 %');
     expect(list).toHaveTextContent('Hold reason: Waiting for parts');
     expect(list).toHaveTextContent('By Ana Engineer');
   });
@@ -338,7 +338,7 @@ describe('CheckInPage — plan clock (P37)', () => {
       session: { current_week: 47, weeks_left_in_year: 5, plan_week: { run_week: 42, run_version: 8, status: 'recalculating' } },
     });
     await screen.findByRole('heading', { name: 'Design Detailing', level: 4 });
-    expect(screen.getByTestId('plan-week-notice')).toHaveTextContent('This plan is from W42; the current week is W47.');
+    expect(screen.getByTestId('plan-week-notice')).toHaveTextContent('This plan is from W42 \'26; the current week is W47 \'26.');
   });
 });
 

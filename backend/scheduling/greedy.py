@@ -95,6 +95,17 @@ Open horizon (ADR 0063, R53-2 / I58): every walk searches to the run's
 week is a search limit. A project with no placement ending <= H is LEFT_OUT
 (`delivery.left_out_reason` -> `beyond_horizon`).
 
+Lab hold weeks (ADR 0071, R62-0 / R62-4 / R62-5; DOMAIN_RULES "Lab hold
+weeks"): a lab step with room weeks (`StepPlan.lab_hold_weeks`, from
+`StepTimingInput.lab_hold_weeks`) still spans its `n` weeks but holds one
+chamber for its last `h = min(hold, n)` weeks only: the search takes the
+earliest start whose held weeks have a free eligible chamber (chamber_id
+order); a frozen step takes `eligible[0]` over the held weeks; In Progress /
+Done / pinned placements hold the last `h` weeks of their tail / actual span /
+window (`_book_anchored`). `h = 0` books no chamber and is never `no_chamber`.
+The row reports `h` in `StepSchedule.lab_hold_weeks` (None for a full hold).
+With every hold None every run is byte-identical to before P62.
+
 No DB access, no network access, no filesystem access, no randomness, no
 wall-clock dependence. Every collection this module iterates is explicitly
 sorted before iteration.
@@ -127,11 +138,13 @@ from scheduling.workflow import (
     StepPlan,
     Workflow,
     analyse_project,
+    booked_hold_weeks,
     build_category_maps,
     build_lead_time_table,
     build_workflows,
     compute_progress_pct,
     first_step_frontier,
+    hold_window,
     is_default_categories,
     leader_fte_of,
     manual_overlap_by_row,
@@ -140,6 +153,7 @@ from scheduling.workflow import (
     pinned_release,
     pins_lapsed,
     release_week,
+    row_lab_hold_weeks,
     step_gate,
     unconstrained_end_week,
     validate_schedulable_project,
@@ -303,6 +317,8 @@ class _Placement:
     end_week: int
     engineer_id: str | None
     chamber_id: str | None
+    # ADR 0071: the row's `StepSchedule.lab_hold_weeks` (None = full / not lab).
+    lab_hold_weeks: int | None = None
 
 
 class _ResourceState:
@@ -797,7 +813,9 @@ def prebook_anchored_steps(
                     continue  # placed during the walk
                 if sp.remaining_span == 0:
                     end = max(sp.actual_start_week, gate - 1)
-                    placed[sid] = _Placement(sp.actual_start_week, end, None, None)
+                    placed[sid] = _Placement(
+                        sp.actual_start_week, end, None, None, _tail_hold(sp, 0)
+                    )
                     _know(known_g, known_starts, sp, sp.actual_start_week, end, release)
                     continue
                 # ADR 0032: the remaining effort is stretched by the leader's FTE.
@@ -867,6 +885,15 @@ def _know(
         known_g[sid] = passed_release(sp, end, release)
 
 
+def _tail_hold(sp: StepPlan, n: int) -> int | None:
+    """ADR 0071: the `lab_hold_weeks` a lab row of `n` booked weeks reports
+    (None on a non-lab or full-hold step)."""
+
+    if sp.step.kind != "lab":
+        return None
+    return row_lab_hold_weeks(sp.lab_hold_weeks, n)
+
+
 def _book_anchored(
     ctx: RunContext,
     state: _ResourceState,
@@ -894,7 +921,14 @@ def _book_anchored(
 
     ADR 0054 (R40-6): a manual pin is booked through here too (`pinned`), on
     its effective window: a design pin books the leader in every week, a lab
-    pin one platform of one chamber per week, an elapsed pin nothing."""
+    pin one platform of one chamber per week, an elapsed pin nothing.
+
+    ADR 0071 (R62-0 / R62-4 / R62-5): a lab step holds its chamber for the
+    last `h = min(hold, n)` weeks of `start..end` only (`n = end - start + 1`:
+    an In Progress / Blocked tail, a Done span, a pin window), and of those
+    only the weeks >= `consume_from` are consumed. `h = 0` books no chamber
+    and needs none (never a `no_chamber` exit). A full hold (None) is the
+    pre-P62 rule, every week of `start..end`."""
 
     weeks = range(max(start, consume_from), end + 1)
     shown_start = reported_start if reported_start is not None else start
@@ -903,12 +937,19 @@ def _book_anchored(
         conflict = state.book_engineer(leader.engineer_id, weeks, project_id, pinned=pinned)
         return _Placement(shown_start, end, leader.engineer_id, None), conflict, False
     if kind == "lab":
+        n = end - start + 1
+        row_hold = row_lab_hold_weeks(sp.lab_hold_weeks, n)
+        if booked_hold_weeks(sp.lab_hold_weeks, n) == 0 and sp.lab_hold_weeks is not None:
+            # R62-4: room weeks 0, nothing to book and no chamber needed.
+            return _Placement(shown_start, end, None, None, row_hold), False, False
+        held = hold_window(start, end, sp.lab_hold_weeks)
+        weeks = range(max(held.start, consume_from), end + 1)
         eligible = _eligible_chambers(ctx.chambers_by_id, region, sp.step.step_id)
         if not eligible:
             return None, False, False
         chosen = next((c for c in eligible if state.chamber_free(c, weeks)), eligible[0])
         over = state.book_chamber(chosen, weeks)
-        return _Placement(shown_start, end, None, chosen.chamber_id), False, over
+        return _Placement(shown_start, end, None, chosen.chamber_id, row_hold), False, over
     return _Placement(shown_start, end, None, None), False, False
 
 
@@ -961,6 +1002,7 @@ def _schedule_one_project(
         *,
         skipped: bool = False,
         pinned: bool = False,
+        hold: int | None = None,
     ) -> None:
         ends[sp.step.step_id] = end
         starts[sp.step.step_id] = start
@@ -979,6 +1021,7 @@ def _schedule_one_project(
             assigned_chamber_id=ch,
             skipped=skipped,
             pinned=pinned,
+            lab_hold_weeks=hold,
         )
 
     release = frontier - 1
@@ -1016,7 +1059,15 @@ def _schedule_one_project(
                 break
             if sid in prebooked:
                 pl = prebooked[sid]
-                emit(sp, pl.start_week, pl.end_week, pl.engineer_id, pl.chamber_id, pinned=True)
+                emit(
+                    sp,
+                    pl.start_week,
+                    pl.end_week,
+                    pl.engineer_id,
+                    pl.chamber_id,
+                    pinned=True,
+                    hold=pl.lab_hold_weeks,
+                )
                 continue
             placement, conflict, over = _book_anchored(
                 ctx,
@@ -1042,12 +1093,20 @@ def _schedule_one_project(
                 placement.engineer_id,
                 placement.chamber_id,
                 pinned=True,
+                hold=placement.lab_hold_weeks,
             )
             continue
 
         if sid in prebooked:
             pl = prebooked[sid]
-            emit(sp, pl.start_week, pl.end_week, pl.engineer_id, pl.chamber_id)
+            emit(
+                sp,
+                pl.start_week,
+                pl.end_week,
+                pl.engineer_id,
+                pl.chamber_id,
+                hold=pl.lab_hold_weeks,
+            )
             continue
 
         if not frozen and sp.status == STATUS_DONE:
@@ -1076,6 +1135,7 @@ def _schedule_one_project(
                 placement.end_week,
                 placement.engineer_id,
                 placement.chamber_id,
+                hold=placement.lab_hold_weeks,
             )
             continue
 
@@ -1085,7 +1145,14 @@ def _schedule_one_project(
             # tail is placed now, still without a search.
             assert sp.actual_start_week is not None
             if sp.remaining_span == 0:
-                emit(sp, sp.actual_start_week, max(sp.actual_start_week, gate - 1), None, None)
+                emit(
+                    sp,
+                    sp.actual_start_week,
+                    max(sp.actual_start_week, gate - 1),
+                    None,
+                    None,
+                    hold=_tail_hold(sp, 0),
+                )
                 continue
             tail_start = max(current_week, gate, sp.actual_start_week)
             placement, conflict, over = _book_anchored(
@@ -1111,6 +1178,7 @@ def _schedule_one_project(
                 placement.end_week,
                 placement.engineer_id,
                 placement.chamber_id,
+                hold=placement.lab_hold_weeks,
             )
             continue
 
@@ -1143,18 +1211,32 @@ def _schedule_one_project(
             emit(sp, w, w + duration - 1, leader.engineer_id, None)
 
         elif kind == "lab":
+            # ADR 0071 (R62-0 / R62-4 / R62-5): the step spans `duration` weeks
+            # and holds one chamber for its last `h` of them. A full hold
+            # (None) gives `h = duration`, exactly the pre-P62 search.
+            h = booked_hold_weeks(sp.lab_hold_weeks, duration)
+            row_hold = row_lab_hold_weeks(sp.lab_hold_weeks, duration)
+            if h == 0:
+                # R62-4: no chamber needed or booked, never `no_chamber`; the
+                # step still occupies its calendar weeks (like elapsed).
+                if not frozen and w + duration > horizon:
+                    left_out = True
+                    break
+                emit(sp, w, w + duration - 1, None, None, hold=row_hold)
+                continue
             eligible = _eligible_chambers(ctx.chambers_by_id, region, sid)
             if not eligible:
                 left_out, no_chamber_step_id = True, sid
                 break
+            lead_in = duration - h  # weeks before the hold window books nothing
             if frozen:
                 chosen = eligible[0]
-                overlap |= state.book_chamber(chosen, range(w, w + duration))
+                overlap |= state.book_chamber(chosen, range(w + lead_in, w + duration))
             else:
                 chosen_opt: ChamberInput | None = None
                 while w + duration <= horizon and chosen_opt is None:
                     for candidate in eligible:
-                        if state.chamber_free(candidate, range(w, w + duration)):
+                        if state.chamber_free(candidate, range(w + lead_in, w + duration)):
                             chosen_opt = candidate
                             break
                     if chosen_opt is None:
@@ -1163,8 +1245,8 @@ def _schedule_one_project(
                     left_out = True
                     break
                 chosen = chosen_opt
-                state.book_chamber(chosen, range(w, w + duration))
-            emit(sp, w, w + duration - 1, None, chosen.chamber_id)
+                state.book_chamber(chosen, range(w + lead_in, w + duration))
+            emit(sp, w, w + duration - 1, None, chosen.chamber_id, hold=row_hold)
 
         else:  # elapsed: books nothing, starts at its earliest feasible start
             if not frozen and w + duration > horizon:
@@ -1186,6 +1268,7 @@ def _schedule_one_project(
                     pl.engineer_id,
                     pl.chamber_id,
                     pinned=sid in pins,
+                    hold=pl.lab_hold_weeks,
                 )
 
     manual_overlap = False

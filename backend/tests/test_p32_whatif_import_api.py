@@ -433,7 +433,9 @@ async def test_simulate_edits(db_session):
         key = rows[2]["key"]  # Fresh Auto, category C
         edits = [
             {"project_ref": key, "step_id": "PDD-E", "duration_weeks": 7},
-            {"project_ref": key, "step_id": "PDD-J", "start_not_before_week": 80},
+            # P62 (p71a, R62-11): C/PDD-J is 0 weeks (skipped), so the floor
+            # goes on TF-2 (PDD-K, 1 week for C).
+            {"project_ref": key, "step_id": "PDD-K", "start_not_before_week": 80},
             {"project_ref": str(world.gamma.id), "step_id": "PDD-E", "duration_weeks": 9},
         ]
         resp = await c.post("/whatif/import/simulate", json=sim_body(rows, edits=edits))
@@ -442,8 +444,8 @@ async def test_simulate_edits(db_session):
         file_p = next(p for p in body["projects"] if p["ref"] == key)
         steps = {s["step_id"]: s for s in file_p["steps"]}
         assert steps["PDD-E"]["duration_weeks"] == 7
-        assert steps["PDD-J"]["start_week"] >= 80
-        assert steps["PDD-J"]["start_not_before_week"] == 80
+        assert steps["PDD-K"]["start_week"] >= 80
+        assert steps["PDD-K"]["start_not_before_week"] == 80
         gamma = next(p for p in body["projects"] if p["ref"] == str(world.gamma.id))
         assert {s["step_id"]: s for s in gamma["steps"]}["PDD-E"]["duration_weeks"] == 9
 

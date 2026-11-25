@@ -100,10 +100,12 @@ from scheduling.workflow import (
     StepPlan,
     Workflow,
     analyse_project,
+    build_lab_hold_table,
     build_lead_time_table,
     build_workflows,
     is_step_skipped,
     is_valid_fte,
+    row_held_weeks,
 )
 
 # =====================================================================================
@@ -502,6 +504,9 @@ class _Triple:
     # R33-9). New file projects use the table and no wait.
     wait: int = 0
     lead: int | None = None
+    # ADR 0071 (R62-9): the step's room weeks (None = full). A matched live
+    # project keeps its own copy; a file project takes its category template's.
+    hold: int | None = None
 
 
 def _own_lead(t: _Triple | None, table_weeks: int) -> int:
@@ -513,9 +518,12 @@ def _own_lead(t: _Triple | None, table_weeks: int) -> int:
 def _rows_from_triples(triples: Mapping[str, _Triple]) -> tuple[StepTimingInput, ...]:
     return tuple(
         dataclasses.replace(
-            _timing_row(sid, t.duration, t.floor, t.overlap), wait_weeks=t.wait, lead_weeks=t.lead
+            _timing_row(sid, t.duration, t.floor, t.overlap),
+            wait_weeks=t.wait,
+            lead_weeks=t.lead,
+            lab_hold_weeks=t.hold,
         )
-        if t.wait or t.lead is not None
+        if t.wait or t.lead is not None or t.hold is not None
         else _timing_row(sid, t.duration, t.floor, t.overlap)
         for sid, t in sorted(triples.items())
         if t.duration is not None
@@ -523,6 +531,7 @@ def _rows_from_triples(triples: Mapping[str, _Triple]) -> tuple[StepTimingInput,
         or t.overlap
         or t.wait
         or t.lead is not None
+        or t.hold is not None
     )
 
 
@@ -723,6 +732,7 @@ def _apply_edit(
         kind=step.kind,
         certification_testing_required=cert,
         override_weeks=t.duration,
+        lab_hold_weeks=t.hold,
     )
     if skipped:
         if any_value:
@@ -840,6 +850,7 @@ def _build(baseline: WhatIfBaseline, req: PlanImportRequest, budget: _Budget) ->
     si0 = baseline.schedule
     workflows = build_workflows(si0.workflow_steps)
     table = build_lead_time_table(si0.lead_times)
+    hold_table = build_lab_hold_table(si0.lead_times)  # ADR 0071 R62-9
     lead_pairs = frozenset((wf, cat) for wf, cat, _ in table)
     categories = category_maps_for(si0, workflows)
     _validate_request(baseline, req, workflows, lead_pairs, categories)
@@ -905,7 +916,15 @@ def _build(baseline: WhatIfBaseline, req: PlanImportRequest, budget: _Budget) ->
     for idx, (fp, pid) in enumerate(zip(req.projects, ids, strict=True)):
         budget.check()
         p, meta = _build_file_project(
-            fp, pid, idx, workflows, table, edits_by_ref.get(fp.key, []), cw, plan_from
+            fp,
+            pid,
+            idx,
+            workflows,
+            table,
+            edits_by_ref.get(fp.key, []),
+            cw,
+            plan_from,
+            hold_table=hold_table,
         )
         file_inputs[pid] = p
         metas.append(meta)
@@ -978,6 +997,7 @@ def _edit_plan_project(
             _overlap_of(r),
             wait=r.wait_weeks,
             lead=r.lead_weeks,
+            hold=r.lab_hold_weeks,
         )
         for r in sorted(p.step_timing, key=lambda r: r.step_id)
     }
@@ -1014,6 +1034,8 @@ def _build_file_project(
     eds: Sequence[StepEdit],
     cw: int,
     plan_from: int,
+    *,
+    hold_table: Mapping[tuple[str, str, str], int | None] | None = None,
 ) -> tuple[ProjectInput, _FileMeta]:
     wf_id = _workflow_of(fp.hub)
     wf = workflows[wf_id]
@@ -1033,6 +1055,13 @@ def _build_file_project(
             triples[sid] = _Triple(weeks[sid], None, 0)
             if weeks[sid] > 0 and lead == 0:
                 not_in_cat.append(sid)
+    # ADR 0071 R62-9: a file project takes its category template's room weeks
+    # on lab steps (nothing when every hold is full: the pre-P62 input).
+    for step in wf.steps:
+        sid = step.step_id
+        hold = None if hold_table is None else hold_table.get((wf_id, fp.category, sid))
+        if step.kind == "lab" and hold is not None and sid not in done_before:
+            triples.setdefault(sid, _Triple(None, None, 0)).hold = hold
 
     def skipped(sid: str) -> bool:
         t = triples.get(sid)
@@ -1041,6 +1070,7 @@ def _build_file_project(
             kind=wf.steps_by_id[sid].kind,
             certification_testing_required=fp.certification_testing_required,
             override_weeks=None if t is None else t.duration,
+            lab_hold_weeks=None if t is None else t.hold,
         )
 
     # R42-3: a file row is never frozen, so a P4/Q row is never scheduled.
@@ -1204,6 +1234,10 @@ def _capacity(
             wk_range, per = _booked_weeks(st.start_week, st.end_week, sp, p.frozen, cw)
             if st.kind == "lab":
                 per = Fraction(dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK)
+                held = row_held_weeks(st)
+                if held is not None:
+                    # ADR 0071 R62-10: only the held weeks (the row's last `h`).
+                    wk_range = range(max(wk_range.start, held.start), wk_range.stop)
             for wk in wk_range:
                 if not first <= wk <= pyew:
                     continue

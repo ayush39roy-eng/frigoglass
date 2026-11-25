@@ -15,7 +15,7 @@ import { priorityDisplayText } from '@/lib/priority-applicability';
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { isSuperAdminOnlyError, SUPER_ADMIN_ONLY_MESSAGE } from '@/lib/auth/super-admin';
-import { formatFactor, formatInteger } from '@/lib/format';
+import { formatFactor, formatInteger, formatWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { ProjectRows } from '@/surfaces/workflow-settings/components/template-apply/project-rows';
 
@@ -318,7 +318,7 @@ function Facts({ data }: { data: DeactivationPreview }): React.JSX.Element {
   return (
     <ul className="flex flex-col gap-1 text-xs text-text-muted" data-testid="deactivate-facts">
       <li>
-        Deactivation week: <span className="font-semibold text-text tnum">W{formatInteger(data.deactivation_week)}</span> (counts as worked).
+        Deactivation week: <span className="font-semibold text-text tnum">{formatWeek(data.deactivation_week)}</span> (counts as worked).
       </li>
       {s ? (
         <li data-testid="deactivate-supply">

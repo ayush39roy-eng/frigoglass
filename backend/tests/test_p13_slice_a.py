@@ -51,6 +51,7 @@ from tests.auth_helpers import (
     override_current_principal,
 )
 from tests.factories import clear_rank_if_out_of_band, make_hub, make_project, make_user
+from tests.p62_audit import P71A_TEMPLATE_VERSION as V0  # noqa: N814
 
 REGIONS = ("Greece", "India", "Romania")
 _FINANCIAL = ("customer_name", "tcogs", "selling_price", "gross_margin")
@@ -378,7 +379,10 @@ async def test_analytics_requires_dashboard_read(db_session):
 # --- T16: workflow previews -----------------------------------------------------------
 
 # DOMAIN_RULES "Lead times": (design_weeks, lab_weeks, total_weeks) per category.
-_PDD_EXPECTED = {"A+": (22, 12, 44), "A": (18, 10, 38), "B": (10, 6, 18), "C": (6, 1, 8)}
+# P62 (migration p71a, R62-11): C/PDD-J is 0 weeks (C design 6 -> 5, total
+# 8 -> 7). J / L are `design` / `elapsed` on this seeded DB, so their room
+# weeks are not read and every lab total is unchanged.
+_PDD_EXPECTED = {"A+": (22, 12, 44), "A": (18, 10, 38), "B": (10, 6, 18), "C": (5, 1, 7)}
 _OEM_EXPECTED = {"A-OEM": (9, 8, 21), "B-OEM": (5, 6, 14), "C-OEM": (2, 2, 4)}
 
 
@@ -403,6 +407,7 @@ async def test_category_timelines_follow_the_lead_time_table(db_session):
                 "total_weeks",
                 "design_weeks",
                 "lab_weeks",
+                "lab_length_weeks",  # P62
                 "steps",
             }
             assert (c["design_weeks"], c["lab_weeks"], c["total_weeks"]) == expected[c["category"]]
@@ -420,6 +425,9 @@ async def test_category_timelines_follow_the_lead_time_table(db_session):
                     "effective_gap_weeks",
                     "flags",
                     "predecessor_ids",
+                    "lab_hold_weeks",  # P62 (contract P62 §3.2)
+                    "room_weeks",
+                    "room_start_week",
                 }
                 assert (s["gap_weeks"], s["effective_gap_weeks"], s["flags"]) == (0, 0, [])
                 assert s["start_week"] == cursor
@@ -436,6 +444,9 @@ async def test_category_timelines_follow_the_lead_time_table(db_session):
         "effective_gap_weeks": 0,
         "flags": [],
         "predecessor_ids": ["PDD-D"],
+        "lab_hold_weeks": None,
+        "room_weeks": 0,
+        "room_start_week": None,
     }
     # PDD-B and PDD-C are 0 for B: skipped, transparent (start = end = pred end).
     assert [(s["start_week"], s["duration_weeks"]) for s in b["steps"][1:3]] == [(1, 0), (1, 0)]
@@ -493,9 +504,9 @@ async def test_b_equivalent_ratios(db_session):
         },
         {
             "category": "C",
-            "design_weeks": 6,
+            "design_weeks": 5,  # P62: C/PDD-J 0 weeks (p71a)
             "lab_weeks": 1,
-            "design_ratio": 0.6,
+            "design_ratio": 0.5,
             "lab_ratio": 0.17,
         },
     ]
@@ -537,7 +548,7 @@ async def test_b_equivalent_follows_a_lead_time_edit_and_zero_reference_is_null(
             {
                 "workflow_id": "PDD",
                 "category": "B",
-                "base_version": 1,
+                "base_version": V0,
                 "steps": [
                     {"step_id": "PDD-H", "weeks": 0},  # PDD-F is already 0 for B
                 ],

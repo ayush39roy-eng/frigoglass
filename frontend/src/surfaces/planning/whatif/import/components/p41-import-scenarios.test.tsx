@@ -301,7 +301,7 @@ describe('P41 Executive scenario bar', () => {
     expect(lookup?.url.searchParams.get('offset')).toBe('0');
     await user.selectOptions(select, 'saved:saved-1');
     expect(await screen.findByTestId('import-view-banner')).toHaveTextContent(
-      'Saved scenario — simulated W40 against plan v14',
+      'Saved scenario — simulated W40 \'26 against plan v14',
     );
     expect(within(bar).getByRole('button', { name: 'Save scenario' })).toBeDisabled();
     await user.click(within(bar).getByRole('button', { name: 'Export to Excel (with Gantt chart)' }));

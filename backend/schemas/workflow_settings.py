@@ -56,6 +56,10 @@ class LeadTimeSetting(BaseModel):
     #: P33-T09 (contract C1): the immutable R2 split weight. Read-only: it is
     #: never accepted in any request.
     effort_weight_weeks: int
+    #: P62 (ADR 0071, contract P62 §3.1): the room weeks, 0..weeks; null =
+    #: Full. Null on a non-lab step (a value stored on a now-non-lab step is
+    #: served as null, R62-3).
+    lab_hold_weeks: int | None
 
 
 class CategorySetting(BaseModel):
@@ -208,6 +212,14 @@ class TimelineStep(BaseModel):
     flags: list[TemplateFlag]
     #: The DAG in force.
     predecessor_ids: list[str]
+    #: P62 (ADR 0071, contract P62 §3.2): the template's room weeks (null =
+    #: Full; null on a non-lab step), the held weeks `h = min(hold ??
+    #: duration, duration)` on a lab step (0 otherwise), and the first held
+    #: week `start_week + duration_weeks - room_weeks` (same 0-based,
+    #: end-exclusive convention; null when `room_weeks` is 0).
+    lab_hold_weeks: int | None
+    room_weeks: int
+    room_start_week: int | None
 
 
 class CategoryTimeline(BaseModel):
@@ -227,9 +239,14 @@ class CategoryTimeline(BaseModel):
     note: str
     #: The critical path (longest path through the DAG), in weeks.
     total_weeks: int
-    #: Σ duration over design steps; Σ duration over lab steps.
+    #: Σ duration over design steps; P62 (ADR 0071 I66): Σ `room_weeks` over
+    #: lab steps (the Matrix "D/L" L total; = Σ lab durations with every hold
+    #: Full).
     design_weeks: int
     lab_weeks: int
+    #: P62: Σ `duration_weeks` over lab steps (the bar legend; the pre-P62
+    #: `lab_weeks`).
+    lab_length_weeks: int
     #: In the workflow's display (`sequence_order`) order.
     steps: list[TimelineStep]
 

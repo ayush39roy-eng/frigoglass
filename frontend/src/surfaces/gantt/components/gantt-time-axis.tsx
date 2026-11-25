@@ -128,7 +128,7 @@ export function GanttWeekAxis({ scale, weekLabel, ariaLabel, yearEndWeek }: Gant
             stroke="hsl(var(--color-gantt-marker-now))"
             strokeWidth={1.5}
           />
-          <rect x={nowX - 26} y={17} width={52} height={15} rx={7.5} fill="hsl(var(--color-gantt-marker-now))" />
+          <rect x={nowX - 34} y={17} width={68} height={15} rx={7.5} fill="hsl(var(--color-gantt-marker-now))" />
           <text
             x={nowX}
             y={24.5}
@@ -138,7 +138,7 @@ export function GanttWeekAxis({ scale, weekLabel, ariaLabel, yearEndWeek }: Gant
             textAnchor="middle"
             dominantBaseline="central"
           >
-            {currentWeek === null ? '' : `W${String(weekOfYear(currentWeek).week)} now`}
+            {currentWeek === null ? '' : `${formatWeek(currentWeek)} now`}
           </text>
         </>
       ) : null}

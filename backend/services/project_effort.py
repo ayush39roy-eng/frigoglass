@@ -90,6 +90,7 @@ from models.enums import WorkflowStepStatus
 from models.hub import Hub
 from models.project import Project, workflow_id_for_hub
 from models.workflow import ProjectWorkflowStep, WorkflowLeadTime, WorkflowStepTemplate
+from scheduling import is_partial_room
 from scheduling.effort_split import (
     NOT_APPLIED_ALL_EXCLUDED,
     EffortSplitRejected,
@@ -127,6 +128,11 @@ TRIGGER_STEP_EXCLUSION = "step_exclusion"
 TRIGGER_TEMPLATE_REVIVE = "template_revive"
 #: ADR 0070: the Super-Admin one-time effort-weight sync.
 TRIGGER_EFFORT_WEIGHT_SYNC = "effort_weight_sync"
+#: ADR 0071 R62-1: migration p71a's re-derivation after the hold backfill.
+TRIGGER_LAB_HOLD_DEFAULT = "lab_hold_default"
+#: ADR 0071 R62-8: a template apply whose room-weeks change flips a copy
+#: NULL <-> non-NULL on an own-lab-figure project.
+TRIGGER_LAB_HOLD_CHANGE = "lab_hold_change"
 
 
 @dataclass(frozen=True)
@@ -158,6 +164,9 @@ class HoldBackStep:
     not_started: bool
     effort_weeks: int | None
     plan_weeks: int
+    #: ADR 0071: the copy's room weeks (`plan_lab_hold_weeks`); a
+    #: `partialRoom` step is outside S′ (R62-1), so it is never a member.
+    lab_hold_weeks: int | None = None
 
 
 def held_out(steps: Iterable[HoldBackStep]) -> frozenset[str]:
@@ -182,6 +191,8 @@ def held_out(steps: Iterable[HoldBackStep]) -> frozenset[str]:
     for s in steps:
         if s.kind not in own or s.weight <= 0 or s.excluded:
             continue
+        if is_partial_room(kind=s.kind, lab_hold_weeks=s.lab_hold_weeks):
+            continue
         members.setdefault(s.kind, set()).add(s.step_id)
         if s.not_started and s.effort_weeks is None and s.plan_weeks == 0:
             candidates.setdefault(s.kind, set()).add(s.step_id)
@@ -198,11 +209,13 @@ def held_out_step_ids(
     weights: Mapping[str, int],
     *,
     plan_overrides: Mapping[str, int] | None = None,
+    hold_overrides: Mapping[str, int | None] | None = None,
 ) -> frozenset[str]:
-    """`held_out` on live rows (`plan_overrides`: copies about to be written,
-    for a preview of an apply / sync)."""
+    """`held_out` on live rows (`plan_overrides` / `hold_overrides`: copies
+    about to be written, for a preview of an apply / sync)."""
 
     plan = plan_overrides or {}
+    holds = hold_overrides or {}
     return held_out(
         HoldBackStep(
             step_id=r.step_template_id,
@@ -212,6 +225,7 @@ def held_out_step_ids(
             not_started=r.status == WorkflowStepStatus.NOT_STARTED,
             effort_weeks=r.effort_weeks,
             plan_weeks=plan.get(r.step_template_id, r.plan_weeks),
+            lab_hold_weeks=holds.get(r.step_template_id, r.plan_lab_hold_weeks),
         )
         for r in rows
     )
@@ -222,14 +236,18 @@ def effort_inputs(
     kinds: dict[str, str],
     weights: Mapping[str, int],
     held: frozenset[str] = frozenset(),
+    hold_overrides: Mapping[str, int | None] | None = None,
 ) -> tuple[EffortStepInput, ...]:
     """The split's step inputs from live rows: lead = the category template's
     `effort_weight_weeks` of the step (R33-2; `weights`, 0 when the template
     has no row), kind = the template's kind on Workflow Settings, started =
     stored status ≠ Not Started (R3), excluded = the row's P35 flag (R35-3:
     the split runs over S′, the weighted steps that are not excluded) or a
-    held-back step (`held`, ADR 0070)."""
+    held-back step (`held`, ADR 0070), and the copy's room weeks (ADR 0071
+    R62-1: a `partialRoom` lab step is outside S′; `hold_overrides` gives
+    copies about to be written)."""
 
+    holds = hold_overrides or {}
     return tuple(
         EffortStepInput(
             step_id=r.step_template_id,
@@ -238,6 +256,7 @@ def effort_inputs(
             lead_weeks=weights.get(r.step_template_id, 0),
             started=r.status != WorkflowStepStatus.NOT_STARTED,
             excluded=bool(r.excluded) or r.step_template_id in held,
+            lab_hold_weeks=holds.get(r.step_template_id, r.plan_lab_hold_weeks),
         )
         for r in rows
     )
@@ -251,14 +270,18 @@ def derive_for(
     *,
     hold_back: bool = True,
     plan_overrides: Mapping[str, int] | None = None,
+    hold_overrides: Mapping[str, int | None] | None = None,
 ) -> ProjectEffortDerivation:
     """`derive_project_effort` of a project's live rows over the R2 weights
     of its category (`effort_weights`), with the ADR 0070 held-back steps
-    outside S′ (unless `hold_back` is False). Raises `EffortSplitRejected`
-    (R7)."""
+    outside S′ (unless `hold_back` is False) and the ADR 0071 `partialRoom`
+    steps outside the lab S′ (`hold_overrides`: room-weeks copies about to
+    be written). Raises `EffortSplitRejected` (R7)."""
 
     held = (
-        held_out_step_ids(rows, kinds, weights, plan_overrides=plan_overrides)
+        held_out_step_ids(
+            rows, kinds, weights, plan_overrides=plan_overrides, hold_overrides=hold_overrides
+        )
         if hold_back
         else frozenset()
     )
@@ -266,7 +289,7 @@ def derive_for(
         design_effort_weeks=project.design_effort_weeks,
         lab_effort_weeks=project.lab_effort_weeks,
         certification_testing_required=project.certification_testing_required,
-        steps=effort_inputs(rows, kinds, weights, held),
+        steps=effort_inputs(rows, kinds, weights, held, hold_overrides),
     )
 
 
@@ -330,6 +353,7 @@ async def validate_effort_split(
     excluded_step_ids: Iterable[str] | None = None,
     started_step_ids: Iterable[str] | None = None,
     hold_back: bool = True,
+    lab_hold_weeks: Mapping[str, int | None] | None = None,
 ) -> ProjectEffortDerivation | None:
     """R7 BEFORE anything is written: the split the target state would get
     (the workflow of `hub_is_oem`, the lead times of `category`, the stored
@@ -346,7 +370,12 @@ async def validate_effort_split(
     ADR 0070: with `project_id` and `hold_back`, the held-back steps of the
     stored rows (`held_out`) are outside S′, exactly as the re-derivation
     will treat them; a category or workflow change passes
-    `hold_back=False`."""
+    `hold_back=False`.
+
+    ADR 0071 R62-1: the room-weeks copies (`plan_lab_hold_weeks`) put a
+    `partialRoom` step outside the lab S′. They are the stored rows' unless
+    `lab_hold_weeks` gives the target state's (a category / workflow change
+    re-copies them from the new template)."""
 
     if design_effort_weeks is None and lab_effort_weeks is None:
         return None
@@ -366,8 +395,9 @@ async def validate_effort_split(
     started: set[str] = set()
     excluded: set[str] = set()
     stored: dict[str, tuple[int | None, int]] = {}
+    holds: dict[str, int | None] = dict(lab_hold_weeks or {})
     if project_id is not None:
-        for step_id, status, is_excluded, effort, plan in (
+        for step_id, status, is_excluded, effort, plan, hold in (
             await db.execute(
                 select(
                     ProjectWorkflowStep.step_template_id,
@@ -375,6 +405,7 @@ async def validate_effort_split(
                     ProjectWorkflowStep.excluded,
                     ProjectWorkflowStep.effort_weeks,
                     ProjectWorkflowStep.plan_weeks,
+                    ProjectWorkflowStep.plan_lab_hold_weeks,
                 ).where(ProjectWorkflowStep.project_id == project_id)
             )
         ).all():
@@ -383,6 +414,8 @@ async def validate_effort_split(
             if is_excluded:
                 excluded.add(step_id)
             stored[step_id] = (effort, plan)
+            if lab_hold_weeks is None:
+                holds[step_id] = hold
     if excluded_step_ids is not None:
         excluded = set(excluded_step_ids)
     if started_step_ids is not None:
@@ -398,6 +431,7 @@ async def validate_effort_split(
                 not_started=step_id not in started,
                 effort_weeks=stored[step_id][0],
                 plan_weeks=stored[step_id][1],
+                lab_hold_weeks=holds.get(step_id),
             )
             for step_id, _seq, kind in templates
             if step_id in stored
@@ -414,6 +448,8 @@ async def validate_effort_split(
                 lead_weeks=lead.get(step_id, 0),
                 started=step_id in started,
                 excluded=step_id in excluded or step_id in held,
+                # ADR 0071 R62-1: a `partialRoom` step is outside the lab S′.
+                lab_hold_weeks=holds.get(step_id),
             )
             for step_id, seq, kind in templates
         ),
@@ -524,6 +560,9 @@ async def rederive_project_effort(
                 ],
                 await load_template(db, workflow_id, project.category),
                 gaps=False,
+                # ADR 0071: room weeks reach a project only at registration,
+                # on a category change or by an apply (clamped here, I65).
+                holds=False,
             )
         project.schedule_stale = True
         if audit:

@@ -439,7 +439,14 @@ async def build_schedule_input_from_db(
             effort_weeks=s.effort_weeks,
             # R35-9 (P35): an excluded step is `lead_weeks = 0`, no override.
             excluded=s.excluded,
+            # ADR 0071 (contract P62 §2): a `partialRoom` step is `lead_weeks
+            # = plan_weeks`, override = `merged_step_override(...)` = None.
+            kind=template_kind.get(s.step_template_id),
+            lab_hold_weeks=s.plan_lab_hold_weeks,
         )
+        # ADR 0071: the project's room weeks on a lab step (None = full; a
+        # value stored on a non-lab step is not read, R62-3).
+        hold = s.plan_lab_hold_weeks if template_kind.get(s.step_template_id) == "lab" else None
         has_predecessors = template_has_predecessors.get(s.step_template_id, False)
         overlap = wait = 0
         if has_predecessors:
@@ -447,7 +454,7 @@ async def build_schedule_input_from_db(
                 overlap = -s.plan_gap_weeks
             else:
                 wait = s.plan_gap_weeks
-        if override is not None or overlap or wait or lead_weeks is not None:
+        if override is not None or overlap or wait or lead_weeks is not None or hold is not None:
             timing_by_project.setdefault(s.project_id, []).append(
                 StepTimingInput(
                     step_id=s.step_template_id,
@@ -456,6 +463,7 @@ async def build_schedule_input_from_db(
                     overlap_weeks=overlap,
                     wait_weeks=wait,
                     lead_weeks=lead_weeks,
+                    lab_hold_weeks=hold,
                 )
             )
 
@@ -546,6 +554,12 @@ async def build_schedule_input_from_db(
             category=lt.category,
             step_id=lt.step_id,
             weeks=lt.weeks,
+            # ADR 0071 R62-9: the template's room weeks, read by the engine
+            # only for projects built from the template (What-if added
+            # projects, plan-import file projects); a live project carries
+            # its own copy in `StepTimingInput.lab_hold_weeks`. Only on lab
+            # steps (a value on a non-lab step is stored but not read).
+            lab_hold_weeks=(lt.lab_hold_weeks if template_kind.get(lt.step_id) == "lab" else None),
         )
         for lt in sorted(lead_time_rows, key=_lead_time_sort_key)
     )
@@ -799,6 +813,9 @@ async def persist_schedule_output(
                     # P40 (ADR 0054 R40-12, I45 / I47).
                     pinned=step.pinned,
                     manual_overlap=step.manual_overlap,
+                    # ADR 0071 (I64): the booked room weeks, as-is (None =
+                    # full / non-lab, read as `duration_weeks`).
+                    lab_hold_weeks=step.lab_hold_weeks,
                 )
             )
             if sync_live_workflow_steps:

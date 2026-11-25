@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Snowflake, TriangleAlert } from 'lucide-react';
 
+import { ResolvedWeekHint } from '@/components/shared/week-year-input';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -104,11 +105,14 @@ function FreezeForm({
   const {
     register,
     handleSubmit,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<FreezeFormInput, unknown, FreezeFormValues>({
     resolver: zodResolver(freezeFormSchema),
     mode: 'onChange',
   });
+  // P62-F1: the typed absolute week read back with its year.
+  const typedStart = useWatch({ control, name: 'actualStartWeek' });
 
   const submit = handleSubmit(async (values) => {
     setSubmitError(null);
@@ -148,6 +152,7 @@ function FreezeForm({
           aria-invalid={errors.actualStartWeek ? true : undefined}
           {...register('actualStartWeek')}
         />
+        <ResolvedWeekHint raw={typedStart} />
         {errors.actualStartWeek ? (
           <p role="alert" className="text-2xs text-danger">
             {errors.actualStartWeek.message}

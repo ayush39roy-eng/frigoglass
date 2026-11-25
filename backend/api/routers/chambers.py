@@ -41,6 +41,7 @@ from models.workflow import WorkflowStepTemplate
 from schemas.capacity import YearRemaining
 from schemas.chamber import ChamberCreateRequest, ChamberRead, ChamberUpdateRequest
 from services.audit_helpers import chamber_audit_state
+from services.band_rank import lock_band_ranks
 from services.capacity_supply import (
     chamber_figures,
     lab_remaining_fraction,
@@ -53,6 +54,7 @@ from services.capacity_supply import (
 from services.edit_conflict import check_base, field_refs
 from services.hub_scope import is_lab_region_in_scope, scoped_lab_regions
 from services.plan_clock import PlanClock, get_plan_clock
+from services.schedule_stale import mark_all_schedulable_stale
 
 router = APIRouter(prefix="/chambers", tags=["capacity-planning", "chambers"])
 
@@ -256,6 +258,33 @@ async def create_chamber(
     return (await _chamber_reads(db, [chamber], current_week=clock.week))[0]
 
 
+def _plan_inputs(chamber: Chamber) -> tuple[object, ...]:
+    """The chamber fields the scheduler reads for eligibility and capacity
+    (`ChamberInput.allowed_stages` / `max_concurrent` / `lab_region`)."""
+
+    return (
+        tuple(chamber.allowed_stages or ()),
+        chamber.max_concurrent,
+        chamber.lab_region,
+    )
+
+
+def _changes_plan_inputs(chamber: Chamber, updates: dict[str, object]) -> bool:
+    """Whether applying `updates` would change `_plan_inputs(chamber)`, i.e.
+    whether this PATCH will mark the plan stale (P62-R01)."""
+
+    def value(name: str) -> object:
+        return updates[name] if name in updates else getattr(chamber, name, None)
+
+    stages = value("allowed_stages")
+    proposed = (
+        tuple(stages) if isinstance(stages, list | tuple) else (),
+        value("max_concurrent"),
+        value("lab_region"),
+    )
+    return proposed != _plan_inputs(chamber)
+
+
 @router.patch("/{chamber_id}", response_model=ChamberRead)
 async def update_chamber(
     chamber_id: uuid.UUID,
@@ -264,9 +293,9 @@ async def update_chamber(
     current_user: Principal = Depends(_write),
     clock: PlanClock = Depends(get_plan_clock),
 ) -> ChamberRead:
-    # P47 (ADR 0059 C1): with a `base`, the row is locked here and compared
-    # after the scope checks below.
-    chamber = await _get_chamber_or_404(db, chamber_id, current_user, lock=bool(body.base))
+    # P62-R01 (S62-1): a plain scoped read first (404 / scope). The row lock
+    # comes further down, after the band-rank lock when one is needed.
+    chamber = await _get_chamber_or_404(db, chamber_id, current_user)
     updates = body.model_dump(exclude_unset=True, exclude={"base"})
 
     if body.allowed_stages is not None:
@@ -282,8 +311,19 @@ async def update_chamber(
                 ),
             )
 
-    # P47 (ADR 0059 C1): after the lab-region scope check above (P47-R01),
-    # before any write.
+    # P62-R01 (S62-1, run-307 deadlock order): a PATCH that changes a plan
+    # input marks every schedulable project stale, a bulk `UPDATE projects`
+    # that can deadlock with a persisting run's `clear_stale_for_run`. So it
+    # takes the band-rank lock FIRST (5 s, else 503 `BAND_RANK_BUSY`, nothing
+    # written): after lookup, validation and scope, before the chamber row
+    # lock (the `FOR UPDATE` re-read below, or the flush's UPDATE). Same
+    # order as template apply. A label-only or downtime edit takes no lock.
+    if _changes_plan_inputs(chamber, updates):
+        await lock_band_ranks(db)
+    if body.base:
+        # P47 (ADR 0059 C1): the row `FOR UPDATE`, re-read, compared after
+        # the lab-region scope check above (P47-R01), before any write.
+        chamber = await _get_chamber_or_404(db, chamber_id, current_user, lock=True)
     await check_base(
         db,
         current_user,
@@ -296,6 +336,7 @@ async def update_chamber(
         refs=field_refs("Chamber", str(chamber.id)),
     )
     before_state = chamber_audit_state(chamber)
+    before_plan_inputs = _plan_inputs(chamber)
     for field_name, value in updates.items():
         setattr(chamber, field_name, value)
 
@@ -305,6 +346,13 @@ async def update_chamber(
         await db.rollback()
         raise _integrity_http_error(exc, "update") from None
     after_state = chamber_audit_state(chamber)
+    if _plan_inputs(chamber) != before_plan_inputs:
+        # P62-T04 (P62-F2 report): a change of which steps a chamber takes,
+        # its platforms or its region changes the plan's input, so the plan
+        # is "not recalculated" until the next run. Same rule as the
+        # Workflow Settings PUTs (every schedulable project stale; no run is
+        # dispatched, ADR 0069).
+        await mark_all_schedulable_stale(db)
 
     db.add(
         AuditLogEntry(

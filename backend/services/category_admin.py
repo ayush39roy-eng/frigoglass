@@ -183,6 +183,8 @@ async def add_category(
                 weeks=r.weeks,
                 gap_weeks=r.gap_weeks,
                 effort_weight_weeks=r.effort_weight_weeks,
+                # ADR 0071: the room weeks travel with the length.
+                lab_hold_weeks=r.lab_hold_weeks,
             )
         )
         copied.append(
@@ -191,6 +193,7 @@ async def add_category(
                 "weeks": r.weeks,
                 "gap_weeks": r.gap_weeks,
                 "effort_weight_weeks": r.effort_weight_weeks,
+                "lab_hold_weeks": r.lab_hold_weeks,
             }
         )
 

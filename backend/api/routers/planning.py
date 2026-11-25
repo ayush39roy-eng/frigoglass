@@ -106,6 +106,7 @@ from services.hub_scope import (
     narrowed_lab_regions,
     region_list,
 )
+from services.lab_hold import run_row_lab_weeks
 from services.plan_clock import PlanClock, get_plan_clock
 
 router = APIRouter(prefix="/planning", tags=["capacity-planning"])
@@ -446,6 +447,7 @@ async def resource_load(
                 ScheduleRunProjectStep.duration_weeks,
                 ScheduleRunProjectStep.assigned_engineer_id,
                 ScheduleRunProjectStep.assigned_chamber_id,
+                ScheduleRunProjectStep.lab_hold_weeks,
             )
             .join(Project, ScheduleRunProjectStep.project_id == Project.id)
             .where(
@@ -456,7 +458,7 @@ async def resource_load(
         if predicate is not None:
             base = base.where(predicate)
         if engineers:
-            for step_id, duration, eng_id, _ in (
+            for step_id, duration, eng_id, _, _hold in (
                 await db.execute(
                     base.where(
                         ScheduleRunProjectStep.assigned_engineer_id.in_([e.id for e in engineers])
@@ -466,7 +468,7 @@ async def resource_load(
                 if eng_id is not None and kinds.get(step_id) == WorkflowStepKind.DESIGN:
                     eng_load[eng_id] += duration
         if chambers:
-            for step_id, duration, _, ch_id in (
+            for step_id, duration, _, ch_id, hold in (
                 await db.execute(
                     base.where(
                         ScheduleRunProjectStep.assigned_chamber_id.in_([c.id for c in chambers])
@@ -474,7 +476,10 @@ async def resource_load(
                 )
             ).all():
                 if ch_id is not None and kinds.get(step_id) == WorkflowStepKind.LAB:
-                    ch_load[ch_id] += duration * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
+                    # ADR 0071 I66: the room weeks `h` (NULL = duration).
+                    ch_load[ch_id] += (
+                        run_row_lab_weeks(duration, hold) * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
+                    )
 
     # --- Capacity (ADR 0008), same figures as /engineers and /chambers -------
     calendar_by_hub = {

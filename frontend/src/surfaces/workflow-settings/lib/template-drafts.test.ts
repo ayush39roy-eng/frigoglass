@@ -69,13 +69,13 @@ describe('template drafts (P33-T16)', () => {
   it('reads the saved cells of one category from C1', () => {
     const cells = savedCells(
       [
-        { workflow_id: 'PDD', category: 'A', step_id: 'PDD-E', weeks: 6, gap_weeks: -1, effort_weight_weeks: 6 },
-        { workflow_id: 'PDD', category: 'B', step_id: 'PDD-E', weeks: 5, gap_weeks: 0, effort_weight_weeks: 5 },
+        { workflow_id: 'PDD', category: 'A', step_id: 'PDD-E', weeks: 6, gap_weeks: -1, effort_weight_weeks: 6, lab_hold_weeks: null },
+        { workflow_id: 'PDD', category: 'B', step_id: 'PDD-E', weeks: 5, gap_weeks: 0, effort_weight_weeks: 5, lab_hold_weeks: null },
       ],
       'PDD',
       'A',
     );
-    expect(cells).toEqual({ 'PDD-E': { weeks: 6, gap_weeks: -1 } });
+    expect(cells).toEqual({ 'PDD-E': { weeks: 6, gap_weeks: -1, lab_hold_weeks: null } });
   });
 
   it('gap badge: — on the first step, 0w, −Nw overlap, Nw wait', () => {

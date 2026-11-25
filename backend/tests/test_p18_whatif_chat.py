@@ -380,16 +380,18 @@ async def test_invented_number_is_retried_once_then_fixed(db_session):
     await act_as(db_session, RoleName.PORTFOLIO_MANAGER)
     fake = FakeLlm(
         calls(call("simulate_scenario", SIM_ARGS)),
-        say("You will gain about 37 weeks of slack."),
-        say("Roughly 41 weeks."),
+        # P62: invented figures no result can contain (with C/PDD-J at 0
+        # weeks since p71a, "41" became a real figure of this scenario).
+        say("You will gain about 3737 weeks of slack."),
+        say("Roughly 4141 weeks."),
     )
     use(fake)
     body = (await ask(db_session, "what if we add 2 projects?")).json()
     assert body["grounded"] is False and body["answer"] == UNGROUNDED_MESSAGE
-    assert body["ungrounded_numbers"] == ["41"]
+    assert body["ungrounded_numbers"] == ["4141"]
     assert len(body["results"]) == 1  # the figures are still returned
     retry = fake.calls[2]["messages"][-1]
-    assert retry["role"] == "user" and "37" in retry["content"]
+    assert retry["role"] == "user" and "3737" in retry["content"]
     assert fake.calls[2]["tools"] is None  # the retry can only rewrite
 
 

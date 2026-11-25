@@ -110,6 +110,7 @@ def is_step_skipped(
     own_effort: bool,
     effort_weeks: int | None,
     excluded: bool = False,
+    lab_hold_weeks: int | None = None,
 ) -> bool:
     """THE service-side skip predicate (ADR 0041 R5 as revised by ADR 0046
     §B / OR-2; contract P33 F4; R35-1) on `(plan_weeks, kind, cert,
@@ -117,7 +118,9 @@ def is_step_skipped(
     on a project without certification testing, an own-effort step whose
     share is 0 or absent, or another step whose copy is 0
     (`services.workflow_durations.live_step_skipped`). Every service-side
-    caller passes a live row (`row_is_skipped`)."""
+    caller passes a live row (`row_is_skipped`). ADR 0071: `lab_hold_weeks`
+    is the row's `plan_lab_hold_weeks` (a `partialRoom` step is never
+    cert-skipped, R62-2)."""
 
     return live_step_skipped(
         plan_weeks=plan_weeks,
@@ -126,6 +129,7 @@ def is_step_skipped(
         own_effort=own_effort,
         effort_weeks=effort_weeks,
         excluded=excluded,
+        lab_hold_weeks=lab_hold_weeks,
     )
 
 
@@ -181,6 +185,7 @@ def row_is_skipped(
         own_effort=own_effort,
         effort_weeks=row.effort_weeks,
         excluded=row.excluded,
+        lab_hold_weeks=row.plan_lab_hold_weeks,
     )
 
 
@@ -202,6 +207,7 @@ def row_effective_weeks(
         own_effort=own_effort,
         effort_weeks=row.effort_weeks,
         excluded=row.excluded,
+        lab_hold_weeks=row.plan_lab_hold_weeks,
     )
 
 
@@ -226,6 +232,7 @@ def row_calculated_weeks(
         own_effort=False,
         effort_weeks=None,
         excluded=row.excluded,
+        lab_hold_weeks=row.plan_lab_hold_weeks,
     )
 
 
@@ -827,6 +834,7 @@ async def build_workspace(
                 own_effort=own_effort,
                 effort_weeks=live.effort_weeks,
                 excluded=live.excluded,
+                lab_hold_weeks=live.plan_lab_hold_weeks,
             )
             if live is not None
             else 0

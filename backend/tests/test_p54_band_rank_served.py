@@ -54,6 +54,7 @@ from tests.factories import (
     make_user,
     registration_body,
 )
+from tests.p62_audit import NOT_MIGRATION_AUDIT
 
 
 @pytest.fixture(autouse=True)
@@ -324,7 +325,12 @@ async def _count_projects(db_session) -> int:
 
 
 async def _audit_count(db_session) -> int:
-    return (await db_session.execute(select(func.count()).select_from(AuditLogEntry))).scalar_one()
+    # P62: migration p71a's own template audit rows are not this test's.
+    return (
+        await db_session.execute(
+            select(func.count()).select_from(AuditLogEntry).where(NOT_MIGRATION_AUDIT)
+        )
+    ).scalar_one()
 
 
 # --- The Projects register rows (`GET /dashboard/projects`, `ProjectFilterRow`) ---------

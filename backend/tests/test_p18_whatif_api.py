@@ -217,9 +217,10 @@ async def test_unauthenticated_is_401(db_session):
 
 
 async def test_estimate_hand_worked_numbers(db_session):
-    """PDD / C is 6 design weeks and 1 lab week (DOMAIN_RULES lead-time table:
-    A 1 + D 1 + E 2 + J 1 + K 1 = 6 design; H 1 = lab). Two projects add 12
-    design weeks and 2.0 lab weeks."""
+    """PDD / C is 5 design weeks and 1 lab week (DOMAIN_RULES lead-time table:
+    A 1 + D 1 + E 2 + K 1 = 5 design, J 0 since migration p71a (R62-11, C
+    has no Pr. Pr); H 1 = lab). Two projects add 10 design weeks and 2.0 lab
+    weeks."""
 
     await make_world(db_session)
     await act_as(db_session, RoleName.PORTFOLIO_MANAGER)
@@ -228,17 +229,17 @@ async def test_estimate_hand_worked_numbers(db_session):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["kind"] == "estimate"
-    assert body["extra_design_weeks_total"] == 12
+    assert body["extra_design_weeks_total"] == 10
     assert body["extra_lab_weeks_total"] == 2.0
     row = next(r for r in body["design"] if r["hub"] == "R&D-Greece")
-    assert row["added_projects"] == 2 and row["extra_design_weeks"] == 12
-    assert row["new_load_weeks"] == row["baseline_load_weeks"] + 12
+    assert row["added_projects"] == 2 and row["extra_design_weeks"] == 10
+    assert row["new_load_weeks"] == row["baseline_load_weeks"] + 10
     assert row["fte_before"] == 1.0
     # 52 - (10+5+5+20)/5 = 44 working weeks, one FTE -> capacity 44.
     assert row["working_weeks_per_engineer"] == 44.0 and row["capacity_before"] == 44.0
-    # Baseline: 3 C projects x 6 = 18 weeks; with 2 more 30 weeks: 68.18 %.
-    assert row["baseline_load_weeks"] == 18.0 and row["new_load_weeks"] == 30.0
-    assert row["booked_pct_after"] == 68.18 and row["status_after"] == "available"
+    # Baseline: 3 C projects x 5 = 15 weeks; with 2 more 25 weeks: 56.82 %.
+    assert row["baseline_load_weeks"] == 15.0 and row["new_load_weeks"] == 25.0
+    assert row["booked_pct_after"] == 56.82 and row["status_after"] == "available"
     assert body["workings"] and body["scope"]["all_hubs"] is True
 
 
@@ -461,7 +462,7 @@ async def test_hub_planner_sees_only_own_hub_figures(db_session):
     assert [r["hub"] for r in est_b["design"]] == ["R&D-Greece"]
     assert [r["lab_region"] for r in est_b["lab"]] == ["Greece"]
     # Totals are sums of the visible rows only.
-    assert est_b["extra_design_weeks_total"] == 18
+    assert est_b["extra_design_weeks_total"] == 15  # P62: 3 x 5 (C/PDD-J 0)
     assert {u["key"] for u in sim_b["utilization_after"]} == {"R&D-Greece", "Greece"}
     assert {p["hub"] for p in sim_b["projects"]} == {"R&D-Greece"}
     assert sum(sim_b["outcome_counts_after"].values()) == 3 + 3

@@ -88,6 +88,8 @@ def test_canonical_asdict_omits_none_band_rank_and_keeps_a_set_one() -> None:
     for project in raw["projects"]:
         del project["step_pins"]  # P40 (R40-12): omitted when empty
         del project["actual_end_week"]  # P53 (R53-2b): omitted when None
+    for lt in raw["lead_times"]:
+        del lt["lab_hold_weeks"]  # P62 (ADR 0071): omitted when None
     assert data == raw
 
 

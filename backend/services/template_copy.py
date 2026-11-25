@@ -51,11 +51,22 @@ class TemplateRow:
 
     weeks: int
     gap_weeks: int
+    #: ADR 0071: the template's room weeks (None = Full).
+    lab_hold_weeks: int | None = None
 
 
-#: `{step_id: {"plan_weeks": [before, after], "plan_gap_weeks": [before, after]}}`
-#: for every step whose copy changed (only the changed fields are listed).
-CopyChanges = dict[str, dict[str, list[int]]]
+#: `{step_id: {"plan_weeks": [before, after], "plan_gap_weeks": [before, after],
+#: "plan_lab_hold_weeks": [before, after]}}` for every step whose copy changed
+#: (only the changed fields are listed; a hold may be None = Full).
+CopyChanges = dict[str, dict[str, list[int | None]]]
+
+
+def clamp_hold(hold: int | None, plan_weeks: int) -> int | None:
+    """ADR 0071 I65 (`0 <= plan_lab_hold_weeks <= plan_weeks`): a copy that
+    shortens a step clamps its room weeks to the new length (None stays
+    None = Full)."""
+
+    return None if hold is None else max(0, min(hold, plan_weeks))
 
 
 async def load_template(
@@ -68,14 +79,19 @@ async def load_template(
     if category is None:
         return {}
     rows = await db.execute(
-        select(WorkflowLeadTime.step_id, WorkflowLeadTime.weeks, WorkflowLeadTime.gap_weeks).where(
+        select(
+            WorkflowLeadTime.step_id,
+            WorkflowLeadTime.weeks,
+            WorkflowLeadTime.gap_weeks,
+            WorkflowLeadTime.lab_hold_weeks,
+        ).where(
             WorkflowLeadTime.workflow_id == workflow_id,
             WorkflowLeadTime.category == category,
         )
     )
     return {
-        step_id: TemplateRow(weeks=int(weeks), gap_weeks=int(gap))
-        for step_id, weeks, gap in rows.all()
+        step_id: TemplateRow(weeks=int(weeks), gap_weeks=int(gap), lab_hold_weeks=hold)
+        for step_id, weeks, gap, hold in rows.all()
     }
 
 
@@ -141,21 +157,32 @@ def copy_template(
     *,
     lengths: bool = True,
     gaps: bool = True,
+    holds: bool | None = None,
 ) -> CopyChanges:
-    """Write the template's `weeks` (when `lengths`) and `gap_weeks` (when
-    `gaps`) onto `rows` (0 for a step the template has no row for). Returns
-    the changes; the caller has already chosen the rows (R33-10)."""
+    """Write the template's `weeks` (when `lengths`), `gap_weeks` (when
+    `gaps`) and room weeks `lab_hold_weeks` (when `holds`; ADR 0071 contract
+    §4.4: with the lengths by default, i.e. at registration and on a
+    category / workflow change) onto `rows` (0 / None for a step the
+    template has no row for). A row whose length the copy shortens keeps a
+    hold no longer than its new length (`clamp_hold`, I65). Returns the
+    changes; the caller has already chosen the rows (R33-10)."""
 
+    copy_holds = lengths if holds is None else holds
     changes: CopyChanges = {}
     for row in rows:
         t = template.get(row.step_template_id, TemplateRow(weeks=0, gap_weeks=0))
-        diff: dict[str, list[int]] = {}
+        diff: dict[str, list[int | None]] = {}
         if lengths and row.plan_weeks != t.weeks:
             diff["plan_weeks"] = [row.plan_weeks, t.weeks]
             row.plan_weeks = t.weeks
         if gaps and row.plan_gap_weeks != t.gap_weeks:
             diff["plan_gap_weeks"] = [row.plan_gap_weeks, t.gap_weeks]
             row.plan_gap_weeks = t.gap_weeks
+        hold = clamp_hold(t.lab_hold_weeks if copy_holds else row.plan_lab_hold_weeks,
+                          row.plan_weeks)  # fmt: skip
+        if hold != row.plan_lab_hold_weeks:
+            diff["plan_lab_hold_weeks"] = [row.plan_lab_hold_weeks, hold]
+            row.plan_lab_hold_weeks = hold
         if diff:
             changes[row.step_template_id] = diff
     return dict(sorted(changes.items()))
@@ -174,7 +201,7 @@ def merge_copy_changes(*parts: CopyChanges) -> CopyChanges:
     """One per-step before/after map from several successive copies (the
     first `before`, the last `after`), dropping fields that ended unchanged."""
 
-    out: dict[str, dict[str, list[int]]] = {}
+    out: dict[str, dict[str, list[int | None]]] = {}
     for part in parts:
         for sid, fields in part.items():
             slot = out.setdefault(sid, {})

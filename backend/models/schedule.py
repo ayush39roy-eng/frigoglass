@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -186,6 +187,14 @@ class ScheduleRunProjectStep(Base):
     manual_overlap: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    #: P62 (ADR 0071 R62-0 / I64, migration `p71a`): the room weeks this lab
+    #: row booked, `h` (the last `h` weeks of `start_week..end_week` hold the
+    #: chamber). The engine's `StepSchedule.lab_hold_weeks`, stored as-is:
+    #: NULL on non-lab rows, on full-hold lab rows and on rows written before
+    #: p71a, all read as `duration_weeks` (`services.lab_hold.run_row_lab_weeks`).
+    #: Bounded by the booked span, not `duration_weeks` (a tail / Done span /
+    #: pin can be longer than the step's `eff`, P62-T03 note 4).
+    lab_hold_weeks: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     schedule_run: Mapped[ScheduleRun] = relationship(back_populates="project_steps")
     project: Mapped[Project] = relationship(back_populates="schedule_run_steps")
@@ -195,6 +204,12 @@ class ScheduleRunProjectStep(Base):
     __table_args__ = (
         UniqueConstraint(
             "schedule_run_id", "project_id", "step_template_id", name="uq_run_project_step"
+        ),
+        # P62 (ADR 0071 I65 as amended at T04: bounded by the booked span).
+        CheckConstraint(
+            "lab_hold_weeks IS NULL OR "
+            "(lab_hold_weeks >= 0 AND lab_hold_weeks <= end_week - start_week + 1)",
+            name="lab_hold_weeks_range",
         ),
     )
 

@@ -124,7 +124,7 @@ describe('TimelineUpdatedPanel', () => {
 describe('ChangedProjectsList week move (P37 R37-4)', () => {
   it('labels the list when the two runs were solved at different weeks', () => {
     render(<ChangedProjectsList changes={{ ...changes([]), baseline_week: 42, run_week: 47 }} />);
-    expect(screen.getByTestId('changes-week-move')).toHaveTextContent('includes the move from W42 to W47');
+    expect(screen.getByTestId('changes-week-move')).toHaveTextContent('includes the move from W42 \'26 to W47 \'26');
   });
 
   it('says nothing extra when the weeks match', () => {

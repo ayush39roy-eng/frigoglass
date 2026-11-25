@@ -55,6 +55,7 @@ from tests.auth_helpers import (
     override_current_principal,
 )
 from tests.factories import make_engineer, make_hub, make_project, make_user, registration_body
+from tests.p62_audit import P71A_TEMPLATE_VERSION as V0  # noqa: N814
 
 SEED = ("A+", "A", "B", "C", "A-OEM", "B-OEM", "C-OEM")
 
@@ -119,7 +120,11 @@ async def test_seeded_table_matches_the_seed_default(db_session: AsyncSession) -
     assert [(r.code, r.workflow_id, r.rank, r.label) for r in rows] == [
         (c, "OEM" if c.endswith("-OEM") else "PDD", i, c) for i, c in enumerate(SEED, start=1)
     ]
-    assert all(r.template_version == 1 and r.active for r in rows)
+    # P62: migration p71a's template change put A+ / A / B / C at V0.
+    assert all(r.active for r in rows)
+    assert [r.template_version for r in rows] == [
+        V0 if r.code in ("A+", "A", "B", "C") else 1 for r in rows
+    ]
     catalog = await load_catalog(db_session)
     assert catalog == default_catalog()
     assert catalog.schedule_categories() == default_categories()
@@ -358,6 +363,13 @@ async def test_builder_passes_the_table_and_default_inputs_stay_byte_identical(
             project.pop("actual_end_week", None)
         for row in project["step_timing"]:
             del row["wait_weeks"], row["lead_weeks"]
+            # P62 (ADR 0071): omitted from the canonical form at None.
+            if row.get("lab_hold_weeks") is None:
+                row.pop("lab_hold_weeks", None)
+    # P62: a lead time's `lab_hold_weeks` too (None on every non-lab step).
+    for lt in pre_p33["lead_times"]:
+        if lt.get("lab_hold_weeks") is None:
+            lt.pop("lab_hold_weeks", None)
     assert priority_preview._canonical(si) == {
         **pre_p33,
         "projects": sorted(pre_p33["projects"], key=lambda p: p["project_id"]),

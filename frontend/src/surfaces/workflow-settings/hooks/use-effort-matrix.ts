@@ -7,11 +7,13 @@ import type { LeadTimeSetting, WorkflowSetting } from '../api/types';
 import { draftedStepCount, setWeeks, type WorkflowDrafts } from '../lib/effort-matrix';
 import {
   nudge as nudgeDraft,
+  nudgeHold as nudgeHoldDraft,
   pruneDrafts,
   resetStep as resetDraftStep,
   savedCells,
   type CategoryDrafts,
   type DraftField,
+  type HoldAction,
   type SavedCell,
 } from '../lib/template-drafts';
 
@@ -49,7 +51,7 @@ export function useEffortMatrix({
     for (const lt of leadTimes) {
       const key = `${lt.workflow_id}|${lt.category}`;
       const row = index.get(key) ?? {};
-      row[lt.step_id] = { weeks: lt.weeks, gap_weeks: lt.gap_weeks };
+      row[lt.step_id] = { weeks: lt.weeks, gap_weeks: lt.gap_weeks, lab_hold_weeks: lt.lab_hold_weeks };
       index.set(key, row);
     }
     return index;
@@ -96,6 +98,12 @@ export function useEffortMatrix({
   const nudge = React.useCallback(
     (workflowId: WorkflowId, category: string, stepId: string, field: DraftField, direction: -1 | 1) =>
       updateCategory(workflowId, category, (d, saved) => nudgeDraft(d, saved, stepId, field, direction)),
+    [updateCategory],
+  );
+  /** P62: a room-weeks click (timeline control) on a lab step of length `weeks`. */
+  const hold = React.useCallback(
+    (workflowId: WorkflowId, category: string, stepId: string, action: HoldAction, weeks: number) =>
+      updateCategory(workflowId, category, (d, saved) => nudgeHoldDraft(d, saved, stepId, action, weeks)),
     [updateCategory],
   );
   const resetStep = React.useCallback(
@@ -159,6 +167,7 @@ export function useEffortMatrix({
     kindOf,
     setCellWeeks,
     nudge,
+    hold,
     resetStep,
     setKind,
     clearKinds,

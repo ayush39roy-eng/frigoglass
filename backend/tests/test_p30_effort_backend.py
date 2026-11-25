@@ -80,6 +80,7 @@ from tests.p12_helpers import (
     set_progress,
     stepped_project,
 )
+from tests.p62_audit import P71A_TEMPLATE_VERSION as V0  # noqa: N814
 from workers.schedule_tasks import run_greedy_schedule
 
 CW = TEST_WEEK
@@ -371,7 +372,7 @@ async def test_lead_time_edit_no_longer_rederives_and_never_clears_a_user_overri
         resp = await client.post(
             "/workflow-templates/apply",
             json={
-                "changes": [{"workflow_id": "PDD", "category": "B", "base_version": 1,
+                "changes": [{"workflow_id": "PDD", "category": "B", "base_version": V0,
                              "steps": [{"step_id": "PDD-E", "weeks": 8}]}],
                 "selection": {"mode": "none"},
             },
@@ -609,7 +610,8 @@ async def test_hub_load_serves_demand_and_booked_i25_i19(db_session):
     # Remaining: G1 (A Done) 3 + S1 5; On Hold not counted.
     assert gr["design_load_remaining_weeks"] == 3 + 5
     assert gr["design_load_booked_weeks"] == 2 + 1
-    assert ind["design_load_weeks"] == 6  # C table, lead-0 PDD-B skipped
+    # C table, lead-0 PDD-B skipped; P62 (p71a, R62-11): C/PDD-J is 0 weeks.
+    assert ind["design_load_weeks"] == 5
     # Lab (Greece region): S1 H6 + H1 H6 (G1's lab has no figure: H6 too) = 18.
     assert gr["lab_load_weeks"] == 18.0 and gr["lab_load_remaining_weeks"] == 12.0
     assert gr["lab_load_booked_weeks"] == 0.0

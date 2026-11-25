@@ -46,9 +46,9 @@ describe('UpcomingCompletionsCard', () => {
     const items = screen.getAllByTestId('exec-upcoming-row');
     expect(items).toHaveLength(2);
     expect(within(items[0]!).getByRole('link', { name: 'Cooler a' })).toHaveAttribute('href', '/projects/a');
-    expect(within(items[0]!).getByText('W32')).toBeInTheDocument();
-    expect(within(items[1]!).getByText('W38')).toBeInTheDocument();
-    expect(screen.getByText(/W31–W38/)).toBeInTheDocument();
+    expect(within(items[0]!).getByText('W32 \'26')).toBeInTheDocument();
+    expect(within(items[1]!).getByText('W38 \'26')).toBeInTheDocument();
+    expect(screen.getByText(/W31 '26–W38 '26/)).toBeInTheDocument();
     // Quarter strip: W10 → Q1, W32/W38/W39 → Q3; the blocked row is excluded.
     const quarters = screen.getAllByTestId('exec-upcoming-quarter');
     expect(quarters.map((q) => q.getAttribute('aria-label'))).toEqual([

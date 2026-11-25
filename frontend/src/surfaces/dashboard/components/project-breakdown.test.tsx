@@ -189,7 +189,7 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     const table = screen.getByRole('table', { name: 'All registered projects' });
     const cells = within(table).getAllByRole('cell').map((c) => c.textContent);
     expect(cells).toEqual(
-      expect.arrayContaining(['1', 'PD-India', 'CO', 'Rishi', 'W43', 'PDD-EDesign Detailing']),
+      expect.arrayContaining(['1', 'PD-India', 'CO', 'Rishi', 'W43 \'26', 'PDD-EDesign Detailing']),
     );
     expect(screen.queryByText(/Plant/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Req\. dept/)).not.toBeInTheDocument();
